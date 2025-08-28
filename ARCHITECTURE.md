@@ -85,7 +85,8 @@ Packaging and Layout
   - `marble/graph.py`: `_DeviceHelper`, `Neuron`, `Synapse`, and registries (`_NEURON_TYPES`, `_SYNAPSE_TYPES`, register helpers).
   - `marble/training.py`: High-level training flows (`run_wanderer_training`, `create_start_neuron`, `run_training_with_datapairs`, `run_wanderer_epochs_with_datapairs`, `run_wanderers_parallel`, `make_default_codec`, `quick_train_on_pairs`).
   Additional subsystems will be modularized incrementally (brain, plugins) while preserving public APIs through `marblemain`.
-- Examples: `examples/run_datapair_training.py` demonstrates a small end-to-end datapair training run.
+  - Examples: `examples/run_datapair_training.py` demonstrates a small end-to-end datapair training run.
+  - Neuron plugins for transpose convolutions (`conv_transpose1d`, `conv_transpose2d`, `conv_transpose3d`) are implemented in dedicated modules under `marble/plugins/`, preparing for future removal of duplicate definitions from `marble/marblemain.py`.
 
 Operational Policy Update
 
