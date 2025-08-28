@@ -1116,6 +1116,9 @@ class Brain:
         self._progress_walk = 0
         self._progress_total_walks = 1
 
+        # Global learnable parameters for brain-level plugins
+        self._learnables: Dict[str, Dict[str, Any]] = {}
+
     # --- Public API ---
     def is_inside(self, index: Sequence[int]) -> bool:
         if self.mode == "grid":
@@ -1385,6 +1388,61 @@ class Brain:
             report("brain", "remove_neuron", {"position": pos}, "events")
         except Exception:
             pass
+    # --- Learnable parameter management (global) ---
+    def ensure_learnable_param(self, name: str, init_value: Any, *, requires_grad: bool = True,
+                               lr: Optional[float] = None) -> Any:
+        if name in self._learnables:
+            return self._learnables[name]["tensor"]
+        try:
+            import torch  # type: ignore
+        except Exception:
+            torch = None  # type: ignore
+        device = "cuda" if torch is not None and torch.cuda.is_available() else "cpu"
+        if torch is not None:
+            try:
+                t = torch.tensor(init_value, dtype=torch.float32, device=device, requires_grad=requires_grad)
+            except Exception:
+                t = torch.tensor([float(init_value)], dtype=torch.float32, device=device, requires_grad=requires_grad)
+        else:
+            t = init_value
+        self._learnables[name] = {"tensor": t, "opt": False, "lr": lr}
+        return t
+
+    def set_param_optimization(self, name: str, *, enabled: bool = True, lr: Optional[float] = None) -> None:
+        ent = self._learnables.get(name)
+        if ent is None:
+            return
+        ent["opt"] = bool(enabled)
+        if lr is not None:
+            ent["lr"] = float(lr)
+
+    def get_learnable_param_tensor(self, name: str) -> Any:
+        ent = self._learnables.get(name)
+        return None if ent is None else ent.get("tensor")
+
+    def _collect_enabled_params(self) -> List[Tuple[Any, float]]:
+        out: List[Tuple[Any, float]] = []
+        for cfg in self._learnables.values():
+            if not cfg.get("opt"):
+                continue
+            t = cfg.get("tensor")
+            lr = float(cfg.get("lr", 1e-2))
+            out.append((t, lr))
+        return out
+
+    def _update_learnables(self) -> None:
+        try:
+            import torch  # type: ignore
+        except Exception:
+            torch = None  # type: ignore
+        if torch is None:
+            return
+        for t, lr in self._collect_enabled_params():
+            if hasattr(t, "grad") and t.grad is not None:
+                with torch.no_grad():
+                    t -= lr * t.grad
+                if hasattr(t, "grad"):
+                    t.grad = None
 
     # --- Cross-process locking helpers ---
     def _lockfile_path(self, key: str) -> str:
@@ -2155,13 +2213,14 @@ try:
 except Exception:
     pass
 
-from .wanderer import Wanderer
+from .wanderer import Wanderer, expose_learnable_params
 
 
 __all__ += [
     "Wanderer",
     "register_wanderer_type",
     "register_neuroplasticity_type",
+    "expose_learnable_params",
 ]
 
 

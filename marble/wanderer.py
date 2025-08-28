@@ -8,6 +8,7 @@ from typing import Any, Dict, Optional, List, Tuple, Sequence, Union, Callable
 import time
 import random
 import contextlib
+import inspect
 
 from .graph import _DeviceHelper, Neuron, Synapse
 from .reporter import report
@@ -25,6 +26,46 @@ def register_wanderer_type(name: str, plugin: Any) -> None:
 
 def register_neuroplasticity_type(name: str, plugin: Any) -> None:
     NEURO_TYPES_REGISTRY[str(name)] = plugin
+
+
+def expose_learnable_params(fn: Callable[..., Any]) -> Callable[..., Any]:
+    """Decorator: expose function parameters as Wanderer learnables.
+
+    The decorated function must receive a ``Wanderer`` instance as its first
+    positional argument. When invoked, each parameter (except the first
+    wanderer argument) is ensured as a learnable parameter on the Wanderer via
+    :meth:`Wanderer.ensure_learnable_param`. The function will then receive the
+    learnable tensors instead of the original defaults.
+    """
+
+    sig = inspect.signature(fn)
+    param_info = [
+        p for p in sig.parameters.values() if p.name not in {"self", "wanderer"}
+    ]
+
+    def wrapper(*args: Any, **kwargs: Any) -> Any:
+        if not args:
+            return fn(*args, **kwargs)
+        wanderer = args[0]
+        try:
+            ensure = getattr(wanderer, "ensure_learnable_param")
+            getter = getattr(wanderer, "get_learnable_param_tensor")
+        except Exception:
+            return fn(*args, **kwargs)
+        for p in param_info:
+            name = p.name
+            if name not in getattr(wanderer, "_learnables", {}):
+                init = kwargs.get(name)
+                if init is None:
+                    if p.default is inspect._empty:
+                        init = 0.0
+                    else:
+                        init = p.default
+                ensure(name, init)
+            kwargs[name] = getter(name)
+        return fn(*args, **kwargs)
+
+    return wrapper
 
 
 # Local aliases for registry use inside the class (keeps original logic intact)
@@ -96,6 +137,8 @@ class Wanderer(_DeviceHelper):
         self._plugin_state: Dict[str, Any] = {}
         self._visited: List[Neuron] = []
         self._param_map: Dict[int, Tuple[Any, Any]] = {}  # id(neuron) -> (w_param, b_param)
+        # Global learnable parameters exposed by plugins or decorators
+        self._learnables: Dict[str, Dict[str, Any]] = {}
         self._loss_spec = loss
         self._loss_module = None  # torch.nn.* instance if applicable
         self._target_provider = target_provider
@@ -616,6 +659,18 @@ class Wanderer(_DeviceHelper):
         except Exception:
             pass
 
+        try:
+            if hasattr(self, "_update_learnables"):
+                self._update_learnables()
+        except Exception:
+            pass
+
+        try:
+            if hasattr(self.brain, "_update_learnables"):
+                self.brain._update_learnables()  # type: ignore[attr-defined]
+        except Exception:
+            pass
+
         final_loss_val = float(loss.detach().to("cpu").item())
         self._last_walk_loss = final_loss_val
         try:
@@ -796,6 +851,59 @@ class Wanderer(_DeviceHelper):
                     terms.append((t.view(-1) ** 2).mean())
             return sum(terms) if terms else torch.tensor(0.0, device=self._device)
 
+    # --- Learnable parameter management (global to Wanderer) ---
+    def ensure_learnable_param(self, name: str, init_value: Any, *, requires_grad: bool = True,
+                               lr: Optional[float] = None) -> Any:
+        """Register or fetch a Wanderer-level learnable parameter."""
+        if name in self._learnables:
+            return self._learnables[name]["tensor"]
+        torch = self._torch  # type: ignore[assignment]
+        try:
+            t = torch.tensor(init_value, dtype=torch.float32, device=self._device, requires_grad=requires_grad)
+        except Exception:
+            t = torch.tensor([float(init_value)], dtype=torch.float32, device=self._device, requires_grad=requires_grad)
+        self._learnables[name] = {"tensor": t, "opt": False, "lr": lr}
+        self._plugin_state.setdefault("learnable_params", {})[name] = t
+        try:
+            report("wanderer", "ensure_learnable", {"name": name}, "builder")
+        except Exception:
+            pass
+        return t
+
+    def set_param_optimization(self, name: str, *, enabled: bool = True, lr: Optional[float] = None) -> None:
+        ent = self._learnables.get(name)
+        if ent is None:
+            return
+        ent["opt"] = bool(enabled)
+        if lr is not None:
+            ent["lr"] = float(lr)
+
+    def get_learnable_param_tensor(self, name: str) -> Any:
+        ent = self._learnables.get(name)
+        return None if ent is None else ent.get("tensor")
+
+    def _collect_enabled_params(self) -> List[Tuple[Any, float]]:
+        out: List[Tuple[Any, float]] = []
+        default_lr = float(self.current_lr or 0.0) or 1e-2
+        for cfg in self._learnables.values():
+            if not cfg.get("opt"):
+                continue
+            t = cfg.get("tensor")
+            lr = float(cfg.get("lr", default_lr))
+            out.append((t, lr))
+        return out
+
+    def _update_learnables(self) -> None:
+        torch = self._torch  # type: ignore[assignment]
+        if torch is None:
+            return
+        for t, lr in self._collect_enabled_params():
+            if hasattr(t, "grad") and t.grad is not None:
+                with torch.no_grad():
+                    t -= lr * t.grad
+                if hasattr(t, "grad"):
+                    t.grad = None
+
     def walkfinish(self) -> Tuple[float, Optional[float]]:
         if not self._walk_ctx:
             return (0.0, None)
@@ -865,4 +973,5 @@ __all__ = [
     "Wanderer",
     "push_temporary_plugins",
     "pop_temporary_plugins",
+    "expose_learnable_params",
 ]

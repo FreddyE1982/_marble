@@ -167,6 +167,10 @@ Convenience APIs
     - `ensure_learnable_param(neuron, name, init_value, requires_grad=True, lr=None)` registers a tensor under `neuron._plugin_state['learnable_params'][name]` and in SelfAttention’s registry.
     - `set_param_optimization(neuron, name, enabled=True, lr=None)` toggles optimization per param.
     - During `Wanderer.walk`, after `loss.backward()`, attached SelfAttentions update any enabled learnables via simple SGD using per‑param or current LR. Plugins prefer learnables when present; otherwise they use values from existing PARAM neurons.
+  - Global learnable parameters: higher level components can expose their own tunables.
+    - `Wanderer.ensure_learnable_param(name, init_value, requires_grad=True, lr=None)` registers Wanderer-wide tensors; `set_param_optimization` enables SGD updates. Decorator `expose_learnable_params` automatically registers function parameters as Wanderer learnables.
+    - `Brain.ensure_learnable_param(name, init_value, requires_grad=True, lr=None)` mirrors the API for Brain-level plugins.
+    - `SelfAttention.ensure_global_learnable_param(name, init_value, requires_grad=True, lr=None)` allows routines to maintain global tensors alongside per-neuron learnables.
   - SelfAttention rollback API: Routines can bracket graph mutations and roll them back entirely (including topology changes) using:
     - `start_change(tag: Optional[str]) -> int`: begin a new change record (kept on a stack per SelfAttention instance).
     - `record_created_neuron(neuron)`, `record_created_synapse(synapse)`: mark creations.
