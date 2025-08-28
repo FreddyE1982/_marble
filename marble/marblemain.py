@@ -1904,6 +1904,13 @@ try:
 except Exception:
     pass
 
+try:
+    from .plugins.brain_train_earlystop import EarlyStoppingTrainPlugin
+    register_brain_train_type("earlystop", EarlyStoppingTrainPlugin())
+    __all__ += ["EarlyStoppingTrainPlugin"]
+except Exception:
+    pass
+
 
 def _merge_dict_safe(base: Dict[str, Any], extra: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     out = dict(base)
@@ -1957,9 +1964,12 @@ def _before_walk_overrides(plugin: Optional[Any], brain: "Brain", wanderer: "Wan
     return {}
 
 
-def _after_walk(plugin: Optional[Any], brain: "Brain", wanderer: "Wanderer", i: int, stats: Dict[str, Any]) -> None:
+def _after_walk(plugin: Optional[Any], brain: "Brain", wanderer: "Wanderer", i: int, stats: Dict[str, Any]) -> bool:
     if plugin is not None and hasattr(plugin, "after_walk"):
-        _call_safely(getattr(plugin, "after_walk"), brain, wanderer, i, stats)
+        res = _call_safely(getattr(plugin, "after_walk"), brain, wanderer, i, stats)
+        if isinstance(res, dict) and res.get("stop"):
+            return True
+    return False
 
 
 def _on_init_train(plugin: Optional[Any], brain: "Brain", wanderer: "Wanderer", config: Dict[str, Any]) -> None:
@@ -2024,11 +2034,15 @@ def _brain_train(
         start = sel if sel is not None else _select_start(brain, wanderer, i, None, start_selector)
         stats = wanderer.walk(max_steps=ms, start=start, lr=lr_i)
         history.append(stats)
+        stop = False
         for p in plugins:
-            _after_walk(p, brain, wanderer, i, stats)
+            if _after_walk(p, brain, wanderer, i, stats):
+                stop = True
         _maybe_report("training", f"brain_walk_{i}", {"loss": stats.get("loss", 0.0), "steps": stats.get("steps", 0)}, "brain")
         if callback is not None:
             _call_safely(callback, i, stats)
+        if stop:
+            break
     final_loss = history[-1]["loss"] if history else 0.0
     # Merge extras; later plugins win on conflicts
     result = {"history": history, "final_loss": final_loss}
