@@ -232,6 +232,7 @@ Additional Paradigms and Plugins
   - `contrastive_infonce`: InfoNCE-style contrastive objective across outputs in a walk; positives are adjacent pairs; all others are negatives. Temperature `contrastive_tau`, weight `contrastive_lambda`.
   - `td_qlearning`: Tabular TD(0) with per-synapse Q values stored in `synapse._plugin_state['q']`; `choose_next` is epsilon-greedy.
   - `distillation`: Teacher-student MSE loss to a moving-average teacher of past outputs; controlled by `distill_lambda` and `teacher_momentum`.
+  - `triple_contrast`: spawns two auxiliary wanderers per loss call and averages pairwise MSE across the three final outputs for a contrastive signal.
 
 These additions are fully additive; they do not remove or narrow any existing APIs or calculations. All changes continue to respect the single-file import rule and CUDA preference policy.
 
