@@ -23,10 +23,18 @@ def run_wanderer_training(
     loss: Optional[Union[str, Callable[..., Any], Any]] = None,
     target_provider: Optional[Callable[[Any], Any]] = None,
     callback: Optional[Callable[[int, Dict[str, Any]], None]] = None,
+    mixedprecision: bool = True,
 ) -> Dict[str, Any]:
     from .marblemain import Wanderer  # lazy to avoid import cycle
 
-    w = Wanderer(brain, type_name=wanderer_type, seed=seed, loss=loss, target_provider=target_provider)
+    w = Wanderer(
+        brain,
+        type_name=wanderer_type,
+        seed=seed,
+        loss=loss,
+        target_provider=target_provider,
+        mixedprecision=mixedprecision,
+    )
     history: List[Dict[str, Any]] = []
     brain._progress_total_epochs = 1  # type: ignore[attr-defined]
     brain._progress_epoch = 0  # type: ignore[attr-defined]
@@ -84,6 +92,7 @@ def run_training_with_datapairs(
     callback: Optional[Callable[[int, Dict[str, Any], DataPair], None]] = None,
     gradient_clip: Optional[Dict[str, Any]] = None,
     selfattention: Optional["SelfAttention"] = None,
+    mixedprecision: bool = True,
 ) -> Dict[str, Any]:
     from .marblemain import Wanderer  # lazy import
 
@@ -147,7 +156,15 @@ def run_training_with_datapairs(
                 pass
 
     # Build one shared Wanderer across pairs for consistency
-    w = Wanderer(brain, type_name=wanderer_type, seed=seed, loss=loss, neuro_config=neuro_config, gradient_clip=gradient_clip)
+    w = Wanderer(
+        brain,
+        type_name=wanderer_type,
+        seed=seed,
+        loss=loss,
+        neuro_config=neuro_config,
+        gradient_clip=gradient_clip,
+        mixedprecision=mixedprecision,
+    )
     if selfattention is not None:
         try:
             selfattention.attach_to_wanderer(w)
@@ -195,6 +212,7 @@ def run_wanderer_epochs_with_datapairs(
     loss: Optional[Union[str, Callable[..., Any], Any]] = "nn.MSELoss",
     left_to_start: Optional[Callable[[Any, "Brain"], Optional["Neuron"]]] = None,
     callback: Optional[Callable[[int, int, Dict[str, Any], DataPair], None]] = None,
+    mixedprecision: bool = True,
 ) -> Dict[str, Any]:
     dataset: List[DataPair] = []
     for item in datapairs:
@@ -222,6 +240,7 @@ def run_wanderer_epochs_with_datapairs(
             loss=loss,
             left_to_start=left_to_start,
             callback=(lambda i, stats, dp: callback(e, i, stats, dp)) if callback is not None else None,
+            mixedprecision=mixedprecision,
         )
         final_loss = res.get("final_loss", 0.0)
         delta = None if prev_final is None else (final_loss - prev_final)
@@ -253,6 +272,7 @@ def run_wanderers_parallel(
     loss: Optional[Union[str, Callable[..., Any], Any]] = "nn.MSELoss",
     left_to_start: Optional[Callable[[Any, "Brain"], Optional["Neuron"]]] = None,
     neuro_config: Optional[Dict[str, Any]] = None,
+    mixedprecision: bool = True,
 ) -> List[Dict[str, Any]]:
     sigs: List[str] = []
     normed_lists: List[List[Any]] = []
@@ -297,6 +317,7 @@ def run_wanderers_parallel(
                 loss=loss,
                 left_to_start=left_to_start,
                 neuro_config=neuro_config,
+                mixedprecision=mixedprecision,
             )
             with lock:
                 results.append(res)
@@ -333,6 +354,7 @@ def quick_train_on_pairs(
     neuro_config: Optional[Dict[str, Any]] = None,
     gradient_clip: Optional[Dict[str, Any]] = None,
     selfattention: Optional["SelfAttention"] = None,
+    mixedprecision: bool = True,
 ) -> Dict[str, Any]:
     from .marblemain import Brain  # lazy import
 
@@ -349,6 +371,7 @@ def quick_train_on_pairs(
         neuro_config=neuro_config,
         gradient_clip=gradient_clip,
         selfattention=selfattention,
+        mixedprecision=mixedprecision,
     )
     try:
         report(

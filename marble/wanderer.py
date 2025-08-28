@@ -75,6 +75,7 @@ class Wanderer(_DeviceHelper):
         neuroplasticity_type: Optional[Union[str, Sequence[str]]] = "base",
         neuro_config: Optional[Dict[str, Any]] = None,
         gradient_clip: Optional[Dict[str, Any]] = None,
+        mixedprecision: bool = True,
     ) -> None:
         super().__init__()
         # Mandatory autograd requirement
@@ -83,6 +84,13 @@ class Wanderer(_DeviceHelper):
                 "torch is required for Wanderer autograd. Please install CPU torch (or GPU if available) and retry."
             )
         self.brain = brain
+        if mixedprecision:
+            if type_name:
+                names = [s.strip() for s in str(type_name).split(",") if s.strip()]
+                if "mixedprecision" not in names:
+                    type_name = ",".join(names + ["mixedprecision"])
+            else:
+                type_name = "mixedprecision"
         self.type_name = type_name
         self.rng = random.Random(seed)
         self._plugin_state: Dict[str, Any] = {}

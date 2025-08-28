@@ -2424,6 +2424,7 @@ def run_wanderer_training(
     loss: Optional[Union[str, Callable[..., Any], Any]] = None,
     target_provider: Optional[Callable[[Any], Any]] = None,
     callback: Optional[Callable[[int, Dict[str, Any]], None]] = None,
+    mixedprecision: bool = True,
 ) -> Dict[str, Any]:
     """Run multiple wanderer walks as a simple training loop.
 
@@ -2440,7 +2441,14 @@ def run_wanderer_training(
 
     Returns dict with 'history' list of walk stats and aggregate 'final_loss'.
     """
-    w = Wanderer(brain, type_name=wanderer_type, seed=seed, loss=loss, target_provider=target_provider)
+    w = Wanderer(
+        brain,
+        type_name=wanderer_type,
+        seed=seed,
+        loss=loss,
+        target_provider=target_provider,
+        mixedprecision=mixedprecision,
+    )
     history: List[Dict[str, Any]] = []
     for i in range(num_walks):
         start = start_selector(brain) if start_selector is not None else None
@@ -2577,6 +2585,7 @@ def run_training_with_datapairs(
       selfattention: Optional["SelfAttention"] = None,
       streaming: bool = True,
       batch_size: Optional[int] = None,
+      mixedprecision: bool = True,
   ) -> Dict[str, Any]:
     """Train over a sequence of DataPairs and return aggregate stats.
 
@@ -2680,6 +2689,7 @@ def run_training_with_datapairs(
         target_provider=_target_provider,
         neuro_config=neuro_config,
         gradient_clip=gradient_clip,
+        mixedprecision=mixedprecision,
     )
     batch_sz = int(batch_size if batch_size is not None else getattr(w, "_batch_size", 1))
     if batch_sz > 1 and (wanderer_type is None or "batchtrainer" not in str(wanderer_type)):
@@ -2826,6 +2836,7 @@ def run_wanderer_epochs_with_datapairs(
     loss: Optional[Union[str, Callable[..., Any], Any]] = "nn.MSELoss",
     left_to_start: Optional[Callable[[Any, "Brain"], Optional["Neuron"]]] = None,
     callback: Optional[Callable[[int, int, Dict[str, Any], DataPair], None]] = None,
+    mixedprecision: bool = True,
 ) -> Dict[str, Any]:
     """Run multiple epochs; each epoch runs all datapairs once through the Wanderer.
 
@@ -2856,6 +2867,7 @@ def run_wanderer_epochs_with_datapairs(
             loss=loss,
             left_to_start=left_to_start,
             callback=(lambda i, stats, dp: callback(e, i, stats, dp)) if callback is not None else None,
+            mixedprecision=mixedprecision,
         )
         final_loss = res.get("final_loss", 0.0)
         delta = None if prev_final is None else (final_loss - prev_final)
@@ -2894,6 +2906,7 @@ def run_wanderers_parallel(
     loss: Optional[Union[str, Callable[..., Any], Any]] = "nn.MSELoss",
     left_to_start: Optional[Callable[[Any, "Brain"], Optional["Neuron"]]] = None,
     neuro_config: Optional[Dict[str, Any]] = None,
+    mixedprecision: bool = True,
 ) -> List[Dict[str, Any]]:
     """Run multiple Wanderers on the same brain sequentially or concurrently.
 
@@ -2949,6 +2962,7 @@ def run_wanderers_parallel(
                 seed=seed,
                 loss=loss,
                 left_to_start=left_to_start,
+                mixedprecision=mixedprecision,
             )
             results[idx] = res
 
@@ -3076,6 +3090,7 @@ def quick_train_on_pairs(
     neuro_config: Optional[Dict[str, Any]] = None,
     gradient_clip: Optional[Dict[str, Any]] = None,
     selfattention: Optional["SelfAttention"] = None,
+    mixedprecision: bool = True,
 ) -> Dict[str, Any]:
     """High-level convenience to train quickly on a small 2D brain.
 
@@ -3096,6 +3111,7 @@ def quick_train_on_pairs(
         neuro_config=neuro_config,
         gradient_clip=gradient_clip,
         selfattention=selfattention,
+        mixedprecision=mixedprecision,
     )
     try:
         report(

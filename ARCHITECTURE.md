@@ -511,9 +511,9 @@ New Additive Plugins (this change)
 - SelfAttention routine `adaptive_grad_clip`: Observes per-step loss via the reporter and, when a step loss spikes by a configurable ratio, sets gradient clipping on the owning `Wanderer` for the next step (`method='norm'`, configurable `max_norm`). Constructor defaults: `threshold_ratio=1.5`, `max_norm=1.0`, `cooldown=5`. Registered via `register_selfattention_type("adaptive_grad_clip", ...)`.
 - Brain training plugin `warmup_decay`: Per-walk scheduler that linearly warms up learning rate to a peak across the first `warmup_walks`, then exponentially decays it each walk; also increases `max_steps` each walk. Config: `warmup_walks` (3), `base_lr` (1e-2), `peak_lr` (5e-2), `decay` (0.9), `start_steps` (2), `step_increment` (1). Registered as `"warmup_decay"` and stackable with existing trainers.
 - Brain training plugin `earlystop`: Monitors loss after each walk and stops the training loop when loss fails to improve by `min_delta` for `patience` consecutive walks (defaults `0.0` and `3`). Adds `early_stopped` and `best_loss` to the training result and emits `training/earlystop_*` reporter events. Registered as `"earlystop"`.
-- Wanderer plugin `mixedprecision`: Forces all wanderer walks to run under mixed precision using `torch.autocast` and `GradScaler`, ensuring every plugin executes in mixed precision when active. Registered as `"mixedprecision"`.
+- Wanderer plugin `mixedprecision`: Forces all wanderer walks to run under mixed precision using `torch.autocast` and `GradScaler`, ensuring every plugin executes in mixed precision when active. Registered as `"mixedprecision"` and now enabled by default; pass `mixedprecision=False` to `Wanderer` or any training helper to disable.
 
-All additions are fully additive and off by default; existing behavior and APIs are preserved. Each plugin/routine logs concise events to `REPORTER` under logical groups (`plugins`, `selfattention`, `training/brain`).
+All additions remain fully additive; existing behavior and APIs are preserved. Each plugin/routine logs concise events to `REPORTER` under logical groups (`plugins`, `selfattention`, `training/brain`).
 
 Utility Scripts
 
