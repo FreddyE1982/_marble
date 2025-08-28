@@ -396,3 +396,4 @@ Hugging Face Datasets Policy (additive)
 50. Utility scripts for repository setup (e.g., `clone_or_update.sh` and `.ps1`) must remain in the repo root, use `git -C` for pulls, and perform editable installs via `pip install -e .`.
 51. Example scripts must reference only existing plugins and paradigms so they run without missing-component errors.
 52. Before running any tests, explicitly install the CPU-only version of torch via `pip install --index-url https://download.pytorch.org/whl/cpu torch`.
+53. Example scripts that enable batching must load the `batchtrainer` Wanderer plugin and set `batch_size` consistently in both `neuro_config` and helper arguments.

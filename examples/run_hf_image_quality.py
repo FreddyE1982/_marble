@@ -90,6 +90,9 @@ def main(epochs: int = 1) -> None:
     )
     brain = Brain(
         2,
+        size=32,
+        bounds=((0, 31), (0, 31)),
+        formula="abs(n1 - n2) <= 2",
         store_snapshots=True,
         snapshot_path=".",
         snapshot_freq=100,
@@ -104,6 +107,8 @@ def main(epochs: int = 1) -> None:
         ]
     )
     wplugins = [
+        "batchtrainer",
+        "qualityweightedloss",
         "epsilongreedy",
         "td_qlearning",
         "bestlosspath",
@@ -123,6 +128,7 @@ def main(epochs: int = 1) -> None:
         "rl_alpha": 0.05,
         "rl_gamma": 0.95,
         "l2_lambda": 1e-4,
+        "batch_size": 5,
     }
     for _ in range(int(epochs)):
         pairs = _sample_pairs(ds)
@@ -133,10 +139,11 @@ def main(epochs: int = 1) -> None:
             steps_per_pair=2,
             lr=1e-3,
             wanderer_type=",".join(wplugins),
-            train_type="warmup_decay,curriculum",
+            train_type="warmup_decay,curriculum,qualityaware",
             neuro_config=neuro_cfg,
             selfattention=sa,
             streaming=True,
+            batch_size=5,
         )
     print("streamed quality training complete")
 
