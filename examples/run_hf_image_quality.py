@@ -88,7 +88,13 @@ def main(epochs: int = 1) -> None:
         trust_remote_code=True,
         codec=codec,
     )
-    brain = Brain(2)
+    brain = Brain(
+        2,
+        store_snapshots=True,
+        snapshot_path=".",
+        snapshot_freq=100,
+        snapshot_keep=10,
+    )
     # Include Brain-training plugins to adjust learning rate and step schedule
     sa = SelfAttention(
         routines=[
