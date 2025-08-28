@@ -44,6 +44,7 @@ Core Components
   - `run_wanderer_training`: single-wanderer multi-walk loop.
   - `run_training_with_datapairs`: iterates over `DataPair`s; encodes left/right, injects left into a start neuron, and trains against right via a target provider. Accepts brain-train plugin stacks via `train_type` so scheduling logic can mirror `Brain.train` flows.
     - Supports a **streaming** mode (enabled by default) that never materializes the full dataset and drops consumed samples from memory immediately.
+    - Optionally groups datapairs into batches when used with the `batchtrainer` Wanderer plugin (`batch_size` parameter) so each Wanderer step processes the entire batch simultaneously.
     - Automatically enables brain snapshots during training, writing snapshots every walk to the configured `snapshot_path`.
   - `run_wanderer_epochs_with_datapairs`: repeats dataset for multiple epochs, recording per-epoch deltas.
   - `quick_train_on_pairs`: builds a minimal 2D `Brain` with configurable `grid_size`, creates a default codec if not provided, and calls `run_training_with_datapairs` with the supplied hyperparameters (`steps_per_pair`, `lr`, `seed`, `wanderer_type`, `train_type`, `neuro_config`, `gradient_clip`, optional `selfattention`). Logs summary under `training/quick`.
@@ -93,7 +94,7 @@ Packaging and Layout
   - Examples: `examples/run_datapair_training.py` demonstrates a small end-to-end datapair training run.
   - Neuron plugins for transpose convolutions (`conv_transpose1d`, `conv_transpose2d`, `conv_transpose3d`) are implemented in dedicated modules under `marble/plugins/`.
   - Additional neuron plugins (`maxpool1d/2d/3d`, `unfold2d`, `fold2d`, `maxunpool1d/2d/3d`) live entirely in `marble/plugins/` and are imported into `marble/marblemain.py` for registration.
-  - Wanderer plugins (`l2_weight_penalty`, `contrastive_infonce`, `td_qlearning`, `distillation`, `bestlosspath`, `alternatepathscreator`, `hyperEvolution`) and brain-training plugins (`warmup_decay`, `curriculum`) are implemented in their own modules under `marble/plugins/` and registered on import.
+  - Wanderer plugins (`l2_weight_penalty`, `contrastive_infonce`, `td_qlearning`, `distillation`, `bestlosspath`, `alternatepathscreator`, `hyperEvolution`, `batchtrainer`) and brain-training plugins (`warmup_decay`, `curriculum`) are implemented in their own modules under `marble/plugins/` and registered on import.
   - The default `BaseNeuroplasticityPlugin` resides in `marble/plugins/neuroplasticity_base.py` and self-registers under type name `base`.
   - Wanderer and brain-training plugin implementations (e.g., L2 penalty, curriculum, warmup-decay) are also hosted in their own modules under `marble/plugins/`.
 
@@ -329,7 +330,7 @@ SelfAttention Integration
   - Neuron-type selection + wiring: SelfAttention exposes `list_neuron_types()` so routines can choose from available neuron types (currently `base` and `conv1d`). Routines MUST perform all wiring themselves when creating special neurons. The framework provides validation only:
     - `validate_neuron_wiring(neuron)`: returns `{ok, reason}`; for `conv1d` it checks exactly 5 incoming synapses and exactly 1 outgoing synapse. Unknown types are considered OK but are logged for visibility. No automatic neuron creation or connection is performed by the framework.
 - Training: `run_wanderer_training`, `run_training_with_datapairs`, `run_wanderer_epochs_with_datapairs`, `run_wanderers_parallel`, `create_start_neuron`.
-- Datasets/Examples: `run_wine_hello_world`, `export_wanderer_steps_to_jsonl`, `examples/run_wine_with_selfattention.py` (adaptive LR via SelfAttention), `examples/run_hf_image_quality.py` (streamed HF prompt-image quality training with stacked Wanderer plugins).
+- Datasets/Examples: `run_wine_hello_world`, `export_wanderer_steps_to_jsonl`, `examples/run_wine_with_selfattention.py` (adaptive LR via SelfAttention), `examples/run_hf_image_quality.py` (streamed HF prompt-image quality training with stacked Wanderer plugins; saves brain snapshots every 100 iterations, keeping the latest 10 in the working directory).
   - `run_training_with_datapairs` accepts `selfattention` to attach step-wise control to the shared Wanderer and `train_type` to apply Brain-training plugins during datapair training.
   - Training helpers accept `gradient_clip` and pass it to the shared `Wanderer`.
 - Reporting: `REPORTER`, `report`, `report_group`, `report_dir`.

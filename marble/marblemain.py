@@ -1022,6 +1022,7 @@ class Brain:
         store_snapshots: bool = False,
         snapshot_path: Optional[str] = None,
         snapshot_freq: Optional[int] = None,
+        snapshot_keep: Optional[int] = None,
     ) -> None:
         if n < 1:
             raise ValueError("n must be >= 1")
@@ -1095,6 +1096,7 @@ class Brain:
         self.store_snapshots = bool(store_snapshots)
         self.snapshot_path = snapshot_path
         self.snapshot_freq = int(snapshot_freq) if snapshot_freq is not None else None
+        self.snapshot_keep = int(snapshot_keep) if snapshot_keep is not None else None
         if self.store_snapshots:
             if not self.snapshot_path:
                 raise ValueError("snapshot_path must be provided when store_snapshots is True")
@@ -1649,6 +1651,22 @@ class Brain:
             )
         with open(target, "wb") as f:
             pickle.dump(data, f)
+        # Retention: keep only the newest N snapshots if configured
+        if getattr(self, "snapshot_keep", None) is not None:
+            try:
+                files = [
+                    os.path.join(self.snapshot_path, p)
+                    for p in os.listdir(self.snapshot_path)
+                    if p.endswith(".marble")
+                ]
+                files.sort(key=os.path.getmtime, reverse=True)
+                for old in files[int(self.snapshot_keep) :]:
+                    try:
+                        os.remove(old)
+                    except Exception:
+                        pass
+            except Exception:
+                pass
         try:
             report("brain", "snapshot_saved", {"path": target}, "io")
         except Exception:
@@ -2078,6 +2096,13 @@ try:
     from .plugins.wanderer_dynamicdimensions import DynamicDimensionsPlugin
     register_wanderer_type("dynamicdimensions", DynamicDimensionsPlugin())
     __all__ += ["DynamicDimensionsPlugin"]
+except Exception:
+    pass
+
+try:
+    from .plugins.wanderer_batchtrainer import BatchTrainingPlugin
+    register_wanderer_type("batchtrainer", BatchTrainingPlugin())
+    __all__ += ["BatchTrainingPlugin"]
 except Exception:
     pass
 
@@ -2513,10 +2538,11 @@ def run_training_with_datapairs(
     left_to_start: Optional[Callable[[Any, "Brain"], Optional["Neuron"]]] = None,
     neuro_config: Optional[Dict[str, Any]] = None,
     callback: Optional[Callable[[int, Dict[str, Any], DataPair], None]] = None,
-    gradient_clip: Optional[Dict[str, Any]] = None,
-    selfattention: Optional["SelfAttention"] = None,
-    streaming: bool = True,
-) -> Dict[str, Any]:
+      gradient_clip: Optional[Dict[str, Any]] = None,
+      selfattention: Optional["SelfAttention"] = None,
+      streaming: bool = True,
+      batch_size: Optional[int] = None,
+  ) -> Dict[str, Any]:
     """Train over a sequence of DataPairs and return aggregate stats.
 
     - datapairs: elements can be DataPair, raw (left,right) objects, or encoded
@@ -2620,6 +2646,9 @@ def run_training_with_datapairs(
         neuro_config=neuro_config,
         gradient_clip=gradient_clip,
     )
+    batch_sz = int(batch_size if batch_size is not None else getattr(w, "_batch_size", 1))
+    if batch_sz > 1 and (wanderer_type is None or "batchtrainer" not in str(wanderer_type)):
+        raise ValueError("batch_size>1 requires 'batchtrainer' wanderer plugin")
     if selfattention is not None:
         attach_selfattention(w, selfattention)
     # Allow any enabled learning paradigms on the brain to configure the Wanderer
@@ -2651,19 +2680,29 @@ def run_training_with_datapairs(
     for p in train_plugins:
         _on_init_train(p, brain, w, cfg)
 
-    for i, item in enumerate(data_iter):
-        dp = _normalize_pair(item)
-
-        # Encode BOTH parts strictly before running the wanderer
-        enc_left, enc_right = dp.encode(codec)
-
-        # Build or choose a start neuron and inject the encoded left once
-        start: Optional[Neuron]
-        if left_to_start is not None:
-            # By convention pass the encoded left to selector
-            start = left_to_start(enc_left, brain)  # type: ignore[arg-type]
+    batch: List[DataPair] = []
+    batch_index = 0
+    def _process_batch(items: List[DataPair], idx: int) -> None:
+        nonlocal count
+        enc_left_list: List[Any] = []
+        enc_right_list: List[Any] = []
+        for dp in items:
+            el, er = dp.encode(codec)
+            enc_left_list.append(el)
+            enc_right_list.append(er)
+        torch = w._torch  # type: ignore[attr-defined]
+        if torch is not None:
+            enc_left = torch.stack([torch.tensor(x, device=w._device, dtype=torch.float32) if not hasattr(x, "shape") else x.float() for x in enc_left_list])
+            enc_right = torch.stack([torch.tensor(x, device=w._device, dtype=torch.float32) if not hasattr(x, "shape") else x.float() for x in enc_right_list])
         else:
-            # Choose an existing neuron if available; else create one
+            enc_left = [list(x if isinstance(x, (list, tuple)) else [x]) for x in enc_left_list]
+            enc_right = [list(x if isinstance(x, (list, tuple)) else [x]) for x in enc_right_list]
+
+        start: Optional[Neuron]
+        first_left = enc_left_list[0]
+        if left_to_start is not None:
+            start = left_to_start(first_left, brain)  # type: ignore[arg-type]
+        else:
             try:
                 start = next(iter(brain.neurons.values())) if getattr(brain, "neurons", None) else None  # type: ignore[attr-defined]
             except Exception:
@@ -2672,24 +2711,22 @@ def run_training_with_datapairs(
                 try:
                     avail = brain.available_indices()
                     if avail:
-                        idx = avail[0]
-                        start = brain.add_neuron(idx, tensor=0.0)
+                        idxn = avail[0]
+                        start = brain.add_neuron(idxn, tensor=0.0)
                 except Exception:
                     start = None
-        # Allow train plugins to choose/override start neuron
         for p in train_plugins:
-            s = _select_start(brain, w, i, p, None)
+            s = _select_start(brain, w, idx, p, None)
             if s is not None:
                 start = s
         if start is not None:
-            start.receive(enc_left)  # inject encoded input into the first neuron
+            start.receive(enc_left)
         else:
             start = create_start_neuron(brain, enc_left)
 
-        # Merge overrides from train plugins and set per-pair target
         overrides: Dict[str, Any] = {}
         for p in train_plugins:
-            ovr = _before_walk_overrides(p, brain, w, i)
+            ovr = _before_walk_overrides(p, brain, w, idx)
             overrides.update(ovr)
         ms = int(overrides.get("max_steps", steps_per_pair))
         lr_i = float(overrides.get("lr", lr))
@@ -2697,30 +2734,34 @@ def run_training_with_datapairs(
         stats = w.walk(max_steps=ms, start=start, lr=lr_i)
         history.append(stats)
         for p in train_plugins:
-            _after_walk(p, brain, w, i, stats)
-        count += 1
+            _after_walk(p, brain, w, idx, stats)
+        count += len(items)
         try:
             report(
                 "training",
-                f"datapair_{i}",
-                {
-                    "loss": stats.get("loss", 0.0),
-                    "steps": stats.get("steps", 0),
-                    "left_type": type(dp.left).__name__,
-                    "right_type": type(dp.right).__name__,
-                },
+                f"batch_{idx}",
+                {"loss": stats.get("loss", 0.0), "steps": stats.get("steps", 0)},
                 "datapair",
             )
         except Exception:
             pass
-        if callback is not None:
+        if callback is not None and items:
             try:
-                callback(i, stats, dp)
+                callback(idx, stats, items[0])
             except Exception:
                 pass
-
-        del dp, enc_left, enc_right, item
+        del items, enc_left, enc_right
         gc.collect()
+
+    for i, item in enumerate(data_iter):
+        dp = _normalize_pair(item)
+        batch.append(dp)
+        if len(batch) >= batch_sz:
+            _process_batch(batch, batch_index)
+            batch = []
+            batch_index += 1
+    if batch:
+        _process_batch(batch, batch_index)
 
     final_loss = history[-1]["loss"] if history else 0.0
     out = {"history": history, "final_loss": final_loss, "count": count}
