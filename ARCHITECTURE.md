@@ -38,7 +38,8 @@ Core Components
   - `Wanderer`: Autograd-based traversal across the graph. At each step, computes outputs from visited neurons using their (learnable) `weight`/`bias` (via temporary autograd parameters), accumulates loss, and performs SGD-style updates. Plugin registry (`register_wanderer_type`) allows custom step choice and loss definitions. Neuroplasticity registry (`register_neuroplasticity_type`) includes a default `BaseNeuroplasticityPlugin` that can grow/prune graph edges and adjust neuron parameters based on walk outcomes.
     - `dynamicdimensions` plugin periodically adds a new dimension to the `Brain`, observes neuron growth, and removes the dimension if it doesn't improve loss.
   - Gradient clipping: configurable per `Wanderer` via `gradient_clip` dict (`method`: `norm` or `value`, with `max_norm`/`norm_type` or `clip_value`). Applied after `loss.backward()` and before parameter updates.
-  - Progress reporting: `Wanderer.walk` now emits a `tqdm` progress bar (or `tqdm.notebook` in IPython) updated each step with epoch/walk counts, neuron and synapse totals, brain size, step speed, path count, and loss metrics.
+  - Progress reporting: `Wanderer.walk` now emits a `tqdm` progress bar (or `tqdm.notebook` in IPython) updated each step with epoch/walk counts, neuron and synapse totals, brain size, step speed, path count, and loss metrics. `tqdm` is an explicit dependency.
+  - Mixed precision: `MixedPrecisionPlugin` uses `torch.amp.GradScaler` with automatic CUDA detection, avoiding warnings when GPUs are absent.
 
 - Training Helpers: High-level flows to run Wanderer training:
   - `run_wanderer_training`: single-wanderer multi-walk loop.

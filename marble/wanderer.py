@@ -290,7 +290,9 @@ class Wanderer(_DeviceHelper):
         scaler = getattr(self, '_amp_scaler', None) if amp_enabled else None
         if amp_enabled and scaler is None:
             try:
-                scaler = torch.cuda.amp.GradScaler()
+                scaler = torch.amp.GradScaler(
+                    device_type="cuda", enabled=torch.cuda.is_available()
+                )
             except Exception:
                 scaler = None
             self._amp_scaler = scaler
@@ -819,20 +821,22 @@ class Wanderer(_DeviceHelper):
                 try:
                     if hasattr(yt, "view") and hasattr(tgt, "view"):
                         yv = yt.view(-1)
-                        tv = tgt if hasattr(tgt, "view") else tgt
-                        if hasattr(tv, "view"):
-                            tv = tv.view(-1)
+                        tv = tgt.view(-1) if hasattr(tgt, "view") else tgt
                         if tv.numel() == 1:
-                            aligned = tgt
+                            aligned = tv.expand_as(yv)
                         elif yv.numel() == tv.numel():
-                            aligned = tv.view_as(yv)
+                            aligned = tv
                         elif tv.numel() < yv.numel():
                             pad_len = int(yv.numel() - tv.numel())
-                            pad_vals = torch.zeros(pad_len, dtype=tv.dtype if hasattr(tv, "dtype") else yt.dtype, device=self._device)
+                            pad_vals = torch.zeros(
+                                pad_len,
+                                dtype=tv.dtype if hasattr(tv, "dtype") else yv.dtype,
+                                device=self._device,
+                            )
                             aligned = torch.cat([tv, pad_vals], dim=0)
                         else:
                             aligned = tv[: yv.numel()]
-                        tgt = aligned
+                        yt, tgt = yv, aligned
                 except Exception:
                     pass
                 terms.append(loss_mod(yt, tgt))
