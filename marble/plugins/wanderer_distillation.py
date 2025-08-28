@@ -2,8 +2,6 @@ from __future__ import annotations
 
 from typing import Any, Optional, List
 
-from ..wanderer import register_wanderer_type
-
 
 class DistillationPlugin:
     """Adds a simple distillation loss to match a moving-average 'teacher' of outputs.
@@ -42,11 +40,5 @@ class DistillationPlugin:
             ema = self._ema
             yv = yt
         return lam * ((yv - ema).pow(2).mean())
-
-
-try:
-    register_wanderer_type("distillation", DistillationPlugin())
-except Exception:
-    pass
 
 __all__ = ["DistillationPlugin"]

@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
 
-from ..marblemain import register_brain_train_type
 from ..reporter import report
 
 
@@ -59,11 +58,5 @@ class WarmupDecayTrainPlugin:
 
     def on_end(self, brain: "Brain", wanderer: "Wanderer", history: List[Dict[str, Any]]) -> Dict[str, Any]:
         return {"warmup_decay": {"walks": len(history), "final_loss": history[-1].get("loss") if history else None}}
-
-
-try:
-    register_brain_train_type("warmup_decay", WarmupDecayTrainPlugin())
-except Exception:
-    pass
 
 __all__ = ["WarmupDecayTrainPlugin"]
