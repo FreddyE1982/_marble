@@ -1893,8 +1893,15 @@ def register_brain_train_type(name: str, plugin: Any) -> None:
 try:
     from .plugins.brain_train_curriculum import CurriculumTrainPlugin
     register_brain_train_type("curriculum", CurriculumTrainPlugin())
+    __all__ += ["CurriculumTrainPlugin"]
 except Exception:
     pass
+
+try:
+    from .plugins.brain_train_qualityaware import QualityAwareTrainPlugin
+    register_brain_train_type("qualityaware", QualityAwareTrainPlugin())
+    __all__ += ["QualityAwareTrainPlugin"]
+except Exception:
     pass
 
 
@@ -2103,6 +2110,13 @@ try:
     from .plugins.wanderer_batchtrainer import BatchTrainingPlugin
     register_wanderer_type("batchtrainer", BatchTrainingPlugin())
     __all__ += ["BatchTrainingPlugin"]
+except Exception:
+    pass
+
+try:
+    from .plugins.wanderer_qualityweightedloss import QualityWeightedLossPlugin
+    register_wanderer_type("qualityweightedloss", QualityWeightedLossPlugin())
+    __all__ += ["QualityWeightedLossPlugin"]
 except Exception:
     pass
 
