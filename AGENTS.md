@@ -389,3 +389,4 @@ Hugging Face Datasets Policy (additive)
 - Auto-encoding fields: Any field accessed from a Hugging Face dataset example returned by project helpers is automatically encoded through `UniversalTensorCodec` before being returned, honoring CUDA preference when available.
 - Token sourcing: `hf_login` reads the token from the explicit parameter or from `HF_TOKEN`/`HUGGINGFACE_TOKEN` environment variables. No interactive prompts are used in tests.
 - Lazy imports: Hugging Face libraries are imported lazily inside helpers in `marble/marblemain.py` to keep import-time requirements minimal; missing dependencies are reported clearly when a helper is used.
+- Example scripts fetching Hugging Face datasets must use `load_hf_streaming_dataset` and comment which dataset fields are consumed.
