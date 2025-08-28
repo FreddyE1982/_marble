@@ -199,7 +199,8 @@ Module Refactor: Wanderer (Phase 2)
   - `wanderer_epsgreedy.py` → `EpsilonGreedyChooserPlugin` (self‑registers `epsilongreedy`)
 - `marble/marblemain.py` imports these modules to ensure they register on import and continues to act as the single aggregation point.
 - Behavior, algorithms, and registration names remain unchanged.
- - Removed duplicate in-file plugin class definitions from `marble/marblemain.py` to avoid drift; single sources of truth now live in `marble/plugins/wanderer_*.py`.
+- Removed duplicate in-file plugin class definitions from `marble/marblemain.py` to avoid drift; single sources of truth now live in `marble/plugins/wanderer_*.py`.
+- Wanderer now allocates ten global learnable tensors (`param_0`–`param_9`) exposed via `wanderer.learnable_params` (also mirrored under `_plugin_state['learnable_params']`). These parameters participate in SGD updates each walk and are available for custom wanderer plugins.
 
 GUI
 
