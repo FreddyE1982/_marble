@@ -1,0 +1,1032 @@
+NOTE: where it says "image" below...it actually means "any data of type: image, audio, video, text"
+
+1) Notation and goals
+
+Image 
+𝐼
+∈
+𝑅
+𝐻
+×
+𝑊
+×
+𝐶
+I∈R
+H×W×C
+ (typically 
+𝐶
+=
+3
+C=3).
+
+Split 
+𝐼
+I into 
+𝑁
+N non-overlapping patches with a linear patch embedder 
+𝑃
+:
+𝑅
+𝐻
+×
+𝑊
+×
+𝐶
+→
+𝑅
+𝑁
+×
+𝐷
+P:R
+H×W×C
+→R
+N×D
+.
+Resulting image tokens: 
+𝑥
+∈
+𝑅
+𝑁
+×
+𝐷
+x∈R
+N×D
+.
+
+Introduce 
+𝐿
+L learnable latent tokens 
+𝑧
+∈
+𝑅
+𝐿
+×
+𝐷
+z∈R
+L×D
+.
+
+Encoder 
+𝐸
+E (ViT): maps concatenated tokens to latent representations 
+ℎ
+∈
+𝑅
+𝐿
+×
+𝐻
+𝑑
+h∈R
+L×H
+d
+	​
+
+.
+
+Decoder 
+𝐷
+D (ViT): maps 
+ℎ
+h plus learned decoder image tokens 
+𝑒
+∈
+𝑅
+𝑁
+×
+𝐻
+𝑑
+e∈R
+N×H
+d
+	​
+
+ back to patch embeddings 
+𝑥
+^
+∈
+𝑅
+𝑁
+×
+𝐷
+x
+^
+∈R
+N×D
+, then invert patch-embedder to reconstruct image 
+𝐼
+^
+I
+^
+. 
+OpenReview
+
+2) Core forward maps
+
+Encoder (masked input):
+
+Draw a binary mask 
+𝑀
+∈
+{
+0
+,
+1
+}
+𝑁
+M∈{0,1}
+N
+ with mask ratio 
+𝑟
+∈
+[
+0.4
+,
+0.6
+]
+r∈[0.4,0.6].
+
+Let 
+𝑚
+∈
+𝑅
+𝐷
+m∈R
+D
+ be a learnable mask token. Define masked image tokens
+
+𝑥
+~
+𝑖
+  
+=
+  
+(
+1
+−
+𝑀
+𝑖
+)
+ 
+𝑥
+𝑖
+  
++
+  
+𝑀
+𝑖
+ 
+𝑚
+,
+𝑖
+=
+1
+,
+…
+,
+𝑁
+.
+x
+~
+i
+	​
+
+=(1−M
+i
+	​
+
+)x
+i
+	​
+
++M
+i
+	​
+
+m,i=1,…,N.
+
+Concatenate 
+[
+𝑥
+~
+;
+𝑧
+]
+∈
+𝑅
+(
+𝑁
++
+𝐿
+)
+×
+𝐷
+[
+x
+~
+;z]∈R
+(N+L)×D
+ and pass through the encoder:
+
+	
+ℎ
+  
+=
+  
+𝐸
+(
+[
+𝑥
+~
+;
+𝑧
+]
+)
+  
+∈
+  
+𝑅
+𝐿
+×
+𝐻
+𝑑
+.
+		
+(4)
+h=E([
+x
+~
+;z])∈R
+L×H
+d
+	​
+
+.
+(4)
+
+(The encoder output is taken only at the latent-token positions.) 
+OpenReview
+
+Decoder (pixel path):
+
+Concatenate learned decoder image tokens 
+𝑒
+∈
+𝑅
+𝑁
+×
+𝐻
+𝑑
+e∈R
+N×H
+d
+	​
+
+ with 
+ℎ
+h, then decode only from the 
+𝑁
+N image-token slots:
+
+	
+𝑥
+^
+  
+=
+  
+𝐷
+(
+[
+𝑒
+;
+ℎ
+]
+)
+  
+∈
+  
+𝑅
+𝑁
+×
+𝐷
+,
+𝐼
+^
+=
+𝑃
+−
+1
+(
+𝑥
+^
+)
+.
+		
+(5)
+x
+^
+=D([e;h])∈R
+N×D
+,
+I
+^
+=P
+−1
+(
+x
+^
+).
+(5)
+
+Position encodings: apply 2D RoPE to image tokens 
+(
+𝑥
+,
+𝑒
+)
+(x,e) and 1D absolute positions to latent tokens 
+𝑧
+z. 
+OpenReview
+
+3) Objectives
+
+MAETok uses two decoupled objective families:
+
+(A) Standard tokenizer (pixel-reconstruction) losses
+	
+𝐿
+tok
+  
+=
+  
+∥
+𝐼
+−
+𝐼
+^
+∥
+2
+2
+⏟
+𝐿
+rec
+  
++
+  
+𝜆
+1
+∑
+ℓ
+∥
+𝜙
+ℓ
+(
+𝐼
+)
+−
+𝜙
+ℓ
+(
+𝐼
+^
+)
+∥
+2
+2
+⏟
+𝐿
+percep
+  
++
+  
+𝜆
+2
+𝐿
+adv
+(
+𝐼
+,
+𝐼
+^
+)
+⏟
+e.g., patch-GAN/LeCAM
+.
+		
+(6)
+L
+tok
+	​
+
+=
+L
+rec
+	​
+
+∥I−
+I
+^
+∥
+2
+2
+	​
+
+	​
+
+	​
+
++λ
+1
+	​
+
+L
+percep
+	​
+
+ℓ
+∑
+	​
+
+∥ϕ
+ℓ
+	​
+
+(I)−ϕ
+ℓ
+	​
+
+(
+I
+^
+)∥
+2
+2
+	​
+
+	​
+
+	​
+
++λ
+2
+	​
+
+e.g., patch-GAN/LeCAM
+L
+adv
+	​
+
+(I,
+I
+^
+)
+	​
+
+	​
+
+.
+(6)
+
+Here 
+𝜙
+ℓ
+ϕ
+ℓ
+	​
+
+ are fixed perceptual features (e.g., VGG). In the paper’s setup 
+𝜆
+1
+≈
+1.0
+,
+ 
+𝜆
+2
+≈
+0.4
+λ
+1
+	​
+
+≈1.0, λ
+2
+	​
+
+≈0.4. The adversarial term uses a discriminator with LeCAM regularization (details are implementation-level; any standard GAN loss is acceptable). 
+OpenReview
++1
+
+(B) Mask-modeling auxiliary feature-prediction losses
+
+Attach shallow auxiliary decoders 
+{
+𝐷
+aux
+(
+𝑗
+)
+}
+𝑗
+{D
+aux
+(j)
+	​
+
+}
+j
+	​
+
+, each trained to predict features of masked tokens only (from 
+[
+𝑒
+;
+ℎ
+]
+[e;h]), e.g. HOG, DINOv2, CLIP, or BPE indices:
+
+	
+𝑦
+^
+(
+𝑗
+)
+  
+=
+  
+𝐷
+aux
+(
+𝑗
+)
+(
+[
+𝑒
+;
+ℎ
+]
+;
+𝜃
+𝑗
+)
+∈
+𝑅
+𝑁
+×
+𝐷
+𝑗
+,
+𝐿
+mask
+  
+=
+  
+∑
+𝑗
+∥
+ 
+𝑀
+⊙
+(
+𝑦
+(
+𝑗
+)
+−
+𝑦
+^
+(
+𝑗
+)
+)
+ 
+∥
+2
+2
+.
+		
+(7–8)
+y
+^
+	​
+
+(j)
+=D
+aux
+(j)
+	​
+
+([e;h];θ
+j
+	​
+
+)∈R
+N×D
+j
+	​
+
+,L
+mask
+	​
+
+=
+j
+∑
+	​
+
+	​
+
+M⊙(y
+(j)
+−
+y
+^
+	​
+
+(j)
+)
+	​
+
+2
+2
+	​
+
+.
+(7–8)
+
+(Only masked positions contribute via 
+𝑀
+M. In practice, the 
+𝐷
+aux
+(
+𝑗
+)
+D
+aux
+(j)
+	​
+
+ are 3-layer MLPs/decoders.) 
+OpenReview
++1
+
+Total training loss (stage 1):
+
+ 
+𝐿
+stage1
+  
+=
+  
+𝐿
+tok
+  
++
+  
+∑
+𝑗
+𝛾
+𝑗
+ 
+𝐿
+mask
+(
+𝑗
+)
+ 
+ L
+stage1
+	​
+
+=L
+tok
+	​
+
++
+j
+∑
+	​
+
+γ
+j
+	​
+
+L
+mask
+(j)
+	​
+
+ 
+	​
+
+
+(Use equal or tuned 
+𝛾
+𝑗
+γ
+j
+	​
+
+.)
+
+4) Two-stage training schedule
+
+Stage-1 (MAE training):
+
+Mask ratio 
+𝑟
+∈
+[
+0.4
+,
+0.6
+]
+r∈[0.4,0.6].
+
+Optimize 
+𝐿
+stage1
+L
+stage1
+	​
+
+ jointly for encoder 
+𝐸
+E, pixel decoder 
+𝐷
+D, and auxiliary decoders 
+𝐷
+aux
+(
+𝑗
+)
+D
+aux
+(j)
+	​
+
+.
+
+Goal: make the latent space (in 
+ℎ
+h) discriminative while preserving usable pixel reconstruction.
+
+Stage-2 (pixel-decoder fine-tuning):
+
+Freeze 
+𝐸
+E (to preserve the learned latent geometry).
+
+Linearly anneal mask ratio 
+𝑟
+:
+0.6
+→
+0
+r:0.6→0 (e.g., over 50k iterations).
+
+Optimize only 
+𝐷
+D (and optionally 
+𝑃
+−
+1
+P
+−1
+) with 
+𝐿
+tok
+L
+tok
+	​
+
+ (auxiliary heads can be dropped).
+
+Goal: recover high-fidelity pixels without wrecking the encoder’s discriminative latent structure. 
+OpenReview
+
+5) Token counts and shapes (practical defaults)
+
+Latent tokens: 
+𝐿
+=
+128
+L=128 (what you pass to the diffusion model).
+
+Mask ratio: 
+𝑟
+∈
+[
+0.4
+,
+0.6
+]
+r∈[0.4,0.6] in Stage-1; anneal to 
+0
+0 in Stage-2.
+
+Transformer details: ViT encoder/decoder; 1D tokenization (“learnable latent tokens” + image tokens); use RoPE 2D for image tokens and 1D absolute for latent tokens. (Hidden widths, heads, layers are architectural choices; the paper used ViT-Base for the tokenizer.) 
+OpenReview
++1
+
+6) What the diffusion model sees
+
+At inference/conditioning time (no masking):
+
+Encode: 
+ℎ
+=
+𝐸
+(
+[
+𝑥
+;
+𝑧
+]
+)
+h=E([x;z]) with 
+𝑀
+≡
+0
+M≡0.
+
+Provide the 
+𝐿
+×
+𝐻
+𝑑
+L×H
+d
+	​
+
+ latent sequence 
+ℎ
+h to a 1D diffusion transformer (e.g., SiT/LightningDiT) as the working latent.
+
+Decode: after diffusion sampling returns a latent sequence 
+ℎ
+~
+h
+~
+, produce the image with 
+𝑥
+^
+=
+𝐷
+(
+[
+𝑒
+;
+ℎ
+~
+]
+)
+x
+^
+=D([e;
+h
+~
+]) and 
+𝐼
+^
+=
+𝑃
+−
+1
+(
+𝑥
+^
+)
+I
+^
+=P
+−1
+(
+x
+^
+).
+The whole point: a compact (e.g., 128-token) latent with a well-structured distribution (empirically: fewer GMM modes) that accelerates and stabilizes diffusion training/sampling. 
+OpenReview
++1
+
+7) Why the latent looks “nice” (theory shorthand)
+
+If the latent distribution is approximable by a 
+𝐾
+K-component GMM, the paper shows (via existing DDPM bounds) that to reach a target KL error the required sample size scales like 
+𝑂
+(
+𝐾
+4
+)
+O(K
+4
+). Fewer effective modes 
+𝐾
+⇒
+K⇒ easier diffusion learning; mask-modeling + auxiliary feature prediction empirically reduces effective 
+𝐾
+K vs. plain AE/VAE. 
+OpenReview
+
+8) Minimal checklist to reproduce MAETok
+
+Build 
+𝑃
+,
+𝑃
+−
+1
+P,P
+−1
+, ViT-
+𝐸
+E, ViT-
+𝐷
+D, learnable tokens 
+𝑧
+,
+𝑚
+,
+𝑒
+z,m,e.
+
+Stage-1: sample mask 
+𝑀
+M, forward 
+𝑥
+~
+→
+ℎ
+x
+~
+→h, decode 
+𝐼
+^
+I
+^
+, compute 
+𝐿
+tok
+L
+tok
+	​
+
+; compute auxiliary targets 
+𝑦
+(
+𝑗
+)
+y
+(j)
+ and 
+𝐿
+mask
+L
+mask
+	​
+
+ on masked positions only; update 
+𝐸
+,
+𝐷
+,
+{
+𝐷
+aux
+(
+𝑗
+)
+}
+E,D,{D
+aux
+(j)
+	​
+
+}.
+
+Stage-2: freeze 
+𝐸
+E, anneal 
+𝑟
+→
+0
+r→0, optimize 
+𝐷
+D on 
+𝐿
+tok
+L
+tok
+	​
+
+ to sharpen pixels.
+
+Use 
+𝐿
+=
+128
+L=128 latent tokens for downstream diffusion. 
+OpenReview
++1

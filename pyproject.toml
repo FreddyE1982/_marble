@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "marble"
+version = "0.1.0"
+description = "Marble: codec, neurons/synapses, and n-D brain structures in a single-file import design"
+readme = "AGENTS.md"
+requires-python = ">=3.9"
+authors = [{ name = "Marble Authors" }]
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+  "License :: OSI Approved :: MIT License",
+  "Operating System :: OS Independent",
+]
+
+[project.urls]
+Homepage = "https://example.invalid/marble"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["marble*"]
+exclude = ["tests*"]
+

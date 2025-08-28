@@ -1,0 +1,1518 @@
+"""
+UniversalTensorCodec: Encode any Python object to an integer tensor and decode it back.
+
+Rules respected:
+- Only this file contains imports.
+- No other module imports anything.
+
+Design:
+- Uses pickle to serialize arbitrary Python objects to bytes.
+- Builds a byte-level vocabulary on the fly (observed bytes -> token ids).
+- Encodes to a 1D tensor of integer token ids. If torch is available, returns
+  a CPU LongTensor; otherwise returns a plain Python list of ints.
+- Vocabulary can be exported/imported to/from a JSON file.
+"""
+
+from __future__ import annotations
+
+# Only file allowed to import
+import json
+import pickle
+import math
+import random
+import threading
+from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple, Union, Callable
+
+
+TensorLike = Union[List[int], "_TorchTensor"]
+
+class UniversalTensorCodec:
+    def __init__(self) -> None:
+        # Vocab maps bytes<0..255> to token ids and back.
+        self._byte_to_token: Dict[int, int] = {}
+        self._token_to_byte: List[int] = []
+
+        # Lazy torch detection
+        self._torch = self._try_import_torch()
+        self._device = self._select_device()
+
+    # --- Public API ---
+    def reset_vocab(self) -> None:
+        self._byte_to_token.clear()
+        self._token_to_byte.clear()
+
+    def vocab_size(self) -> int:
+        return len(self._token_to_byte)
+
+    def encode(self, obj: Any) -> TensorLike:
+        data = pickle.dumps(obj, protocol=pickle.HIGHEST_PROTOCOL)
+        tokens = self._bytes_to_tokens(data)
+        out = self._to_tensor(tokens)
+        try:
+            ln = int(out.numel()) if hasattr(out, "numel") else len(out)  # type: ignore[arg-type]
+        except Exception:
+            ln = -1
+        try:
+            report("codec", "encode", {"obj_type": type(obj).__name__, "tokens": ln}, "events")
+        except Exception:
+            pass
+        return out
+
+    def decode(self, tokens: Union[TensorLike, Sequence[int]]) -> Any:
+        token_list = self._to_list(tokens)
+        data = self._tokens_to_bytes(token_list)
+        obj = pickle.loads(data)
+        try:
+            report("codec", "decode", {"ok": True, "vocab_size": self.vocab_size()}, "events")
+        except Exception:
+            pass
+        return obj
+
+    def export_vocab(self, path: str) -> None:
+        payload = {"token_to_byte": self._token_to_byte}
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(payload, f)
+        try:
+            report("codec", "export_vocab", {"path": path, "size": self.vocab_size()}, "io")
+        except Exception:
+            pass
+
+    def import_vocab(self, path: str) -> None:
+        with open(path, "r", encoding="utf-8") as f:
+            payload = json.load(f)
+        token_to_byte = payload.get("token_to_byte")
+        if not isinstance(token_to_byte, list) or not all(
+            isinstance(x, int) and 0 <= x <= 255 for x in token_to_byte
+        ):
+            raise ValueError("Invalid vocabulary file format")
+        self._token_to_byte = list(token_to_byte)
+        self._byte_to_token = {b: i for i, b in enumerate(self._token_to_byte)}
+        try:
+            report("codec", "import_vocab", {"path": path, "size": self.vocab_size()}, "io")
+        except Exception:
+            pass
+
+    # --- Internal helpers ---
+    def _bytes_to_tokens(self, data: bytes) -> List[int]:
+        # Extend vocab on the fly for new bytes
+        for b in data:
+            if b not in self._byte_to_token:
+                self._byte_to_token[b] = len(self._token_to_byte)
+                self._token_to_byte.append(b)
+        return [self._byte_to_token[b] for b in data]
+
+    def _tokens_to_bytes(self, tokens: Iterable[int]) -> bytes:
+        try:
+            return bytes(self._token_to_byte[t] for t in tokens)
+        except (IndexError, TypeError) as e:
+            raise ValueError("Token id out of range for current vocabulary") from e
+
+    def _to_tensor(self, values: List[int]) -> TensorLike:
+        if self._torch is not None:
+            return self._torch.tensor(values, dtype=self._torch.long, device=self._device)
+        return values
+
+    def _to_list(self, maybe_tensor: Union[TensorLike, Sequence[int]]) -> List[int]:
+        if self._torch is not None and self._is_torch_tensor(maybe_tensor):
+            # Ensure on CPU and convert to list of ints
+            t = maybe_tensor.detach().to("cpu")
+            return [int(x) for x in t.view(-1).tolist()]
+        # Already a sequence of ints
+        return list(maybe_tensor)  # type: ignore[arg-type]
+
+    # --- Torch detection ---
+    def _try_import_torch(self):
+        try:
+            import torch  # type: ignore
+
+            # Ensure it's CPU-capable at minimum
+            _ = torch.tensor([0], dtype=torch.long, device="cpu")
+            return torch
+        except Exception:
+            return None
+
+    def _is_torch_tensor(self, obj: Any) -> bool:
+        try:
+            if self._torch is None:
+                return False
+            Tensor = self._torch.Tensor  # type: ignore[attr-defined]
+            return isinstance(obj, Tensor)
+        except Exception:
+            return False
+
+    def _select_device(self) -> str:
+        # Prefer GPU for everything if available; otherwise CPU.
+        try:
+            if self._torch is not None and self._torch.cuda.is_available():
+                return "cuda"
+        except Exception:
+            pass
+        return "cpu"
+
+
+__all__ = ["UniversalTensorCodec"]
+
+
+# -----------------------------
+# Neuron/Synapse with Plugins
+# -----------------------------
+
+class _DeviceHelper:
+    def __init__(self) -> None:
+        self._torch = self._try_import_torch()
+        self._device = self._select_device()
+
+    def _try_import_torch(self):
+        try:
+            import torch  # type: ignore
+            _ = torch.tensor([0], dtype=torch.long, device="cpu")
+            return torch
+        except Exception:
+            return None
+
+    def _select_device(self) -> str:
+        try:
+            if self._torch is not None and self._torch.cuda.is_available():
+                return "cuda"
+        except Exception:
+            pass
+        return "cpu"
+
+    def _ensure_tensor(self, value: Union[TensorLike, Sequence[float], float, int]) -> TensorLike:
+        # Convert scalars/sequences to tensor/list on selected device
+        if self._torch is None:
+            if isinstance(value, (list, tuple)):
+                return [float(x) for x in value]
+            elif isinstance(value, (int, float)):
+                return [float(value)]
+            else:
+                # Assume already list-like of numbers
+                return list(value)  # type: ignore[arg-type]
+        else:
+            if self._is_torch_tensor(value):
+                return value  # type: ignore[return-value]
+            if isinstance(value, (list, tuple)):
+                return self._torch.tensor(list(value), dtype=self._torch.float32, device=self._device)
+            elif isinstance(value, (int, float)):
+                return self._torch.tensor([float(value)], dtype=self._torch.float32, device=self._device)
+            else:
+                # Try to make a tensor from it
+                return self._torch.tensor(value, dtype=self._torch.float32, device=self._device)
+
+    def _is_torch_tensor(self, obj: Any) -> bool:
+        try:
+            if self._torch is None:
+                return False
+            Tensor = self._torch.Tensor  # type: ignore[attr-defined]
+            return isinstance(obj, Tensor)
+        except Exception:
+            return False
+
+
+# Plugin registries
+_NEURON_TYPES: Dict[str, Any] = {}
+_SYNAPSE_TYPES: Dict[str, Any] = {}
+
+
+def register_neuron_type(name: str, plugin: Any) -> None:
+    if not isinstance(name, str) or not name:
+        raise ValueError("Neuron type name must be a non-empty string")
+    _NEURON_TYPES[name] = plugin
+
+
+def register_synapse_type(name: str, plugin: Any) -> None:
+    if not isinstance(name, str) or not name:
+        raise ValueError("Synapse type name must be a non-empty string")
+    _SYNAPSE_TYPES[name] = plugin
+
+
+class Neuron(_DeviceHelper):
+    """A neuron that stores a tensor and basic parameters.
+
+    - tensor: stored tensor-like value
+    - weight, bias: scalar parameters
+    - age: integer, can be advanced
+    - type_name: optional plugin type controlling behavior and extra data
+    - connections: incoming/outgoing synapses
+    """
+
+    def __init__(
+        self,
+        tensor: Union[TensorLike, Sequence[float], float, int],
+        *,
+        weight: float = 1.0,
+        bias: float = 0.0,
+        age: int = 0,
+        type_name: Optional[str] = None,
+    ) -> None:
+        super().__init__()
+        self.tensor: TensorLike = self._ensure_tensor(tensor)
+        self.weight: float = float(weight)
+        self.bias: float = float(bias)
+        self.age: int = int(age)
+        self.type_name: Optional[str] = type_name
+        self._plugin_state: Dict[str, Any] = {}
+        self.incoming: List["Synapse"] = []
+        self.outgoing: List["Synapse"] = []
+
+        plugin = _NEURON_TYPES.get(self.type_name) if self.type_name else None
+        if plugin is not None and hasattr(plugin, "on_init"):
+            plugin.on_init(self)  # type: ignore[attr-defined]
+        try:
+            report("neuron", "create", {"weight": self.weight, "bias": self.bias, "age": self.age, "type": self.type_name}, "events")
+        except Exception:
+            pass
+
+    def connect_to(self, other: "Neuron", *, direction: str = "uni", age: int = 0, type_name: Optional[str] = None) -> "Synapse":
+        s = Synapse(self, other, direction=direction, age=age, type_name=type_name)
+        try:
+            report("neuron", "connect_to", {"direction": direction, "age": age, "type": type_name}, "events")
+        except Exception:
+            pass
+        return s
+
+    def receive(self, value: Union[TensorLike, Sequence[float], float, int]) -> None:
+        plugin = _NEURON_TYPES.get(self.type_name) if self.type_name else None
+        if plugin is not None and hasattr(plugin, "receive"):
+            plugin.receive(self, value)  # type: ignore[attr-defined]
+            return
+        self.tensor = self._ensure_tensor(value)
+        try:
+            report("neuron", "receive", {"len": int(self.tensor.numel()) if hasattr(self.tensor, "numel") else (len(self.tensor) if isinstance(self.tensor, list) else 1)}, "events")
+        except Exception:
+            pass
+
+    def forward(self, input_value: Optional[Union[TensorLike, Sequence[float], float, int]] = None) -> TensorLike:
+        plugin = _NEURON_TYPES.get(self.type_name) if self.type_name else None
+        if plugin is not None and hasattr(plugin, "forward"):
+            return plugin.forward(self, input_value)  # type: ignore[attr-defined]
+
+        # Default behavior: y = w * x + b where x is input_value if provided else stored tensor
+        x = self._ensure_tensor(self.tensor if input_value is None else input_value)
+        if self._torch is not None and self._is_torch_tensor(x):
+            out = x * self.weight + self.bias
+        else:
+            xl = x if isinstance(x, list) else list(x)  # type: ignore[arg-type]
+            out = [self.weight * float(v) + self.bias for v in xl]
+        try:
+            out_len = int(out.numel()) if (self._torch is not None and self._is_torch_tensor(out)) else (len(out) if isinstance(out, list) else 1)
+            report("neuron", "forward", {"out_len": out_len, "weight": float(self.weight), "bias": float(self.bias)}, "metrics")
+        except Exception:
+            pass
+        return out
+
+    def step_age(self, delta: int = 1) -> None:
+        self.age += int(delta)
+
+
+class Synapse(_DeviceHelper):
+    """A synapse connects two neurons.
+
+    - direction: "uni" for source->target only, "bi" for bidirectional
+    - age: integer
+    - type_name: optional plugin affecting transmit behavior
+    """
+
+    def __init__(self, source: Neuron, target: Neuron, *, direction: str = "uni", age: int = 0, type_name: Optional[str] = None, weight: float = 1.0) -> None:
+        super().__init__()
+        if direction not in ("uni", "bi"):
+            raise ValueError("direction must be 'uni' or 'bi'")
+        self.source = source
+        self.target = target
+        self.direction = direction
+        self.age = int(age)
+        self.type_name: Optional[str] = type_name
+        self._plugin_state: Dict[str, Any] = {}
+        self.weight: float = float(weight)
+
+        # Register with neurons
+        self.source.outgoing.append(self)
+        self.target.incoming.append(self)
+        if self.direction == "bi":
+            # In bidirectional case, also allow reverse registration for convenience
+            self.source.incoming.append(self)
+            self.target.outgoing.append(self)
+
+        plugin = _SYNAPSE_TYPES.get(self.type_name) if self.type_name else None
+        if plugin is not None and hasattr(plugin, "on_init"):
+            plugin.on_init(self)  # type: ignore[attr-defined]
+        try:
+            report("synapse", "create", {"direction": self.direction, "age": self.age, "weight": self.weight, "type": self.type_name}, "events")
+        except Exception:
+            pass
+
+    def transmit(self, value: Union[TensorLike, Sequence[float], float, int], *, direction: str = "forward") -> None:
+        plugin = _SYNAPSE_TYPES.get(self.type_name) if self.type_name else None
+        if plugin is not None and hasattr(plugin, "transmit"):
+            plugin.transmit(self, value, direction=direction)  # type: ignore[attr-defined]
+            return
+
+        if direction not in ("forward", "backward"):
+            raise ValueError("direction must be 'forward' or 'backward'")
+
+        # Apply synapse weight to the transmitted value in the base behavior
+        val = self._ensure_tensor(value)
+        if self._torch is not None and self._is_torch_tensor(val):
+            val = val * float(self.weight)
+        else:
+            vl = val if isinstance(val, list) else list(val)  # type: ignore[arg-type]
+            val = [float(self.weight) * float(v) for v in vl]
+
+        if direction == "forward":
+            if self.direction in ("uni", "bi"):
+                self.target.receive(val)
+            else:
+                raise ValueError("This synapse does not allow forward transmission")
+        else:  # backward
+            if self.direction == "bi":
+                self.source.receive(val)
+            else:
+                raise ValueError("This synapse does not allow backward transmission")
+        try:
+            report("synapse", "transmit", {"dir": direction, "weight": float(self.weight)}, "events")
+        except Exception:
+            pass
+
+    def step_age(self, delta: int = 1) -> None:
+        self.age += int(delta)
+        try:
+            report("synapse", "aged", {"age": self.age}, "metrics")
+        except Exception:
+            pass
+
+
+__all__ += [
+    "Neuron",
+    "Synapse",
+    "register_neuron_type",
+    "register_synapse_type",
+]
+
+
+# -----------------------------
+# Brain: n-Dimensional Structure
+# -----------------------------
+
+class Brain:
+    """n-dimensional digital representation of space defined by a formula or Mandelbrot.
+
+    - n: number of dimensions
+    - size: grid resolution per dimension; int or tuple of ints
+    - bounds: list/tuple of (min,max) for each dimension; defaults sensible ranges
+    - formula: string expression referencing variables n1..nN, or 'mandelbrot'
+    - max_iters, escape_radius: parameters for Mandelbrot computations
+
+    The brain maintains a discrete occupancy grid; neurons/synapses must be placed
+    at indices that are inside this shape.
+    """
+
+    def __init__(
+        self,
+        n: int,
+        *,
+        size: Union[int, Sequence[int]] = 32,
+        bounds: Optional[Sequence[Tuple[float, float]]] = None,
+        formula: Optional[str] = None,
+        max_iters: int = 50,
+        escape_radius: float = 2.0,
+        mode: str = "grid",
+        sparse_bounds: Optional[Sequence[Union[Tuple[float, float], Tuple[float, None], Tuple[float]]]] = None,
+    ) -> None:
+        if n < 1:
+            raise ValueError("n must be >= 1")
+        self.n = int(n)
+        self.mode = str(mode)
+
+        if self.mode not in ("grid", "sparse"):
+            raise ValueError("mode must be 'grid' or 'sparse'")
+
+        # Shared storage for both modes
+        self.synapses: List[Synapse] = []
+
+        if self.mode == "grid":
+            self.size: Tuple[int, ...] = self._normalize_size(size)
+            if len(self.size) != self.n:
+                raise ValueError("size must have length n")
+            self.bounds: Tuple[Tuple[float, float], ...] = self._normalize_bounds(bounds)
+            if len(self.bounds) != self.n:
+                raise ValueError("bounds must provide (min,max) for each dimension")
+            self.formula = formula
+            self.max_iters = int(max_iters)
+            self.escape_radius = float(escape_radius)
+
+            # Prepare safe evaluation context
+            self._eval_env = self._build_eval_env()
+
+            # Build occupancy grid
+            self.occupancy: Dict[Tuple[int, ...], bool] = {}
+            self._populate_occupancy()
+            try:
+                report("brain", "occupancy", {"inside": sum(1 for v in self.occupancy.values() if v), "total": len(self.occupancy)}, "metrics")
+            except Exception:
+                pass
+
+            # Storage of neurons by index
+            self.neurons: Dict[Tuple[int, ...], Neuron] = {}
+        else:
+            # Sparse mode: only track occupied coordinates (floats)
+            if sparse_bounds is None:
+                raise ValueError("sparse_bounds must be provided in sparse mode")
+            self.sparse_bounds: Tuple[Tuple[float, Optional[float]], ...] = self._normalize_sparse_bounds(sparse_bounds)
+            if len(self.sparse_bounds) != self.n:
+                raise ValueError("sparse_bounds must have length n")
+            self.neurons: Dict[Tuple[float, ...], Neuron] = {}
+        try:
+            report("brain", "init", {"n": self.n, "mode": self.mode}, "events")
+        except Exception:
+            pass
+
+    # --- Public API ---
+    def is_inside(self, index: Sequence[int]) -> bool:
+        if self.mode == "grid":
+            key = tuple(int(i) for i in index)
+            return bool(self.occupancy.get(key, False))
+        else:
+            coords = tuple(float(v) for v in index)
+            if len(coords) != self.n:
+                return False
+            for d in range(self.n):
+                mn, mx = self.sparse_bounds[d]
+                v = coords[d]
+                if v < mn:
+                    return False
+                if mx is not None and v > mx:
+                    return False
+            return True
+
+    def world_coords(self, index: Sequence[int]) -> Tuple[float, ...]:
+        if self.mode == "grid":
+            idx = tuple(int(i) for i in index)
+            if len(idx) != self.n:
+                raise ValueError("index length must equal n")
+            return tuple(
+                self._map_index_to_coord(i, dim)
+                for dim, i in enumerate(idx)
+            )
+        else:
+            # In sparse mode, indices are world coordinates already
+            coords = tuple(float(v) for v in index)
+            if len(coords) != self.n:
+                raise ValueError("coordinate length must equal n")
+            return coords
+
+    def add_neuron(self, index: Sequence[int], *, tensor: Union[TensorLike, Sequence[float], float, int] = 0.0, **kwargs: Any) -> Neuron:
+        if self.mode == "grid":
+            idx = tuple(int(i) for i in index)
+            if not self.is_inside(idx):
+                raise ValueError("Neuron index is outside the brain shape")
+            if idx in self.neurons:
+                raise ValueError("Neuron already exists at this index")
+            neuron = Neuron(tensor, **kwargs)
+            setattr(neuron, "position", idx)
+            self.neurons[idx] = neuron
+            try:
+                report("brain", "add_neuron", {"position": idx}, "events")
+            except Exception:
+                pass
+            return neuron
+        else:
+            coords = tuple(float(v) for v in index)
+            if not self.is_inside(coords):
+                raise ValueError("Neuron coordinates are outside the brain bounds")
+            if coords in self.neurons:
+                raise ValueError("Neuron already exists at these coordinates")
+            neuron = Neuron(tensor, **kwargs)
+            setattr(neuron, "position", coords)
+            self.neurons[coords] = neuron
+            try:
+                report("brain", "add_neuron", {"coords": coords}, "events")
+            except Exception:
+                pass
+            return neuron
+
+    def get_neuron(self, index: Sequence[int]) -> Optional[Neuron]:
+        if self.mode == "grid":
+            return self.neurons.get(tuple(int(i) for i in index))
+        else:
+            return self.neurons.get(tuple(float(v) for v in index))
+
+    def connect(self, src_index: Sequence[int], dst_index: Sequence[int], *, direction: str = "uni", **kwargs: Any) -> Synapse:
+        if self.mode == "grid":
+            sidx = tuple(int(i) for i in src_index)
+            didx = tuple(int(i) for i in dst_index)
+            src = self.get_neuron(sidx)
+            dst = self.get_neuron(didx)
+        else:
+            src = self.get_neuron(tuple(float(v) for v in src_index))
+            dst = self.get_neuron(tuple(float(v) for v in dst_index))
+        if src is None or dst is None:
+            raise ValueError("Both source and target neurons must exist to connect")
+        syn = Synapse(src, dst, direction=direction, **kwargs)
+        self.synapses.append(syn)
+        try:
+            report("brain", "connect", {"direction": direction}, "events")
+        except Exception:
+            pass
+        return syn
+
+    def available_indices(self) -> List[Tuple[int, ...]]:
+        if self.mode == "grid":
+            out = [idx for idx, inside in self.occupancy.items() if inside]
+            try:
+                report("brain", "available_indices", {"count": len(out)}, "metrics")
+            except Exception:
+                pass
+            return out
+        else:
+            # In sparse mode, return occupied coordinates (floats)
+            out = list(self.neurons.keys())  # type: ignore[return-value]
+            try:
+                report("brain", "available_indices", {"count": len(out)}, "metrics")
+            except Exception:
+                pass
+            return out
+
+    # --- Sparse mode utilities ---
+    def bulk_add_neurons(
+        self,
+        positions: Sequence[Sequence[float]],
+        *,
+        tensor: Union[TensorLike, Sequence[float], float, int] = 0.0,
+        **kwargs: Any,
+    ) -> List[Neuron]:
+        """Add multiple neurons in one call. In sparse mode, positions are world coords.
+        In grid mode, positions are indices. Returns the created neurons in order.
+        """
+        created: List[Neuron] = []
+        for pos in positions:
+            created.append(self.add_neuron(pos, tensor=tensor, **kwargs))
+        return created
+
+    def export_sparse(self, path: str, include_synapses: bool = True) -> None:
+        """Export sparse brain state to a JSON file. Only valid in sparse mode.
+
+        Stores n, sparse_bounds, neurons (coords, weight, bias, age, type_name, tensor list),
+        and synapses (source, target, direction, age, type_name) if requested.
+        """
+        if self.mode != "sparse":
+            raise ValueError("export_sparse is only available in sparse mode")
+
+        def tensor_to_list(t: Any) -> List[float]:
+            try:
+                # torch tensor path
+                if hasattr(t, "detach") and hasattr(t, "tolist"):
+                    return [float(x) for x in t.detach().to("cpu").view(-1).tolist()]
+            except Exception:
+                pass
+            # assume list-like
+            return [float(x) for x in (t if isinstance(t, (list, tuple)) else [t])]
+
+        data: Dict[str, Any] = {
+            "version": 1,
+            "n": self.n,
+            "mode": self.mode,
+            "sparse_bounds": [
+                [mn, mx if mx is not None else None] for (mn, mx) in self.sparse_bounds  # type: ignore[attr-defined]
+            ],
+            "neurons": [],
+        }
+
+        for coords, neuron in self.neurons.items():  # type: ignore[union-attr]
+            item = {
+                "coords": list(coords),
+                "weight": neuron.weight,
+                "bias": neuron.bias,
+                "age": neuron.age,
+                "type_name": neuron.type_name,
+                "tensor": tensor_to_list(neuron.tensor),
+            }
+            data["neurons"].append(item)
+
+        if include_synapses:
+            syn_list = []
+            for s in self.synapses:
+                src = getattr(s.source, "position", None)
+                dst = getattr(s.target, "position", None)
+                syn_list.append(
+                    {
+                        "source": list(src),
+                        "target": list(dst),
+                        "direction": s.direction,
+                        "age": s.age,
+                        "type_name": s.type_name,
+                    }
+                )
+            data["synapses"] = syn_list
+
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(data, f)
+        try:
+            report("brain", "export_sparse", {"path": path, "neurons": len(data["neurons"]), "synapses": len(data.get("synapses", []))}, "io")
+        except Exception:
+            pass
+
+    @classmethod
+    def import_sparse(cls, path: str) -> "Brain":
+        """Load a sparse brain from a JSON file created by export_sparse."""
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        if not isinstance(data, dict) or data.get("mode") != "sparse":
+            raise ValueError("Invalid sparse brain file")
+        n = int(data["n"])
+        sb_raw = data["sparse_bounds"]
+        sparse_bounds: List[Tuple[float, Optional[float]]] = []
+        for b in sb_raw:
+            mn = float(b[0])
+            mx = None if b[1] is None else float(b[1])
+            sparse_bounds.append((mn, mx))
+        brain = cls(n, mode="sparse", sparse_bounds=tuple(sparse_bounds))
+
+        for item in data.get("neurons", []):
+            coords = item["coords"]
+            tensor = item.get("tensor", 0.0)
+            weight = item.get("weight", 1.0)
+            bias = item.get("bias", 0.0)
+            age = item.get("age", 0)
+            type_name = item.get("type_name", None)
+            brain.add_neuron(coords, tensor=tensor, weight=weight, bias=bias, age=age, type_name=type_name)
+
+        for s in data.get("synapses", []):
+            src = s["source"]
+            dst = s["target"]
+            direction = s.get("direction", "uni")
+            age = s.get("age", 0)
+            type_name = s.get("type_name", None)
+            brain.connect(src, dst, direction=direction, age=age, type_name=type_name)
+
+        try:
+            report("brain", "import_sparse", {"path": path, "neurons": len(brain.neurons), "synapses": len(brain.synapses)}, "io")
+        except Exception:
+            pass
+        return brain
+
+    # --- Occupancy/grid helpers ---
+    def _normalize_size(self, size: Union[int, Sequence[int]]) -> Tuple[int, ...]:
+        if isinstance(size, int):
+            return tuple([size] * self.n)
+        return tuple(int(s) for s in size)
+
+    def _normalize_bounds(self, bounds: Optional[Sequence[Tuple[float, float]]]) -> Tuple[Tuple[float, float], ...]:
+        if bounds is None:
+            # Defaults: Mandelbrot-ish plane for first two dims, [-1,1] for others
+            default = [(-2.0, 1.0), (-1.5, 1.5)] + [(-1.0, 1.0)] * max(0, self.n - 2)
+            return tuple(default[: self.n])
+        return tuple((float(a), float(b)) for (a, b) in bounds)
+
+    def _normalize_sparse_bounds(self, bounds: Sequence[Union[Tuple[float, float], Tuple[float, None], Tuple[float]]]) -> Tuple[Tuple[float, Optional[float]], ...]:
+        norm: List[Tuple[float, Optional[float]]] = []
+        for b in bounds:
+            if len(b) == 1:
+                mn = float(b[0])
+                norm.append((mn, None))
+            elif len(b) == 2:
+                mn = float(b[0])
+                mx = b[1]
+                if mx is None:
+                    norm.append((mn, None))
+                else:
+                    mx_f = float(mx)
+                    if mx_f < mn:
+                        raise ValueError("max must be >= min for each dimension")
+                    norm.append((mn, mx_f))
+            else:
+                raise ValueError("Each sparse bound must be (min,) or (min,max)")
+        return tuple(norm)
+
+    def _map_index_to_coord(self, i: int, dim: int) -> float:
+        npoints = max(1, self.size[dim])
+        a, b = self.bounds[dim]
+        if npoints == 1:
+            return (a + b) / 2.0
+        # map i in [0, npoints-1] to [a,b]
+        t = float(i) / float(npoints - 1)
+        return a * (1.0 - t) + b * t
+
+    def _build_eval_env(self) -> Dict[str, Any]:
+        env: Dict[str, Any] = {}
+        # Math functions/constants
+        safe_math = {
+            k: getattr(math, k)
+            for k in (
+                "sin",
+                "cos",
+                "tan",
+                "asin",
+                "acos",
+                "atan",
+                "sqrt",
+                "exp",
+                "log",
+                "log10",
+                "fabs",
+                "floor",
+                "ceil",
+                "pow",
+                "pi",
+                "e",
+            )
+            if hasattr(math, k)
+        }
+        env.update(safe_math)
+        # Builtins allowed
+        env.update({"abs": abs, "min": min, "max": max})
+        # Special functions
+        env["mandelbrot"] = self._mandelbrot
+        env["mandelbrot_nd"] = self._mandelbrot_nd
+        return env
+
+    def _mandelbrot(self, n1: float, n2: float, *, max_iters: Optional[int] = None, escape_radius: Optional[float] = None) -> int:
+        # Classic 2D Mandelbrot on complex plane
+        iters = self.max_iters if max_iters is None else int(max_iters)
+        R = self.escape_radius if escape_radius is None else float(escape_radius)
+        c = complex(n1, n2)
+        z = 0j
+        for i in range(iters):
+            z = z * z + c
+            if (z.real * z.real + z.imag * z.imag) > R * R:
+                return i
+        return iters
+
+    def _mandelbrot_nd(self, *coords: float, max_iters: Optional[int] = None, escape_radius: Optional[float] = None) -> int:
+        # Simple n-D generalization using element-wise square and L2 norm for escape
+        iters = self.max_iters if max_iters is None else int(max_iters)
+        R = self.escape_radius if escape_radius is None else float(escape_radius)
+        c = list(float(x) for x in coords)
+        z = [0.0 for _ in c]
+        for i in range(iters):
+            z = [v * v + c[j] for j, v in enumerate(z)]
+            norm2 = sum(v * v for v in z)
+            if norm2 > R * R:
+                return i
+        return iters
+
+    def _eval_formula(self, coords: Tuple[float, ...]) -> float:
+        # If formula is None, default behavior: use mandelbrot (2D) or inside hypercube elsewhere
+        if self.formula is None:
+            if self.n == 2:
+                return float(self._mandelbrot(coords[0], coords[1]))
+            else:
+                # Inside everywhere by default
+                return 1.0
+        expr = self.formula.strip()
+        # Provide variables n1..nN
+        local_vars = {f"n{i+1}": coords[i] for i in range(self.n)}
+        try:
+            val = eval(expr, {"__builtins__": {}}, {**self._eval_env, **local_vars})
+        except Exception as e:
+            raise ValueError(f"Error evaluating formula: {e}")
+        # Interpret numeric/boolean
+        if isinstance(val, bool):
+            return 1.0 if val else 0.0
+        try:
+            return float(val)
+        except Exception:
+            raise ValueError("Formula must evaluate to a boolean or numeric value")
+
+    def _populate_occupancy(self) -> None:
+        # If a boolean-like formula (<=,>=,<,>), inside where True
+        # If numeric (e.g., mandelbrot iteration count), inside if val>0
+        # Iterate over all index tuples
+        def rec_build(dim: int, prefix: List[int]) -> None:
+            if dim == self.n:
+                idx = tuple(prefix)
+                coords = tuple(self._map_index_to_coord(prefix[d], d) for d in range(self.n))
+                val = self._eval_formula(coords)
+                inside = bool(val != 0.0)
+                self.occupancy[idx] = inside
+                return
+            for i in range(self.size[dim]):
+                prefix.append(i)
+                rec_build(dim + 1, prefix)
+                prefix.pop()
+
+        rec_build(0, [])
+
+
+__all__ += ["Brain"]
+
+
+# -----------------------------
+# Brain Training Plugins + Method
+# -----------------------------
+
+_BRAIN_TRAIN_TYPES: Dict[str, Any] = {}
+
+
+def register_brain_train_type(name: str, plugin: Any) -> None:
+    if not isinstance(name, str) or not name:
+        raise ValueError("Brain train type name must be a non-empty string")
+    _BRAIN_TRAIN_TYPES[name] = plugin
+
+
+def _merge_dict_safe(base: Dict[str, Any], extra: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    out = dict(base)
+    if isinstance(extra, dict):
+        out.update(extra)
+    return out
+
+
+def _normalize_walk_overrides(d: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    if not isinstance(d, dict):
+        return {}
+    out: Dict[str, Any] = {}
+    for k in ("max_steps", "lr"):
+        if k in d:
+            out[k] = d[k]
+    return out
+
+
+def _call_safely(fn: Optional[Callable], *args, **kwargs):
+    if fn is None:
+        return None
+    try:
+        return fn(*args, **kwargs)
+    except Exception:
+        return None
+
+
+def _maybe_report(group: str, item: str, data: Any, *subs: str) -> None:
+    try:
+        report(group, item, data, *subs)
+    except Exception:
+        pass
+
+
+def _select_start(brain: "Brain", wanderer: "Wanderer", i: int, plugin: Optional[Any], start_selector: Optional[Callable[["Brain"], Optional["Neuron"]]]):
+    # Plugin choice first
+    if plugin is not None and hasattr(plugin, "choose_start"):
+        res = _call_safely(getattr(plugin, "choose_start"), brain, wanderer, i)
+        if res is not None:
+            return res
+    # Fallback to start_selector
+    if start_selector is not None:
+        return start_selector(brain)
+    return None
+
+
+def _before_walk_overrides(plugin: Optional[Any], brain: "Brain", wanderer: "Wanderer", i: int) -> Dict[str, Any]:
+    if plugin is not None and hasattr(plugin, "before_walk"):
+        res = _call_safely(getattr(plugin, "before_walk"), brain, wanderer, i)
+        return _normalize_walk_overrides(res)
+    return {}
+
+
+def _after_walk(plugin: Optional[Any], brain: "Brain", wanderer: "Wanderer", i: int, stats: Dict[str, Any]) -> None:
+    if plugin is not None and hasattr(plugin, "after_walk"):
+        _call_safely(getattr(plugin, "after_walk"), brain, wanderer, i, stats)
+
+
+def _on_init_train(plugin: Optional[Any], brain: "Brain", wanderer: "Wanderer", config: Dict[str, Any]) -> None:
+    if plugin is not None and hasattr(plugin, "on_init"):
+        _call_safely(getattr(plugin, "on_init"), brain, wanderer, config)
+
+
+def _on_end_train(plugin: Optional[Any], brain: "Brain", wanderer: "Wanderer", history: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    if plugin is not None and hasattr(plugin, "on_end"):
+        res = _call_safely(getattr(plugin, "on_end"), brain, wanderer, history)
+        return res if isinstance(res, dict) else None
+    return None
+
+
+def _brain_train(
+    brain: "Brain",
+    wanderer: "Wanderer",
+    *,
+    num_walks: int,
+    max_steps: int,
+    lr: float,
+    start_selector: Optional[Callable[["Brain"], Optional["Neuron"]]],
+    callback: Optional[Callable[[int, Dict[str, Any]], None]],
+    type_name: Optional[str],
+) -> Dict[str, Any]:
+    plugin = _BRAIN_TRAIN_TYPES.get(type_name) if type_name else None
+    config = {
+        "num_walks": num_walks,
+        "max_steps": max_steps,
+        "lr": lr,
+        "type_name": type_name,
+    }
+    _on_init_train(plugin, brain, wanderer, config)
+    history: List[Dict[str, Any]] = []
+    for i in range(num_walks):
+        overrides = _before_walk_overrides(plugin, brain, wanderer, i)
+        ms = int(overrides.get("max_steps", max_steps))
+        lr_i = float(overrides.get("lr", lr))
+        start = _select_start(brain, wanderer, i, plugin, start_selector)
+        stats = wanderer.walk(max_steps=ms, start=start, lr=lr_i)
+        history.append(stats)
+        _after_walk(plugin, brain, wanderer, i, stats)
+        _maybe_report("training", f"brain_walk_{i}", {"loss": stats.get("loss", 0.0), "steps": stats.get("steps", 0)}, "brain")
+        if callback is not None:
+            _call_safely(callback, i, stats)
+    final_loss = history[-1]["loss"] if history else 0.0
+    extra = _on_end_train(plugin, brain, wanderer, history)
+    result = {"history": history, "final_loss": final_loss}
+    result = _merge_dict_safe(result, extra)
+    _maybe_report("training", "brain_summary", {"num_walks": num_walks, "final_loss": final_loss}, "brain")
+    return result
+
+
+# Method attached to Brain via class definition
+def _brain_train_method(
+    self: "Brain",
+    wanderer: "Wanderer",
+    *,
+    num_walks: int = 10,
+    max_steps: int = 10,
+    lr: float = 1e-2,
+    start_selector: Optional[Callable[["Brain"], Optional["Neuron"]]] = None,
+    callback: Optional[Callable[[int, Dict[str, Any]], None]] = None,
+    type_name: Optional[str] = None,
+) -> Dict[str, Any]:
+    return _brain_train(
+        self,
+        wanderer,
+        num_walks=num_walks,
+        max_steps=max_steps,
+        lr=lr,
+        start_selector=start_selector,
+        callback=callback,
+        type_name=type_name,
+    )
+
+
+# Bind train to Brain
+setattr(Brain, "train", _brain_train_method)
+
+__all__ += ["register_brain_train_type"]
+
+
+# -----------------------------
+# Wanderer with Autograd + Plugins
+# -----------------------------
+
+# Plugin registry for Wanderer
+_WANDERER_TYPES: Dict[str, Any] = {}
+
+
+def register_wanderer_type(name: str, plugin: Any) -> None:
+    if not isinstance(name, str) or not name:
+        raise ValueError("Wanderer type name must be a non-empty string")
+    _WANDERER_TYPES[name] = plugin
+
+
+class Wanderer(_DeviceHelper):
+    """Autograd-driven wanderer that traverses the Brain via neurons/synapses.
+
+    Behavior:
+    - Starts from a specific neuron or a random neuron within the brain.
+    - At each step, chooses a connected synapse and follows its allowed direction.
+      For bidirectional synapses, direction is chosen randomly.
+    - Uses torch autograd to build a computation graph over the path and performs a
+      backward pass to update visited neurons' weights/biases via simple SGD.
+
+    Plugins:
+    - A wanderer plugin can override path selection and/or loss computation by
+      implementing optional hooks on a provided object:
+        * on_init(wanderer)
+        * choose_next(wanderer, current_neuron, choices) -> (synapse, direction)
+          where choices is a list of (synapse, direction_str) with direction_str in
+          {"forward","backward"}.
+        * loss(wanderer, outputs) -> torch scalar tensor
+    """
+
+    def __init__(
+        self,
+        brain: "Brain",
+        *,
+        type_name: Optional[str] = None,
+        seed: Optional[int] = None,
+        loss: Optional[Union[str, Callable[..., Any], Any]] = None,
+        target_provider: Optional[Callable[[Any], Any]] = None,
+    ) -> None:
+        super().__init__()
+        # Mandatory autograd requirement
+        if self._torch is None:
+            raise RuntimeError(
+                "torch is required for Wanderer autograd. Please install CPU torch (or GPU if available) and retry."
+            )
+        self.brain = brain
+        self.type_name = type_name
+        self.rng = random.Random(seed)
+        self._plugin_state: Dict[str, Any] = {}
+        self._visited: List[Neuron] = []
+        self._param_map: Dict[int, Tuple[Any, Any]] = {}  # id(neuron) -> (w_param, b_param)
+        self._loss_spec = loss
+        self._loss_module = None  # torch.nn.* instance if applicable
+        self._target_provider = target_provider
+
+        try:
+            report("wanderer", "init", {"plugin": self.type_name}, "events")
+        except Exception:
+            pass
+
+        # Walk-control state
+        self._last_walk_loss: Optional[float] = None
+        self._finish_requested: bool = False
+        self._finish_stats: Optional[Dict[str, Any]] = None
+        self._walk_ctx: Dict[str, Any] = {}
+
+        plugin = _WANDERER_TYPES.get(self.type_name) if self.type_name else None
+        if plugin is not None and hasattr(plugin, "on_init"):
+            plugin.on_init(self)  # type: ignore[attr-defined]
+
+    # --- Public API ---
+    def walk(
+        self,
+        *,
+        max_steps: int = 10,
+        start: Optional[Neuron] = None,
+        lr: float = 1e-2,
+        loss_fn: Optional[Callable[[List[Any]], Any]] = None,
+    ) -> Dict[str, Any]:
+        """Perform a single wander with autograd-backed forward/backward.
+
+        - max_steps: maximum edges to traverse
+        - start: optional starting neuron; if None, randomly pick from brain
+        - lr: learning rate for SGD updates on weight/bias
+        - loss_fn: optional callable taking list of outputs (torch tensors) and
+          returning a scalar tensor. If None, defaults to sum of mean-square.
+        Returns: dict with loss value (float), steps taken, and visited count.
+        """
+        torch = self._torch  # type: ignore[assignment]
+
+        current = start if start is not None else self._random_start()
+        if current is None:
+            return {"loss": 0.0, "steps": 0, "visited": 0}
+
+        # We'll build a computation graph across the path
+        outputs: List[Any] = []
+        self._visited = []
+        self._param_map = {}
+        step_metrics: List[Dict[str, float]] = []
+        # Reset walk control
+        self._finish_requested = False
+        self._finish_stats = None
+        self._walk_ctx = {}
+
+        # Detach any existing neuron tensors to avoid graph accumulation across walks
+        try:
+            for n in self.brain.neurons.values():  # type: ignore[union-attr]
+                t = getattr(n, "tensor", None)
+                if hasattr(t, "detach") and hasattr(t, "to"):
+                    n.tensor = t.detach().to(self._device)
+        except Exception:
+            pass
+
+        # Helper to fetch or create autograd params for a neuron
+        def params_for(n: Neuron) -> Tuple[Any, Any]:
+            key = id(n)
+            if key in self._param_map:
+                return self._param_map[key]
+            w = torch.tensor(float(n.weight), dtype=torch.float32, device=self._device, requires_grad=True)
+            b = torch.tensor(float(n.bias), dtype=torch.float32, device=self._device, requires_grad=True)
+            self._param_map[key] = (w, b)
+            return w, b
+
+        steps = 0
+        # Track the value currently carried when traversing; None uses neuron.tensor
+        carried_value: Optional[Any] = None
+        while steps < max_steps and current is not None:
+            self._visited.append(current)
+            w_param, b_param = params_for(current)
+
+            # Temporarily bind parameters to neuron to reuse its forward behavior
+            original_w = current.weight
+            original_b = current.bias
+            current.weight = w_param  # type: ignore[assignment]
+            current.bias = b_param  # type: ignore[assignment]
+            try:
+                out = current.forward(carried_value)
+            finally:
+                # Keep params assigned for graph continuity but also track originals
+                # We won't restore originals until after optimization step
+                pass
+
+            outputs.append(out)
+
+            # Per-step loss and delta computation
+            cur_loss_t = self._compute_loss(outputs, override_loss=loss_fn)
+            cur_loss = float(cur_loss_t.detach().to("cpu").item())
+            prev_loss = step_metrics[-1]["loss"] if step_metrics else None
+            delta = cur_loss - prev_loss if prev_loss is not None else 0.0
+            step_metrics.append({"loss": cur_loss, "delta": delta})
+
+            # Update walk context (for plugins to inspect and optionally finish)
+            self._walk_ctx = {
+                "current": current,
+                "outputs": outputs,
+                "steps": steps,
+                "cur_loss_tensor": cur_loss_t,
+            }
+
+            # Determine next move
+            choices = self._gather_choices(current)
+            if not choices:
+                break
+
+            plugin = _WANDERER_TYPES.get(self.type_name) if self.type_name else None
+            if plugin is not None and hasattr(plugin, "choose_next"):
+                next_syn, dir_str = plugin.choose_next(self, current, choices)  # type: ignore[attr-defined]
+            else:
+                next_syn, dir_str = self._random_choice(choices)
+
+            # Transmit along chosen direction; carried value becomes the transmitted output
+            if dir_str == "forward":
+                next_syn.transmit(out, direction="forward")
+                next_neuron = next_syn.target
+            else:
+                next_syn.transmit(out, direction="backward")
+                next_neuron = next_syn.source
+
+            # Check if a plugin requested walk finish
+            if self._finish_requested:
+                break
+
+            try:
+                report("wanderer", "step", {"dir": dir_str, "choices": len(choices)}, "events")
+            except Exception:
+                pass
+
+            current = next_neuron
+            carried_value = out
+            steps += 1
+
+        # Loss computation
+        if self._finish_stats is not None and "loss_tensor" in self._finish_stats:
+            loss = self._finish_stats["loss_tensor"]
+        else:
+            loss = self._compute_loss(outputs, override_loss=loss_fn)
+
+        # Backward pass
+        loss.backward()
+
+        # SGD update and restore scalar floats in neurons
+        for n in self._visited:
+            w_param, b_param = self._param_map[id(n)]
+            with torch.no_grad():
+                w_new = w_param - lr * (w_param.grad if w_param.grad is not None else 0.0)
+                b_new = b_param - lr * (b_param.grad if b_param.grad is not None else 0.0)
+            # Assign back as Python floats for general compatibility
+            try:
+                n.weight = float(w_new.item())  # type: ignore[assignment]
+            except Exception:
+                n.weight = float(w_new)  # type: ignore[assignment]
+            try:
+                n.bias = float(b_new.item())  # type: ignore[assignment]
+            except Exception:
+                n.bias = float(b_new)  # type: ignore[assignment]
+
+        res = {
+            "loss": float(loss.detach().to("cpu").item()),
+            "steps": int(steps),
+            "visited": int(len(self._visited)),
+            "step_metrics": step_metrics,
+        }
+        try:
+            report("wanderer", "walk", res, "metrics")
+        except Exception:
+            pass
+        return res
+
+    # --- Internal helpers ---
+    def _random_start(self) -> Optional[Neuron]:
+        # Choose a random neuron from the brain
+        if not self.brain.neurons:
+            return None
+        try:
+            # neurons is a dict; pick a random value
+            idx = self.rng.randrange(0, len(self.brain.neurons))
+            return list(self.brain.neurons.values())[idx]  # type: ignore[call-arg]
+        except Exception:
+            # Fallback
+            for n in self.brain.neurons.values():  # type: ignore[call-arg]
+                return n
+            return None
+
+    def _gather_choices(self, n: Neuron) -> List[Tuple["Synapse", str]]:
+        # Collect feasible (synapse, direction) pairs respecting synapse.direction
+        choices: List[Tuple[Synapse, str]] = []
+        # From outgoing we can go forward if synapse is uni or bi
+        for s in n.outgoing:
+            if s.direction in ("uni", "bi"):
+                choices.append((s, "forward"))
+        # From incoming we can go backward if synapse is bi
+        for s in n.incoming:
+            if s.direction == "bi":
+                choices.append((s, "backward"))
+        return choices
+
+    def _random_choice(self, choices: List[Tuple["Synapse", str]]) -> Tuple["Synapse", str]:
+        return self.rng.choice(choices)
+
+    def _compute_loss(self, outputs: List[Any], *, override_loss: Optional[Callable[[List[Any]], Any]] = None):
+        torch = self._torch  # type: ignore[assignment]
+        plugin = _WANDERER_TYPES.get(self.type_name) if self.type_name else None
+        if plugin is not None and hasattr(plugin, "loss"):
+            return plugin.loss(self, outputs)  # type: ignore[attr-defined]
+        if override_loss is not None:
+            return override_loss(outputs)
+        # If self._loss_spec references torch.nn.* create once
+        if isinstance(self._loss_spec, str) and self._loss_spec.startswith("nn."):
+            if self._loss_module is None:
+                # Resolve from torch.nn
+                try:
+                    nn = getattr(torch, "nn")
+                    cls_name = self._loss_spec.split(".", 1)[1]
+                    LossCls = getattr(nn, cls_name)
+                    self._loss_module = LossCls()
+                except Exception as e:
+                    raise ValueError(f"Could not resolve loss spec {self._loss_spec}: {e}")
+            loss_mod = self._loss_module
+            # Apply module to each output against a target
+            terms = []
+            for y in outputs:
+                if hasattr(y, "detach") and hasattr(y, "to"):
+                    yt = y.float()
+                else:
+                    yt = torch.tensor([float(v) for v in (y if isinstance(y, (list, tuple)) else [y])],
+                                      dtype=torch.float32, device=self._device)
+                # Build a target
+                if self._target_provider is not None:
+                    tgt = self._target_provider(yt)
+                    if not (hasattr(tgt, "to")):
+                        tgt = torch.tensor(tgt, dtype=yt.dtype, device=self._device)
+                else:
+                    tgt = torch.zeros_like(yt)
+                terms.append(loss_mod(yt, tgt))
+            return sum(terms) if terms else torch.tensor(0.0, device=self._device)
+        elif callable(self._loss_spec):
+            return self._loss_spec(outputs)
+        else:
+            # Default: sum mean-square (zero target)
+            terms = []
+            for y in outputs:
+                if hasattr(y, "detach") and hasattr(y, "to") and hasattr(y, "float"):
+                    yt = y.float()
+                    terms.append((yt.view(-1) ** 2).mean())
+                else:
+                    t = torch.tensor([float(v) for v in (y if isinstance(y, (list, tuple)) else [y])],
+                                     dtype=torch.float32, device=self._device)
+                    terms.append((t.view(-1) ** 2).mean())
+            return sum(terms) if terms else torch.tensor(0.0, device=self._device)
+
+    # --- Walk finish control (for plugins) ---
+    def walkfinish(self) -> Tuple[float, Optional[float]]:
+        """Plugins may call this to finish the current walk early.
+
+        Returns a tuple (final_loss_value, delta_vs_previous_walk).
+        Also records and reports the final loss at the output neuron.
+        """
+        if not self._walk_ctx:
+            # Not in a walk; nothing to do
+            return (0.0, None)
+        outputs: List[Any] = self._walk_ctx.get("outputs", [])
+        current: Optional[Neuron] = self._walk_ctx.get("current")
+        loss_t = self._compute_loss(outputs)
+        loss_v = float(loss_t.detach().to("cpu").item())
+        delta = None if self._last_walk_loss is None else (loss_v - self._last_walk_loss)
+        out_pos = getattr(current, "position", None) if current is not None else None
+        self._finish_stats = {"loss_tensor": loss_t, "loss": loss_v, "delta": delta, "output_neuron": out_pos}
+        self._finish_requested = True
+        try:
+            report("wanderer", "walkfinish", {"loss": loss_v, "delta_vs_prev": delta, "output_neuron_pos": out_pos}, "events")
+        except Exception:
+            pass
+        return (loss_v, delta)
+
+
+__all__ += [
+    "Wanderer",
+    "register_wanderer_type",
+]
+
+
+# -----------------------------
+# High-level Helpers
+# -----------------------------
+
+def run_wanderer_training(
+    brain: "Brain",
+    *,
+    num_walks: int = 10,
+    max_steps: int = 10,
+    lr: float = 1e-2,
+    start_selector: Optional[Callable[["Brain"], Optional["Neuron"]]] = None,
+    wanderer_type: Optional[str] = None,
+    seed: Optional[int] = None,
+    loss: Optional[Union[str, Callable[..., Any], Any]] = None,
+    target_provider: Optional[Callable[[Any], Any]] = None,
+    callback: Optional[Callable[[int, Dict[str, Any]], None]] = None,
+) -> Dict[str, Any]:
+    """Run multiple wanderer walks as a simple training loop.
+
+    - brain: target Brain
+    - num_walks: number of walks/episodes
+    - max_steps: maximum steps per walk
+    - lr: learning rate per walk
+    - start_selector: optional callable to choose a starting neuron per walk
+    - wanderer_type: optional plugin type name for Wanderer
+    - seed: RNG seed for Wanderer
+    - loss: None, callable, or string like 'nn.MSELoss'
+    - target_provider: optional target builder for built-in nn losses
+    - callback: optional hook called as callback(i, stats) per walk
+
+    Returns dict with 'history' list of walk stats and aggregate 'final_loss'.
+    """
+    w = Wanderer(brain, type_name=wanderer_type, seed=seed, loss=loss, target_provider=target_provider)
+    history: List[Dict[str, Any]] = []
+    for i in range(num_walks):
+        start = start_selector(brain) if start_selector is not None else None
+        stats = w.walk(max_steps=max_steps, start=start, lr=lr)
+        history.append(stats)
+        try:
+            report("training", f"walk_{i}", {"loss": stats.get("loss", 0.0), "steps": stats.get("steps", 0)}, "wanderer")
+        except Exception:
+            pass
+        if callback is not None:
+            try:
+                callback(i, stats)
+            except Exception:
+                pass
+    final_loss = history[-1]["loss"] if history else 0.0
+    out = {"history": history, "final_loss": final_loss}
+    try:
+        report("training", "summary", {"num_walks": num_walks, "final_loss": final_loss}, "wanderer")
+    except Exception:
+        pass
+    return out
+
+
+__all__ += ["run_wanderer_training"]
+
+
+# -----------------------------
+# Reporter: grouped data collection
+# -----------------------------
+
+class _ReporterItemAccessor:
+    def __init__(self, owner: "Reporter") -> None:
+        self._owner = owner
+
+    def __setitem__(self, key, value) -> None:
+        # Accept (itemname, groupname[, subgroup1, subgroup2, ...])
+        if not isinstance(key, tuple) or len(key) < 2:
+            raise KeyError("Key must be a tuple of (itemname, groupname[, subgroups...])")
+        itemname = key[0]
+        path = tuple(str(x) for x in key[1:])
+        self._owner._set_item(path, str(itemname), value)
+
+    def __getitem__(self, key):
+        if not isinstance(key, tuple) or len(key) < 2:
+            raise KeyError("Key must be a tuple of (itemname, groupname[, subgroups...])")
+        itemname = key[0]
+        path = tuple(str(x) for x in key[1:])
+        return self._owner.get_item(path, str(itemname))
+
+    def __call__(self, itemname: str, groupname: str):
+        return self._owner.get_item((groupname,), itemname)
+
+
+class Reporter:
+    """Collects arbitrary Python data organized into named groups.
+
+    - registergroup(groupname): ensure a group exists
+    - item accessor: reporter.item["itemname", "groupname"] = data (create/update)
+                     reporter.item("itemname", "groupname") -> data
+    - group(groupname): returns dict of items in the group (shallow copy)
+    """
+
+    def __init__(self) -> None:
+        self._lock = threading.RLock()
+        # _groups: name -> node; node = {"_items": {name->value}, "_subgroups": {name->node}}
+        self._groups: Dict[str, Dict[str, Any]] = {}
+        self.item = _ReporterItemAccessor(self)
+
+    def registergroup(self, groupname: str, *subgroups: str) -> None:
+        with self._lock:
+            self._ensure_group_path((str(groupname),) + tuple(str(s) for s in subgroups))
+
+    def _ensure_group_path(self, path: Tuple[str, ...]) -> Dict[str, Any]:
+        node: Dict[str, Any]
+        # root-level groups
+        node = {"_items": {}, "_subgroups": self._groups}
+        for idx, name in enumerate(path):
+            subs = node["_subgroups"]
+            if name not in subs or not isinstance(subs[name], dict):
+                subs[name] = {"_items": {}, "_subgroups": {}}
+            node = subs[name]
+        return node
+
+    def _set_item(self, group_path: Tuple[str, ...], itemname: str, value: Any) -> None:
+        with self._lock:
+            node = self._ensure_group_path(group_path)
+            node["_items"][str(itemname)] = value
+
+    def get_item(self, group_path: Tuple[str, ...], itemname: str) -> Any:
+        with self._lock:
+            node = self._find_group_node(group_path)
+            return None if node is None else node["_items"].get(str(itemname), None)
+
+    def group(self, groupname: str, *subgroups: str) -> Dict[str, Any]:
+        path = (str(groupname),) + tuple(str(s) for s in subgroups)
+        with self._lock:
+            node = self._find_group_node(path)
+            return {} if node is None else dict(node["_items"])  # shallow copy
+
+    def dirgroups(self) -> List[str]:
+        with self._lock:
+            return list(self._groups.keys())
+
+    def dirtree(self, groupname: Optional[str] = None, *subgroups: str) -> Dict[str, Any]:
+        with self._lock:
+            if groupname is None:
+                return {k: self._summarize(self._groups[k]) for k in self._groups}
+            path = (str(groupname),) + tuple(str(s) for s in subgroups)
+            node = self._find_group_node(path)
+            return {} if node is None else self._summarize(node)
+
+    def _find_group_node(self, path: Tuple[str, ...]) -> Optional[Dict[str, Any]]:
+        node: Dict[str, Any] = {"_items": {}, "_subgroups": self._groups}
+        cur: Optional[Dict[str, Any]] = node
+        for name in path:
+            if cur is None:
+                return None
+            subs = cur.get("_subgroups", {})
+            cur = subs.get(str(name))
+            if not isinstance(cur, dict):
+                return None
+        return cur
+
+    def _summarize(self, node: Dict[str, Any]) -> Dict[str, Any]:
+        # Return a tree with just names: {"items": [...], "subgroups": {name: subtree}}
+        items = list(node.get("_items", {}).keys())
+        subs: Dict[str, Any] = {}
+        for name, sub in node.get("_subgroups", {}).items():
+            if isinstance(sub, dict):
+                subs[name] = self._summarize(sub)
+        return {"items": items, "subgroups": subs}
+
+
+# Global reporter instance for cross-module usage
+REPORTER = Reporter()
+
+__all__ += ["Reporter", "REPORTER"]
+
+
+# Convenience wrappers for reporting
+def report(groupname: str, itemname: str, data: Any, *subgroups: str) -> None:
+    REPORTER.item[(itemname,) + (groupname,) + tuple(subgroups)] = data
+
+def report_group(groupname: str, *subgroups: str) -> Dict[str, Any]:
+    return REPORTER.group(groupname, *subgroups)
+
+def report_dir(groupname: Optional[str] = None, *subgroups: str) -> Dict[str, Any]:
+    return REPORTER.dirtree(groupname, *subgroups)
+
+__all__ += ["report", "report_group", "report_dir"]
+

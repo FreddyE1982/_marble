@@ -1,0 +1,457 @@
+﻿class Wanderer(_DeviceHelper):
+    """Autograd-driven wanderer that traverses the Brain via neurons/synapses.
+
+    Behavior:
+    - Starts from a specific neuron or a random neuron within the brain.
+    - At each step, chooses a connected synapse and follows its allowed direction.
+      For bidirectional synapses, direction is chosen randomly.
+    - Uses torch autograd to build a computation graph over the path and performs a
+      backward pass to update visited neurons' weights/biases via simple SGD.
+
+    Plugins:
+    - A wanderer plugin can override path selection and/or loss computation by
+      implementing optional hooks on a provided object:
+        * on_init(wanderer)
+        * choose_next(wanderer, current_neuron, choices) -> (synapse, direction)
+          where choices is a list of (synapse, direction_str) with direction_str in
+          {"forward","backward"}.
+        * loss(wanderer, outputs) -> torch scalar tensor
+    """
+
+    def __init__(
+        self,
+        brain: "Brain",
+        *,
+        type_name: Optional[str] = None,
+        seed: Optional[int] = None,
+        loss: Optional[Union[str, Callable[..., Any], Any]] = None,
+        target_provider: Optional[Callable[[Any], Any]] = None,
+    ) -> None:
+        super().__init__()
+        # Mandatory autograd requirement
+        if self._torch is None:
+            raise RuntimeError(
+                "torch is required for Wanderer autograd. Please install CPU torch (or GPU if available) and retry."
+            )
+        self.brain = brain
+        self.type_name = type_name
+        self.rng = random.Random(seed)
+        self._plugin_state: Dict[str, Any] = {}
+        self._visited: List[Neuron] = []
+        self._param_map: Dict[int, Tuple[Any, Any]] = {}  # id(neuron) -> (w_param, b_param)
+        self._loss_spec = loss
+        self._loss_module = None  # torch.nn.* instance if applicable
+        self._target_provider = target_provider
+
+        try:
+            report("wanderer", "init", {"plugin": self.type_name}, "events")
+        except Exception:
+            pass
+
+        # Walk-control state
+        self._last_walk_loss: Optional[float] = None
+        self._finish_requested: bool = False
+        self._finish_stats: Optional[Dict[str, Any]] = None
+        self._walk_ctx: Dict[str, Any] = {}
+
+        plugin = _WANDERER_TYPES.get(self.type_name) if self.type_name else None
+        if plugin is not None and hasattr(plugin, "on_init"):
+            plugin.on_init(self)  # type: ignore[attr-defined]
+
+    # --- Public API ---
+    def walk(
+        self,
+        *,
+        max_steps: int = 10,
+        start: Optional[Neuron] = None,
+        lr: float = 1e-2,
+        loss_fn: Optional[Callable[[List[Any]], Any]] = None,
+    ) -> Dict[str, Any]:
+        """Perform a single wander with autograd-backed forward/backward.
+
+        - max_steps: maximum edges to traverse
+        - start: optional starting neuron; if None, randomly pick from brain
+        - lr: learning rate for SGD updates on weight/bias
+        - loss_fn: optional callable taking list of outputs (torch tensors) and
+          returning a scalar tensor. If None, defaults to sum of mean-square.
+        Returns: dict with loss value (float), steps taken, and visited count.
+        """
+        torch = self._torch  # type: ignore[assignment]
+
+        current = start if start is not None else self._random_start()
+        if current is None:
+            return {"loss": 0.0, "steps": 0, "visited": 0}
+
+        # We'll build a computation graph across the path
+        outputs: List[Any] = []
+        self._visited = []
+        self._param_map = {}
+        step_metrics: List[Dict[str, float]] = []
+        # Reset walk control
+        self._finish_requested = False
+        self._finish_stats = None
+        self._walk_ctx = {}
+
+        # Detach any existing neuron tensors to avoid graph accumulation across walks
+        try:
+            for n in self.brain.neurons.values():  # type: ignore[union-attr]
+                t = getattr(n, "tensor", None)
+                if hasattr(t, "detach") and hasattr(t, "to"):
+                    n.tensor = t.detach().to(self._device)
+        except Exception:
+            pass
+
+        # Helper to fetch or create autograd params for a neuron
+        def params_for(n: Neuron) -> Tuple[Any, Any]:
+            key = id(n)
+            if key in self._param_map:
+                return self._param_map[key]
+            w = torch.tensor(float(n.weight), dtype=torch.float32, device=self._device, requires_grad=True)
+            b = torch.tensor(float(n.bias), dtype=torch.float32, device=self._device, requires_grad=True)
+            self._param_map[key] = (w, b)
+            return w, b
+
+        steps = 0
+        # Track the value currently carried when traversing; None uses neuron.tensor
+        carried_value: Optional[Any] = None
+        while steps < max_steps and current is not None:
+            self._visited.append(current)
+            w_param, b_param = params_for(current)
+
+            # Temporarily bind parameters to neuron to reuse its forward behavior
+            original_w = current.weight
+            original_b = current.bias
+            current.weight = w_param  # type: ignore[assignment]
+            current.bias = b_param  # type: ignore[assignment]
+            try:
+                out = current.forward(carried_value)
+            finally:
+                # Keep params assigned for graph continuity but also track originals
+                # We won't restore originals until after optimization step
+                pass
+
+            outputs.append(out)
+
+            # Per-step loss and delta computation
+            cur_loss_t = self._compute_loss(outputs, override_loss=loss_fn)
+            cur_loss = float(cur_loss_t.detach().to("cpu").item())
+            prev_loss = step_metrics[-1]["loss"] if step_metrics else None
+            delta = cur_loss - prev_loss if prev_loss is not None else 0.0
+            step_metrics.append({"loss": cur_loss, "delta": delta})
+
+            # Update walk context (for plugins to inspect and optionally finish)
+            self._walk_ctx = {
+                "current": current,
+                "outputs": outputs,
+                "steps": steps,
+                "cur_loss_tensor": cur_loss_t,
+            }
+
+            # Determine next move
+            choices = self._gather_choices(current)
+            if not choices:
+                break
+
+            plugin = _WANDERER_TYPES.get(self.type_name) if self.type_name else None
+            if plugin is not None and hasattr(plugin, "choose_next"):
+                next_syn, dir_str = plugin.choose_next(self, current, choices)  # type: ignore[attr-defined]
+            else:
+                next_syn, dir_str = self._random_choice(choices)
+
+            # Transmit along chosen direction; carried value becomes the transmitted output
+            if dir_str == "forward":
+                next_syn.transmit(out, direction="forward")
+                next_neuron = next_syn.target
+            else:
+                next_syn.transmit(out, direction="backward")
+                next_neuron = next_syn.source
+
+            # Check if a plugin requested walk finish
+            if self._finish_requested:
+                break
+
+            try:
+                report("wanderer", "step", {"dir": dir_str, "choices": len(choices)}, "events")
+            except Exception:
+                pass
+
+            current = next_neuron
+            carried_value = out
+            steps += 1
+
+        # Loss computation
+        if self._finish_stats is not None and "loss_tensor" in self._finish_stats:
+            loss = self._finish_stats["loss_tensor"]
+        else:
+            loss = self._compute_loss(outputs, override_loss=loss_fn)
+
+        # Backward pass
+        loss.backward()
+
+        # SGD update and restore scalar floats in neurons
+        for n in self._visited:
+            w_param, b_param = self._param_map[id(n)]
+            with torch.no_grad():
+                w_new = w_param - lr * (w_param.grad if w_param.grad is not None else 0.0)
+                b_new = b_param - lr * (b_param.grad if b_param.grad is not None else 0.0)
+            # Assign back as Python floats for general compatibility
+            try:
+                n.weight = float(w_new.item())  # type: ignore[assignment]
+            except Exception:
+                n.weight = float(w_new)  # type: ignore[assignment]
+            try:
+                n.bias = float(b_new.item())  # type: ignore[assignment]
+            except Exception:
+                n.bias = float(b_new)  # type: ignore[assignment]
+
+        res = {
+            "loss": float(loss.detach().to("cpu").item()),
+            "steps": int(steps),
+            "visited": int(len(self._visited)),
+            "step_metrics": step_metrics,
+        }
+        try:
+            report("wanderer", "walk", res, "metrics")
+        except Exception:
+            pass
+        return res
+
+    # --- Internal helpers ---
+    def _random_start(self) -> Optional[Neuron]:
+        # Choose a random neuron from the brain
+        if not self.brain.neurons:
+            return None
+        try:
+            # neurons is a dict; pick a random value
+            idx = self.rng.randrange(0, len(self.brain.neurons))
+            return list(self.brain.neurons.values())[idx]  # type: ignore[call-arg]
+        except Exception:
+            # Fallback
+            for n in self.brain.neurons.values():  # type: ignore[call-arg]
+                return n
+            return None
+
+    def _gather_choices(self, n: Neuron) -> List[Tuple["Synapse", str]]:
+        # Collect feasible (synapse, direction) pairs respecting synapse.direction
+        choices: List[Tuple[Synapse, str]] = []
+        # From outgoing we can go forward if synapse is uni or bi
+        for s in n.outgoing:
+            if s.direction in ("uni", "bi"):
+                choices.append((s, "forward"))
+        # From incoming we can go backward if synapse is bi
+        for s in n.incoming:
+            if s.direction == "bi":
+                choices.append((s, "backward"))
+        return choices
+
+    def _random_choice(self, choices: List[Tuple["Synapse", str]]) -> Tuple["Synapse", str]:
+        return self.rng.choice(choices)
+
+    def _compute_loss(self, outputs: List[Any], *, override_loss: Optional[Callable[[List[Any]], Any]] = None):
+        torch = self._torch  # type: ignore[assignment]
+        plugin = _WANDERER_TYPES.get(self.type_name) if self.type_name else None
+        if plugin is not None and hasattr(plugin, "loss"):
+            return plugin.loss(self, outputs)  # type: ignore[attr-defined]
+        if override_loss is not None:
+            return override_loss(outputs)
+        # If self._loss_spec references torch.nn.* create once
+        if isinstance(self._loss_spec, str) and self._loss_spec.startswith("nn."):
+            if self._loss_module is None:
+                # Resolve from torch.nn
+                try:
+                    nn = getattr(torch, "nn")
+                    cls_name = self._loss_spec.split(".", 1)[1]
+                    LossCls = getattr(nn, cls_name)
+                    self._loss_module = LossCls()
+                except Exception as e:
+                    raise ValueError(f"Could not resolve loss spec {self._loss_spec}: {e}")
+            loss_mod = self._loss_module
+            loss_name = type(loss_mod).__name__ if hasattr(loss_mod, "__class__") else ""
+            # Apply module to each output against a target
+            terms = []
+            for y in outputs:
+                if hasattr(y, "detach") and hasattr(y, "to"):
+                    yt = y.float()
+                else:
+                    yt = torch.tensor([float(v) for v in (y if isinstance(y, (list, tuple)) else [y])],
+                                      dtype=torch.float32, device=self._device)
+                # Build a target
+                if self._target_provider is not None:
+                    tgt = self._target_provider(yt)
+                    if not (hasattr(tgt, "to")):
+                        # Dtype inference based on loss type
+                        cls_losses_long = {"CrossEntropyLoss", "NLLLoss", "MultiMarginLoss", "MultiLabelMarginLoss"}
+                        if loss_name in cls_losses_long:
+                            tgt = torch.tensor(tgt, dtype=torch.long, device=self._device)
+                        else:
+                            tgt = torch.tensor(tgt, dtype=yt.dtype, device=self._device)
+                else:
+                    tgt = torch.zeros_like(yt)
+
+                # If target is already a tensor, coerce dtype/device per loss requirements
+                try:
+                    if hasattr(tgt, "to"):
+                        cls_losses_long = {"CrossEntropyLoss", "NLLLoss", "MultiMarginLoss", "MultiLabelMarginLoss"}
+                        if loss_name in cls_losses_long:
+                            tgt = tgt.to(device=self._device, dtype=torch.long)
+                        else:
+                            tgt = tgt.to(device=self._device, dtype=yt.dtype)
+                except Exception:
+                    pass
+
+                # Align simple 1D shapes by padding/truncation when needed (keeps scalar broadcast)
+                try:
+                    if hasattr(yt, "view") and hasattr(tgt, "view"):
+                        yv = yt.view(-1)
+                        tv = tgt if hasattr(tgt, "view") else tgt
+                        if hasattr(tv, "view"):
+                            tv = tv.view(-1)
+                        if tv.numel() == 1:
+                            aligned = tgt  # scalar will broadcast
+                        elif yv.numel() == tv.numel():
+                            aligned = tv.view_as(yv)
+                        elif tv.numel() < yv.numel():
+                            pad_len = int(yv.numel() - tv.numel())
+                            pad_vals = torch.zeros(pad_len, dtype=tv.dtype if hasattr(tv, "dtype") else yt.dtype, device=self._device)
+                            aligned = torch.cat([tv, pad_vals], dim=0)
+                        else:  # tv longer than yv
+                            aligned = tv[: yv.numel()]
+                        tgt = aligned
+                except Exception:
+                    pass
+                terms.append(loss_mod(yt, tgt))
+            return sum(terms) if terms else torch.tensor(0.0, device=self._device)
+        elif callable(self._loss_spec):
+            return self._loss_spec(outputs)
+        else:
+            # Default: sum mean-square (zero target)
+            terms = []
+            for y in outputs:
+                if hasattr(y, "detach") and hasattr(y, "to") and hasattr(y, "float"):
+                    yt = y.float()
+                    terms.append((yt.view(-1) ** 2).mean())
+                else:
+                    t = torch.tensor([float(v) for v in (y if isinstance(y, (list, tuple)) else [y])],
+                                     dtype=torch.float32, device=self._device)
+                    terms.append((t.view(-1) ** 2).mean())
+            return sum(terms) if terms else torch.tensor(0.0, device=self._device)
+
+    # --- Walk finish control (for plugins) ---
+    def walkfinish(self) -> Tuple[float, Optional[float]]:
+        """Plugins may call this to finish the current walk early.
+
+        Returns a tuple (final_loss_value, delta_vs_previous_walk).
+        Also records and reports the final loss at the output neuron.
+        """
+        if not self._walk_ctx:
+            # Not in a walk; nothing to do
+            return (0.0, None)
+        outputs: List[Any] = self._walk_ctx.get("outputs", [])
+        current: Optional[Neuron] = self._walk_ctx.get("current")
+        loss_t = self._compute_loss(outputs)
+        loss_v = float(loss_t.detach().to("cpu").item())
+        delta = None if self._last_walk_loss is None else (loss_v - self._last_walk_loss)
+        out_pos = getattr(current, "position", None) if current is not None else None
+        self._finish_stats = {"loss_tensor": loss_t, "loss": loss_v, "delta": delta, "output_neuron": out_pos}
+        self._finish_requested = True
+        try:
+            report("wanderer", "walkfinish", {"loss": loss_v, "delta_vs_prev": delta, "output_neuron_pos": out_pos}, "events")
+        except Exception:
+            pass
+        return (loss_v, delta)
+
+
+__all__ += [
+    "Wanderer",
+    "register_wanderer_type",
+]
+
+
+# -----------------------------
+# High-level Helpers
+# -----------------------------
+
+def run_wanderer_training(
+    brain: "Brain",
+    *,
+    num_walks: int = 10,
+    max_steps: int = 10,
+    lr: float = 1e-2,
+    start_selector: Optional[Callable[["Brain"], Optional["Neuron"]]] = None,
+    wanderer_type: Optional[str] = None,
+    seed: Optional[int] = None,
+    loss: Optional[Union[str, Callable[..., Any], Any]] = None,
+    target_provider: Optional[Callable[[Any], Any]] = None,
+    callback: Optional[Callable[[int, Dict[str, Any]], None]] = None,
+) -> Dict[str, Any]:
+    """Run multiple wanderer walks as a simple training loop.
+
+    - brain: target Brain
+    - num_walks: number of walks/episodes
+    - max_steps: maximum steps per walk
+    - lr: learning rate per walk
+    - start_selector: optional callable to choose a starting neuron per walk
+    - wanderer_type: optional plugin type name for Wanderer
+    - seed: RNG seed for Wanderer
+    - loss: None, callable, or string like 'nn.MSELoss'
+    - target_provider: optional target builder for built-in nn losses
+    - callback: optional hook called as callback(i, stats) per walk
+
+    Returns dict with 'history' list of walk stats and aggregate 'final_loss'.
+    """
+    w = Wanderer(brain, type_name=wanderer_type, seed=seed, loss=loss, target_provider=target_provider)
+    history: List[Dict[str, Any]] = []
+    for i in range(num_walks):
+        start = start_selector(brain) if start_selector is not None else None
+        stats = w.walk(max_steps=max_steps, start=start, lr=lr)
+        history.append(stats)
+        try:
+            report("training", f"walk_{i}", {"loss": stats.get("loss", 0.0), "steps": stats.get("steps", 0)}, "wanderer")
+        except Exception:
+            pass
+        if callback is not None:
+            try:
+                callback(i, stats)
+            except Exception:
+                pass
+    final_loss = history[-1]["loss"] if history else 0.0
+    out = {"history": history, "final_loss": final_loss}
+    try:
+        report("training", "summary", {"num_walks": num_walks, "final_loss": final_loss}, "wanderer")
+    except Exception:
+        pass
+    return out
+
+
+__all__ += ["run_wanderer_training"]
+
+
+# -----------------------------
+# Reporter: grouped data collection
+# -----------------------------
+
+class _ReporterItemAccessor:
+    def __init__(self, owner: "Reporter") -> None:
+        self._owner = owner
+
+    def __setitem__(self, key, value) -> None:
+        # Accept (itemname, groupname[, subgroup1, subgroup2, ...])
+        if not isinstance(key, tuple) or len(key) < 2:
+            raise KeyError("Key must be a tuple of (itemname, groupname[, subgroups...])")
+        itemname = key[0]
+        path = tuple(str(x) for x in key[1:])
+        self._owner._set_item(path, str(itemname), value)
+
+    def __getitem__(self, key):
+        if not isinstance(key, tuple) or len(key) < 2:
+            raise KeyError("Key must be a tuple of (itemname, groupname[, subgroups...])")
+        itemname = key[0]
+        path = tuple(str(x) for x in key[1:])
+        return self._owner.get_item(path, str(itemname))
+
+    def __call__(self, itemname: str, groupname: str, *subgroups: str):
+        return self._owner.get_item((groupname,) + tuple(str(s) for s in subgroups), itemname)
+
+
+class Reporter:
+    """Collects arbitrary Python data organized into named groups.

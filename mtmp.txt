@@ -1,0 +1,116 @@
+
+- UniversalTensorCodec: Pickle-based serializer that maps bytes to integer token IDs with an on-the-fly byte vocabulary. Encodes to a tensor if PyTorch is available (prefers CUDA when available) or to a Python list otherwise. Supports `export_vocab`/`import_vocab` for deterministic decoding across processes.
+- Device Behavior: All tensor creation prefers CUDA when `torch.cuda.is_available()`; otherwise falls back to CPU. Helpers ensure inputs are moved to the selected device by default.
+- Neuron: Holds a tensor plus scalar `weight`, `bias`, and `age`. Provides `forward` (default y = w*x + b), `receive`, and connection helpers. Supports neuron plugins via a registry with optional `on_init`, `receive`, and `forward` hooks.
+- Synapse: Connects two neurons; `direction` is `uni` or `bi`. Provides `transmit` with optional plugin override. Tracks `age` and `type_name`, and registers itself with `source.outgoing`/`target.incoming` (and vice‑versa for `bi`).
+- Brain (n‑D): Two modes:
+  - Grid mode: Discrete grid with `size`, numeric `bounds`, and an `occupancy` map computed from a safe‑evaluated `formula` using variables `n1..nN`. If `formula` is None: Mandelbrot iterations for 2D, “inside everywhere” for N≠2. Provides index↔world mapping, `is_inside`, `add_neuron`, `connect`, `available_indices`.
+  - Sparse mode: Continuous coordinates with per‑dimension `(min, max|None)` bounds. Provides `is_inside`, `add_neuron`, `get_neuron`, `connect`, `available_indices` (returns occupied coords), `bulk_add_neurons`, `export_sparse`/`import_sparse` to JSON (neurons and optional synapses).
+
+GPU/CPU Handling
+
+- Automatic device selection: CUDA preferred when available; otherwise CPU. When CUDA is present, tensors and operations default to CUDA as required by the rules.
+- CPU‑only path remains fully supported when torch is missing.
+
+Packaging
+
+- `pyproject.toml` uses setuptools with find‑packages. The package name is `marble`. `marble/__init__.py` is minimal by design to preserve the “only marblemain imports” rule. Tests import via `import marble` and `from marble import marblemain`.
+
+Tests
+
+- Located under `tests/`: cover codec encode/decode + vocab persistence, neuron/synapse behavior and plugins, Brain grid defaults + formulae, and sparse mode with IO.
+- All tests pass locally via `py -3 -m pytest -q`.
+
+Convenience Functions (High Level)
+
+- The core API is exposed through classes; convenience, high‑level wrappers will be added incrementally in `marblemain.py` without removing or narrowing existing behavior.
+
+Wanderer
+
+- Purpose: Traverse the graph of neurons/synapses within a `Brain` and perform an autograd-backed forward and backward pass to update per-neuron `weight` and `bias`.
+- Autograd: Mandatory dependency on torch autograd. The wanderer constructs a computation graph by temporarily binding torch scalar parameters (with `requires_grad=True`) to each visited neuron's `weight` and `bias`, invoking the neuron’s `forward`, transmitting along a chosen synapse, and accumulating outputs. It computes a scalar loss (default: sum of mean squares of outputs) and runs `.backward()`, then applies simple SGD updates and restores scalar floats on each neuron.
+- Traversal: Starts at a provided neuron or a random neuron. At each step, it gathers feasible moves as `(synapse, direction)` respecting synapse directionality: `forward` for outgoing on `uni`/`bi`, `backward` for incoming on `bi`. The base policy chooses uniformly at random. Plugins can alter the choice and loss.
+- Plugins: `register_wanderer_type(name, plugin)` with optional hooks:
+  - `on_init(wanderer)`
+  - `choose_next(wanderer, current, choices) -> (synapse, direction)` to influence path selection
+  - `loss(wanderer, outputs) -> torch scalar` to override loss computation
+- Neuroplasticity: Separate plugin registry `register_neuroplasticity_type(name, plugin)`; Wanderer loads `base` by default. Hooks:
+  - `on_init(wanderer)`
+  - `on_step(wanderer, current, synapse, direction, step_idx, out_value)`
+  - `on_walk_end(wanderer, stats)`
+  - Base plugin behavior: conservative growth — if the final neuron has no outgoing synapses, add a neuron at the first available index and connect it forward.
+- API: `Wanderer(brain, type_name=None, seed=None)`, `walk(max_steps=10, start=None, lr=1e-2, loss_fn=None) -> {loss, steps, visited, step_metrics, loss_delta_vs_prev, output_neuron_pos}`.
+- Early finish: Plugins can call `wanderer.walkfinish()` to finish a walk early. The final loss is determined at the output neuron (last visited), recorded, and reported; the function returns `(loss, delta_vs_previous_walk)` and `walk()` will use this precomputed loss.
+
+Synapse Weights
+
+- Base `Synapse` now includes a `weight: float` (default 1.0). Base `transmit` multiplies the transmitted value by this weight before delivery. Wanderer plugins can read/write `synapse.weight` to influence traversal dynamics.
+
+Training Helper
+
+- `run_wanderer_training(brain, num_walks=10, max_steps=10, lr=1e-2, start_selector=None, wanderer_type=None, seed=None, loss=None, target_provider=None, callback=None)` runs multiple walks and returns `{history, final_loss}`.
+- Loss handling: Wanderer supports a custom callable or a string like `"nn.MSELoss"`. For nn losses, a `target_provider` can supply targets per output; otherwise zeros are used by default.
+- Per-step metrics: Each walk records `step_metrics` with `loss` and `delta` (change from previous step’s loss).
+
+Reporter
+
+- Purpose: Centralized, cross-module data collection organized into named groups.
+- API:
+  - `registergroup(groupname)`: ensure group exists.
+  - `item["itemname", "groupname"] = data`: create/update an item in a group (supports any Python object).
+  - `item("itemname", "groupname") -> data`: retrieve an item value.
+  - `group("groupname") -> dict`: get a shallow copy of all items in the group.
+- Global Instance: `REPORTER` is provided for convenient shared usage across the project.
+- Subgroups: Groups can have nested subgroups. Use `registergroup(group, *subgroups)` to ensure a path exists, then set items with `REPORTER.item["item", "group", "sub1", "sub2"] = data` or via `report("group", "item", data, "sub1", "sub2")`.
+- Directory: `REPORTER.dirgroups()` lists top-level groups; `REPORTER.dirtree(group)` returns the subgroup tree (names only) and items for that group. Convenience wrappers: `report_group()` and `report_dir()`.
+
+Brain Training
+
+- Method: `Brain.train(wanderer, num_walks=10, max_steps=10, lr=1e-2, start_selector=None, callback=None, type_name=None)` executes a multi-walk training loop using the provided `Wanderer` instance.
+- Plugins: Register trainers via `register_brain_train_type(name, plugin)`. Optional hooks:
+  - `on_init(brain, wanderer, config)` invoked before training starts.
+  - `choose_start(brain, wanderer, i) -> Neuron|None` pick a start node per walk.
+  - `before_walk(brain, wanderer, i) -> {max_steps?, lr?}` to override step count/learning rate per walk.
+  - `after_walk(brain, wanderer, i, stats)` inspect/modify state after each walk.
+  - `on_end(brain, wanderer, history) -> dict` return extra fields merged into the result.
+- Result: `{history, final_loss}` (plus any extra fields returned by plugin).
+- Reporting: Per-walk and summary entries are logged under `training/brain`.
+
+DataPair
+
+- Purpose: Provide a simple pair container for two arbitrary Python objects to be passed into training loops and further into the Wanderer.
+- Encoding/Decoding: Uses dependency-injected `UniversalTensorCodec` to encode each side independently to integer-token tensors (CUDA if available; otherwise CPU list/tensor). Decoding reverses each side separately.
+- API:
+  - `DataPair(left, right)` stores the original Python objects.
+  - `DataPair.encode(codec) -> (enc_left, enc_right)` encodes both sides.
+  - `DataPair.decode((enc_left, enc_right), codec) -> DataPair` returns a new instance with decoded objects.
+  - Convenience: `make_datapair(left, right)`, `encode_datapair(codec, left, right)`, `decode_datapair(codec, enc_left, enc_right)`.
+- Reporting: Emits concise events under group `datapair/events` for encode/decode and under `datapair` for helper construction.
+
+Training With DataPairs
+
+- Purpose: High-level helper to consume sequences of `DataPair` items (or raw/encoded `(left, right)` pairs) and perform a training walk per pair.
+- Function: `run_training_with_datapairs(brain, datapairs, codec, steps_per_pair=5, lr=1e-2, wanderer_type=None, seed=None, loss='nn.MSELoss', left_to_start=None, callback=None)`.
+- Behavior:
+  - Normalizes each element to a `DataPair`. Both `left` and `right` are encoded with `UniversalTensorCodec` before use; only encoded data flows through the graph.
+  - Selects/creates a start neuron, injects the encoded `left` once via `receive`, then runs a `Wanderer` walk.
+  - Captures the encoded `right` as the target via `target_provider` for built-in nn losses and custom losses.
+  - Optional `left_to_start(enc_left, brain)` chooses the starting neuron based on the encoded left input.
+  - Records per-pair stats in `history` and logs under `training/datapair` via `REPORTER`; summary logged as `training/datapair:datapair_summary`.
+- Returns: `{history, final_loss, count}`.
+
+Loss Support
+
+- Wanderer loss handling supports:
+  - String spec `"nn.<LossClass>"`: resolved from `torch.nn` and applied per-output, with dtype/device adaptation for targets (e.g., Long for classification losses like CrossEntropy/NLL; otherwise match input float dtype). Targets are padded/truncated for simple 1D shape alignment when needed.
+  - Callable loss: `loss(outputs) -> scalar` fully supported for custom logic.
+
+Epochs
+
+- Definition: One epoch = run every DataPair in a dataset once through the Wanderer (with encoded left injected at the start neuron and encoded right used as target).
+- Function: `run_wanderer_epochs_with_datapairs(...)` runs `num_epochs` epochs and returns `{epochs: [{history, final_loss, delta_vs_prev}], final_loss}`.
+- Reporting: Logs `training/epochs:epoch_<i>` with final loss and delta to previous epoch; `training/epochs:epochs_summary` summarizes the run.
+
+Convenience
+
+- `create_start_neuron(brain, encoded_input)` creates a start neuron in the brain and injects encoded input. Used by training helpers when a start node is not provided or the brain is empty.

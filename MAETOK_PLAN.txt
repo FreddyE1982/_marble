@@ -1,0 +1,76 @@
+MAETok Learning Paradigm – Full Implementation Plan
+
+Scope
+
+- Implement a complete MAE/MAETok tokenizer and training paradigm as a new learning paradigm plugin (MAETokParadigm) entirely within marble/marblemain.py.
+- No imported encoders/optimizers: build ViT encoder/decoder, patch embed/invert, positional encodings, auxiliary decoders, discriminator, and optimizers (SGD/Adam) ourselves using torch tensor ops only (no torch.optim, no nn.Modules).
+- Wire into Brain + Wanderer using the existing learning paradigm plugin architecture; training executes via hooks during Wanderer operation.
+- Provide per-step masked training (Stage-1) and encoder-freeze fine-tuning (Stage-2) with mask annealing.
+- Log all metrics via REPORTER.
+
+Core Components
+
+1) Patch Embed/Invert
+- PatchEmbed2D P: Splits H×W×C input into non-overlapping patches (kernel=stride=patch_size), flattens, projects to D via learned linear (weights/bias we define and apply with matmul). Returns tokens x ∈ R^{N×D}, N=(H/ps)*(W/ps).
+- PatchUnembed2D P^-1: Projects N×D back to patch vectors, folds into H×W×C. Deterministic inverse complement using learned linear projection weights/bias.
+
+2) Positional Encodings
+- 2D RoPE for image tokens: rotary embeddings applied to Q/K per-head with 2D coordinates.
+- 1D absolute learnable positions for latent tokens z.
+
+3) Learnable Tokens
+- Latent tokens z ∈ R^{L×D} (learnable).
+- Mask token m ∈ R^{D} (learnable).
+- Decoder image tokens e ∈ R^{N×H_d} (learnable; built dynamically per N with a shared base weight).
+
+4) Transformer Blocks and ViT
+- LayerNorm (ours), Linear (ours), GELU via torch.nn.functional.gelu.
+- MultiHeadSelfAttention (ours): Q/K/V linear projections, scaled dot-product attention, softmax; RoPE support for Q/K.
+- MLP (ours): 2-layer FFN with hidden multiplier.
+- ViTEncoder: stack of blocks; input [x_masked; z]; take outputs only at z positions to produce h ∈ R^{L×H_d}.
+- ViTDecoder: stack of blocks; input [e; h]; decode image-token slice to produce x_hat ∈ R^{N×D}.
+
+5) Auxiliary Heads
+- Registry of D_aux(j) 3-layer MLPs mapping [e;h] features at image-token slots to y_hat(j) ∈ R^{N×D_j}.
+- Targets y(j) supplied by internal feature extractors (HOG-like gradients and a small fixed multi-scale conv feature), computed in-file; masked-only L2 computed via M⊙(...).
+
+6) Losses (no simulation)
+- L_rec = ||I − I_hat||^2 using P^-1.
+- L_percep = Σ_l ||φ_l(I) − φ_l(I_hat)||^2 with fixed (frozen) in-file feature extractors (no external nets).
+- L_adv (optional): patch-GAN discriminator with hinge loss + LeCAM regularization, implemented in-file; trained with our Adam.
+- L_mask = Σ_j γ_j ||M ⊙ (y(j) − y_hat(j))||^2.
+- L_tok = L_rec + λ1 L_percep + λ2 L_adv.
+- Stage-1 total = L_tok + L_mask; Stage-2 = L_tok.
+
+7) Schedule and Masking
+- Stage-1: r ∈ [0.4, 0.6] sampled per step; optimize E, D, aux, (and Disc). All components update by our optimizer.
+- Stage-2: freeze E; linearly anneal r from 0.6 to 0 over configured steps; optimize D (and optionally P^-1).
+- Mask M is Bernoulli per token; reproducible via Wanderer step-seeded RNG.
+
+8) Optimizers (ours)
+- Vanilla SGD and Adam: per-parameter state (m, v, t) with bias correction; optional weight decay; implemented with torch tensor math only. No torch.optim.
+
+9) Learning Paradigm Integration
+- Class MAETokParadigm with config: H, W, C, patch_size, D, L, heads, layers, enc_layers, dec_layers, λ1, λ2, γ_j list, adv on/off, stage switch steps, anneal steps.
+- on_wanderer(w): initialize components on the Wanderer’s device; attach per-step training via on_step. Option to “pretrain-first” before enabling normal Wanderer learning.
+- on_step: executes one MAETok training iteration (masking, encode/decode, compute full losses, backward, Adam updates). Logs per-step metrics.
+- on_init/on_walk_end: seed and summarize. Compatible with plugin stacking and SelfAttention.
+
+10) Device and Reporter
+- Use existing _DeviceHelper to pick CUDA if available; ensure all tensors on w._device.
+- REPORTER logs under training/maetok, maetok/tokens, maetok/aux.
+
+11) Configuration and Defaults
+- Tokens: L=128, D=256; heads=8; enc_layers=12; dec_layers=8; patch_size=16.
+- Loss weights: λ1=1.0, λ2=0.4; γ_j=1.0 per head by default.
+- Stage durations configurable; adv optional.
+
+12) Testing & Examples
+- Later: add a synthetic image test ensuring L_rec and L_mask decrease over steps; small example under examples/ to visualize.
+
+Compliance Notes
+
+- No imports of torch.optim or nn.Module layers; only torch tensor ops and torch.nn.functional.
+- All code lives in marble/marblemain.py; submodules import nothing else.
+- No simulation; compute exact masked auxiliary losses and full tokenizer objective.
+- Training updates occur each step via our optimizers.
