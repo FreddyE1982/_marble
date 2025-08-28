@@ -73,9 +73,16 @@ class FindBestNeuronTypeRoutine:
                 baseline = self._baseline_loss(w)
                 best_type: Optional[str] = None
                 best_diff: Optional[float] = None
+                existing = len(getattr(brain, "neurons", {}) or {})
                 for t in self._list_types():
-                    n = self._orig_add(index, tensor=tensor, type_name=None if t == "base" else t, **kwargs)
-                    # run single evaluation step with lr=0 to avoid updates
+                    if t != "base" and existing < 2:
+                        # No other neurons available to form required wiring
+                        continue
+                    try:
+                        n = self._orig_add(index, tensor=tensor, type_name=None if t == "base" else t, **kwargs)
+                    except Exception:
+                        # Failed to create due to unmet wiring requirements
+                        continue
                     neuro_bak = getattr(w, "_neuro_plugins", [])
                     try:
                         setattr(w, "_neuro_plugins", [])
@@ -85,14 +92,17 @@ class FindBestNeuronTypeRoutine:
                         cand_loss = baseline
                     finally:
                         setattr(w, "_neuro_plugins", neuro_bak)
-                    try:
-                        brain.remove_neuron(n)
-                    except Exception:
-                        pass
+                        try:
+                            brain.remove_neuron(n)
+                        except Exception:
+                            pass
                     diff = baseline - cand_loss
                     if best_diff is None or diff > best_diff:
                         best_diff = diff
                         best_type = t
+                if best_type is None:
+                    # Fallback: no candidate type could be wired; add basic neuron
+                    return self._orig_add(index, tensor=tensor, **kwargs)
                 # Create final neuron of best type
                 return self._orig_add(index, tensor=tensor, type_name=None if best_type == "base" else best_type, **kwargs)  # type: ignore[misc]
             finally:
