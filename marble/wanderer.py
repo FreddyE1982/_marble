@@ -4,7 +4,7 @@ from __future__ import annotations
 # Implementation currently resides in marble.marblemain; this module provides
 # a stable boundary to continue refactoring without breaking public imports.
 
-from typing import Any, Dict, Optional, List, Tuple, Sequence, Union, Callable
+from typing import Any, Dict, Optional, List, Tuple, Sequence, Union, Callable, Set
 import time
 import random
 import contextlib
@@ -181,6 +181,27 @@ class Wanderer(_DeviceHelper):
             except Exception:
                 pass
 
+        # Containers tracking frozen graph elements
+        self._frozen_neurons: Set[int] = set()
+        self._frozen_synapses: Set[int] = set()
+
+    # -- Freeze control -------------------------------------------------
+    def freeze_neuron(self, neuron: Neuron) -> None:
+        """Prevent weight/bias updates for the given neuron during walks."""
+        self._frozen_neurons.add(id(neuron))
+
+    def freeze_neurons(self, neurons: Sequence[Neuron]) -> None:
+        for n in neurons:
+            self.freeze_neuron(n)
+
+    def freeze_synapse(self, synapse: Synapse) -> None:
+        """Disallow traversal through the given synapse during walks."""
+        self._frozen_synapses.add(id(synapse))
+
+    def freeze_path(self, path: Sequence[Synapse]) -> None:
+        for s in path:
+            self.freeze_synapse(s)
+
     def walk(
         self,
         *,
@@ -289,7 +310,8 @@ class Wanderer(_DeviceHelper):
                 )
             except Exception:
                 wt_val = float(getattr(n, "weight", 0.0))
-            w = torch.tensor(wt_val, dtype=torch.float32, device=self._device, requires_grad=True)
+            req_grad = key not in self._frozen_neurons
+            w = torch.tensor(wt_val, dtype=torch.float32, device=self._device, requires_grad=req_grad)
             try:
                 bs_val = (
                     float(n.bias.detach().to("cpu").item())
@@ -298,7 +320,7 @@ class Wanderer(_DeviceHelper):
                 )
             except Exception:
                 bs_val = float(getattr(n, "bias", 0.0))
-            b = torch.tensor(bs_val, dtype=torch.float32, device=self._device, requires_grad=True)
+            b = torch.tensor(bs_val, dtype=torch.float32, device=self._device, requires_grad=req_grad)
             self._param_map[key] = (w, b)
             return w, b
 
@@ -550,6 +572,8 @@ class Wanderer(_DeviceHelper):
             scale = scaler.get_scale()
             params = []
             for n in self._visited:
+                if id(n) in self._frozen_neurons:
+                    continue
                 w_param, b_param = self._param_map[id(n)]
                 params.append(w_param); params.append(b_param)
             for p in params:
@@ -564,6 +588,8 @@ class Wanderer(_DeviceHelper):
             method = str(gc.get("method", "")).lower()
             params = []
             for n in self._visited:
+                if id(n) in self._frozen_neurons:
+                    continue
                 w_param, b_param = self._param_map[id(n)]
                 if hasattr(w_param, "grad") or hasattr(b_param, "grad"):
                     params.append(w_param)
@@ -596,6 +622,8 @@ class Wanderer(_DeviceHelper):
             self.current_lr = lr_eff  # type: ignore[assignment]
 
         for n in self._visited:
+            if id(n) in self._frozen_neurons:
+                continue
             w_param, b_param = self._param_map[id(n)]
             with torch.no_grad():
                 w_new = w_param - lr_eff * (w_param.grad if w_param.grad is not None else 0.0)
@@ -694,11 +722,12 @@ class Wanderer(_DeviceHelper):
 
     def _gather_choices(self, n: Neuron) -> List[Tuple[Synapse, str]]:
         choices: List[Tuple[Synapse, str]] = []
+        frozen = self._frozen_synapses
         for s in n.outgoing:
-            if s.direction in ("uni", "bi"):
+            if s.direction in ("uni", "bi") and id(s) not in frozen:
                 choices.append((s, "forward"))
         for s in n.incoming:
-            if s.direction == "bi":
+            if s.direction == "bi" and id(s) not in frozen:
                 choices.append((s, "backward"))
         return choices
 
