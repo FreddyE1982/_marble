@@ -1,3 +1,230 @@
+0) Definitions & Precedence
+
+Step / Substep / Group
+
+Ein Step ist ein Eintrag aus developmentplan.md.
+
+Ist er zu groß, wird er in Substeps zerlegt.
+
+Groups bündeln Substeps zu einem Paket, das in einem Run komplett durchgezogen wird.
+
+Kennzeichnung
+
+Abgeschlossene Elemente: [complete] am Ende der Zeile.
+
+Der nächste zu implementierende Step/Substep ist immer der erste, der nicht als [complete] markiert ist.
+
+Kompatibilität
+
+Alle Steps/Substeps/Groups müssen so umgesetzt werden, dass sie mit allen anderen bereits implementierten Teilen kompatibel sind.
+
+Besonders relevant: developmentplan.md: 3. und developmentplan.md: 4.
+
+Precedence (höchste zuerst)
+
+Explizite User-Instruktion
+
+Spezifische Ausnahme-Regeln (z. B. GUI-only, relevant tests only, QUICKMODE)
+
+Allgemeine Regeln in dieser Datei
+
+Rule Extension Policy
+
+⚠️ Verbot: Der Agent darf niemals Stubs oder Stub-Module für bestehende Module erzeugen – nicht für Tests, nicht für irgendetwas.
+Alle Teile, die Torch benötigen, müssen immer torch importieren und verwenden. Auch Tests!
+
+1) Arbeitsreihenfolge
+
+Wenn der Agent anfängt zu arbeiten, ist die Reihenfolge immer:
+
+Prüfen, ob die Anfrage des Nutzers in einem Turn erledigt werden kann.
+
+Falls nein → DOTHISFIRST.md erstellen und dort alle nötigen Schritte eintragen.
+
+Schritte aus DOTHISFIRST.md abarbeiten (Vorgehensweise identisch zu developmentplan.md).
+
+Hat der Nutzer keine spezifische Anfrage gegeben und es gibt auch in DOTHISFIRST.md nichts zu tun → developmentplan.md aufrufen.
+
+Gibt es auch dort nichts → developmentplan.md erweitern (neue Steps hinzufügen).
+
+2) Sequential Execution Contract
+
+Schritte müssen in der Reihenfolge aus developmentplan.md abgearbeitet werden.
+
+Keine Sprünge, kein Überspringen.
+
+Ist ein Step zu groß → in Substeps zerlegen, ohne Vereinfachung.
+
+Substeps werden zu ausführbaren Groups gebündelt:
+
+Jede Group ist eine Einheit, die in einem Run vollständig erledigt wird.
+
+Groups sind so groß wie machbar, nicht überlappend und decken alle Substeps ab.
+
+3) Group Execution via Buttons
+
+Wenn Steps in Substeps zerlegt werden, muss der Agent Groups bilden.
+
+Groups werden dem Nutzer als klickbare Buttons präsentiert.
+
+Jeder Button startet die Abarbeitung aller Substeps der Group in der vorgegebenen Reihenfolge.
+
+Keine Substeps dürfen ausgelassen werden.
+
+4) Environment & Dependencies
+
+requirements.txt ist installiert – kein erneutes pip install -r requirements.txt nötig.
+
+Änderungen am Code → requirements.txt aktualisieren, Konflikte vermeiden/lösen.
+
+5) Config Policy (YAML = Single Source of Truth)
+
+Alle konfigurierbaren Parameter gehören in config.yaml.
+
+Neue Parameter nur aufnehmen, wenn sie:
+
+Im Code voll genutzt werden,
+
+und die algorithmische Logik beeinflussen.
+
+Sicherstellen: Änderung im YAML → Änderung im Verhalten (end-to-end).
+
+Pre/Post Checks (außer QUICKMODE)
+
+Preflight (0.1)
+
+Vor Hauptaufgabe: Scan auf ungenutzte YAML-Parameter.
+
+Alle ungenutzten Parameter sofort mit Code verdrahten und wirksam machen.
+
+Danach: genau einen Fehler aus FAILEDTESTS.md beheben.
+
+Postflight (0.2)
+
+Nach Hauptaufgabe: Scan erneut laufen lassen.
+
+Alle ungenutzten Parameter einbauen.
+
+6) Documentation Duties
+
+yaml-manual.txt → vollständige Doku aller config.yaml-Parameter (Zweck, Range, Default, Effekte).
+
+TUTORIAL.md → Schritt-für-Schritt-Anleitung mit realen Projekten + ausführbarem Code.
+
+Beide Dateien sofort aktualisieren, wenn Änderungen passieren.
+
+7) Testing Policy
+
+Keine globalen Test-Runs.
+
+Jeder Testfile wird einzeln ausgeführt.
+
+Reihenfolge: test1 → fix → rerun bis grün → test2 …
+
+Wenn Code geändert → immer pytest-Test erstellen/aktualisieren.
+
+Failing Tests → FAILEDTESTS.md ergänzen.
+
+Keine Tests manipulieren, um Fehler zu verstecken.
+
+Determinismus: Seeds setzen, Side Effects isolieren.
+
+8) Change Hygiene
+
+Jede Änderung → CHANGELOG aktualisieren.
+
+Architektur-Entscheidungen → ADR (Architecture Decision Record) mit Begründung, Alternativen, Konsequenzen.
+
+9) Prohibitions
+
+Keine Platzhalter, Stubs, Demo-Versionen.
+
+Keine Vereinfachung oder Verkürzung bestehender Funktionen.
+
+Keine Umgehung echter Fehler.
+
+Keine Reihenfolgeänderung im Plan.
+
+Keine Loops für Test-Orchestrierung.
+
+10) Rule Extension Policy
+
+Neue Regeln dürfen nur am Ende angehängt werden (append-only).
+
+Regeln müssen:
+
+Eindeutig helfen,
+
+Keine bestehenden Regeln schwächen oder widersprechen,
+
+Eine vollständige Rule Proposal Block enthalten:
+
+Rule Proposal Block
+Rule: <Regel in einem Satz>
+Context: <wo gilt sie>
+Problem: <welches Problem tritt ohne auf>
+Benefit: <warum besser>
+Non-Conflict Statement: <warum nichts oben widerspricht>
+Verification: <wie wird’s überprüft>
+Rollback Plan: <wie zurücknehmen>
+
+11) Post-Run Checklist
+
+Dependencies passen.
+
+YAML-Scans (0.2) grün.
+
+Codeänderungen dokumentiert (Tests, Manual, Tutorial).
+
+Alle Tests per File grün oder dokumentiert.
+
+requirements.txt aktuell.
+
+Vollständige Files geliefert.
+
+CHANGELOG/ADR gepflegt.
+
+12) QUICKMODE
+
+Nur wenn der User es explizit sagt. Erlaubt:
+
+Dependency-Install überspringen,
+
+Preflight 0.1 überspringen,
+
+Nur relevante Tests laufen lassen.
+
+Alles andere bleibt gleich.
+
+13) Developmentplan.md & DOTHISFIRST.md
+
+developmentplan.md:
+
+Muss existieren, sonst erstellen.
+
+Enthält alle mittelfristigen Steps, die ohne Zeitdruck abgearbeitet werden.
+
+Immer erweitern, wenn nichts mehr zu tun ist.
+
+DOTHISFIRST.md:
+
+Wird erstellt, wenn eine spezifische Nutzeranfrage in einem Run nicht lösbar ist.
+
+Enthält alle Schritte zur Erfüllung der Anfrage, gegliedert wie developmentplan.md.
+
+Hat immer höchste Priorität bis abgearbeitet.
+
+14) Repository Layout Rule
+
+Rule: Alle Python-Source-Files liegen in src/.
+Context: Einheitliches Importsystem.
+Problem: Ohne klares Layout brechen Imports.
+Benefit: Weniger Import-Fehler, klare Struktur.
+Non-Conflict Statement: Bricht keine anderen Regeln.
+Verification: Alle Module aus src/ importierbar.
+Rollback Plan: Falls Probleme → Rule streichen, Files umziehen.
+
+
 1. imports are allowed across modules. marblemain.py remains the primary entry/aggregation point. if you refactor anything ensure that the functionality / algorithm / math is not changed by the refactoring!
 2. you are NEVER allowed to simplify, "cut down", "shorten" or "narrow down the scope" of ANY existing function, class, algorithm or calculation in any way
 2.1 to read files you MUST use the tool "show", here are the available commands:
