@@ -551,15 +551,18 @@ try:
     from .plugins.wanderer_contrastive_infonce import ContrastiveInfoNCEPlugin
     from .plugins.wanderer_td_qlearning import TDQLearningPlugin
     from .plugins.wanderer_distillation import DistillationPlugin
+    from .plugins.wanderer_triple_contrast import TripleWanderersContrastPlugin
     register_wanderer_type("l2_weight_penalty", L2WeightPenaltyPlugin())
     register_wanderer_type("contrastive_infonce", ContrastiveInfoNCEPlugin())
     register_wanderer_type("td_qlearning", TDQLearningPlugin())
     register_wanderer_type("distillation", DistillationPlugin())
+    register_wanderer_type("triple_contrast", TripleWanderersContrastPlugin())
     __all__ += [
         "L2WeightPenaltyPlugin",
         "ContrastiveInfoNCEPlugin",
         "TDQLearningPlugin",
         "DistillationPlugin",
+        "TripleWanderersContrastPlugin",
     ]
 except Exception:
     pass
