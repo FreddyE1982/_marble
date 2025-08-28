@@ -160,23 +160,47 @@ class Neuron(_DeviceHelper):
 
 
 class Synapse(_DeviceHelper):
-    def __init__(self, source: Neuron, target: Neuron, *, direction: str = "uni", age: int = 0, type_name: Optional[str] = None, weight: float = 1.0) -> None:
+    def __init__(
+        self,
+        source: Union[Neuron, "Synapse"],
+        target: Union[Neuron, "Synapse"],
+        *,
+        direction: str = "uni",
+        age: int = 0,
+        type_name: Optional[str] = None,
+        weight: float = 1.0,
+    ) -> None:
         super().__init__()
         if direction not in ("uni", "bi"):
             raise ValueError("direction must be 'uni' or 'bi'")
-        self.source = source
-        self.target = target
+        self.source: Union[Neuron, Synapse] = source
+        self.target: Union[Neuron, Synapse] = target
         self.direction = direction
         self.age = int(age)
         self.type_name: Optional[str] = type_name
         self._plugin_state: Dict[str, Any] = {}
         self.weight: float = float(weight)
 
-        self.source.outgoing.append(self)
-        self.target.incoming.append(self)
-        if self.direction == "bi":
-            self.source.incoming.append(self)
-            self.target.outgoing.append(self)
+        self.incoming_synapses: List["Synapse"] = []
+        self.outgoing_synapses: List["Synapse"] = []
+
+        if isinstance(self.source, Neuron):
+            self.source.outgoing.append(self)
+            if self.direction == "bi":
+                self.source.incoming.append(self)
+        else:
+            self.source.outgoing_synapses.append(self)
+            if self.direction == "bi":
+                self.source.incoming_synapses.append(self)
+
+        if isinstance(self.target, Neuron):
+            self.target.incoming.append(self)
+            if self.direction == "bi":
+                self.target.outgoing.append(self)
+        else:
+            self.target.incoming_synapses.append(self)
+            if self.direction == "bi":
+                self.target.outgoing_synapses.append(self)
 
         plugin = _SYNAPSE_TYPES.get(self.type_name) if self.type_name else None
         if plugin is not None and hasattr(plugin, "on_init"):
@@ -186,11 +210,10 @@ class Synapse(_DeviceHelper):
         except Exception:
             pass
 
-    def transmit(self, value: Union[TensorLike, Sequence[float], float, int], *, direction: str = "forward") -> None:
+    def transmit(self, value: Union[TensorLike, Sequence[float], float, int], *, direction: str = "forward") -> Neuron:
         plugin = _SYNAPSE_TYPES.get(self.type_name) if self.type_name else None
         if plugin is not None and hasattr(plugin, "transmit"):
-            plugin.transmit(self, value, direction=direction)  # type: ignore[attr-defined]
-            return
+            return plugin.transmit(self, value, direction=direction)  # type: ignore[attr-defined]
 
         if direction not in ("forward", "backward"):
             raise ValueError("direction must be 'forward' or 'backward'")
@@ -203,19 +226,48 @@ class Synapse(_DeviceHelper):
             val = [float(self.weight) * float(v) for v in vl]
 
         if direction == "forward":
-            if self.direction in ("uni", "bi"):
-                self.target.receive(val)
-            else:
+            if self.direction not in ("uni", "bi"):
                 raise ValueError("This synapse does not allow forward transmission")
-        else:
-            if self.direction == "bi":
-                self.source.receive(val)
+            dest = self.target
+            if isinstance(dest, Synapse):
+                out_neuron = dest.transmit(val, direction="forward")
             else:
+                dest.receive(val)
+                out_neuron = dest
+        else:
+            if self.direction != "bi":
                 raise ValueError("This synapse does not allow backward transmission")
+            dest = self.source
+            if isinstance(dest, Synapse):
+                out_neuron = dest.transmit(val, direction="backward")
+            else:
+                dest.receive(val)
+                out_neuron = dest
         try:
             report("synapse", "transmit", {"dir": direction, "weight": float(self.weight)}, "events")
         except Exception:
             pass
+        return out_neuron
+
+    def connect_to_synapse(self, other: "Synapse", *, direction: str = "forward") -> None:
+        if direction == "forward":
+            if isinstance(self.target, Neuron):
+                try:
+                    self.target.incoming.remove(self)
+                except Exception:
+                    pass
+            self.target = other
+            self.outgoing_synapses.append(other)
+            other.incoming_synapses.append(self)
+        else:
+            if isinstance(self.source, Neuron):
+                try:
+                    self.source.outgoing.remove(self)
+                except Exception:
+                    pass
+            self.source = other
+            self.incoming_synapses.append(other)
+            other.outgoing_synapses.append(self)
 
     def step_age(self, delta: int = 1) -> None:
         self.age += int(delta)

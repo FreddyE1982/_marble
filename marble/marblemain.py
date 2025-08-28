@@ -1265,19 +1265,74 @@ class Brain:
     def active_paradigms(self) -> List[Any]:
         return [p for p in (self._paradigms or []) if id(p) not in self._paradigm_disabled]
 
+    def add_dimension(self) -> None:
+        self.n += 1
+        if self.mode == "grid":
+            self._dyn_min.append(0)
+            self._dyn_max.append(-1)
+            new_map: Dict[Tuple[int, ...], Neuron] = {}
+            for pos, n in list(self.neurons.items()):
+                new_pos = tuple(list(pos) + [0])
+                setattr(n, "position", new_pos)
+                new_map[new_pos] = n
+            self.neurons = new_map
+        else:
+            self.sparse_bounds = self.sparse_bounds + ((0.0, None),)
+            new_map: Dict[Tuple[float, ...], Neuron] = {}
+            for pos, n in list(self.neurons.items()):
+                new_pos = tuple(list(pos) + [0.0])
+                setattr(n, "position", new_pos)
+                new_map[new_pos] = n
+            self.neurons = new_map
+
+    def remove_last_dimension(self) -> None:
+        if self.n <= 1:
+            return
+        if self.mode == "grid":
+            if getattr(self, "_dyn_min", None):
+                self._dyn_min.pop()
+            if getattr(self, "_dyn_max", None):
+                self._dyn_max.pop()
+        else:
+            self.sparse_bounds = self.sparse_bounds[:-1]
+        to_remove = [n for n in list(self.neurons.values()) if getattr(n, "position", (0,))[-1] != (0 if self.mode == "grid" else 0.0)]
+        for n in to_remove:
+            self.remove_neuron(n)
+        new_map: Dict[Tuple[Any, ...], Neuron] = {}
+        for pos, n in list(self.neurons.items()):
+            new_pos = tuple(pos[:-1])
+            setattr(n, "position", new_pos)
+            new_map[new_pos] = n
+        self.neurons = new_map
+        self.n -= 1
+
     # Remove a synapse and clean references
     def remove_synapse(self, synapse: "Synapse") -> None:
         if synapse in self.synapses:
             self.synapses.remove(synapse)
         try:
-            if synapse in synapse.source.outgoing:
-                synapse.source.outgoing.remove(synapse)
-            if synapse in synapse.source.incoming:
-                synapse.source.incoming.remove(synapse)
-            if synapse in synapse.target.outgoing:
-                synapse.target.outgoing.remove(synapse)
-            if synapse in synapse.target.incoming:
-                synapse.target.incoming.remove(synapse)
+            src = synapse.source
+            if isinstance(src, Synapse):
+                if synapse in src.outgoing_synapses:
+                    src.outgoing_synapses.remove(synapse)
+                if synapse in src.incoming_synapses:
+                    src.incoming_synapses.remove(synapse)
+            else:
+                if synapse in src.outgoing:
+                    src.outgoing.remove(synapse)
+                if synapse in src.incoming:
+                    src.incoming.remove(synapse)
+            dst = synapse.target
+            if isinstance(dst, Synapse):
+                if synapse in dst.outgoing_synapses:
+                    dst.outgoing_synapses.remove(synapse)
+                if synapse in dst.incoming_synapses:
+                    dst.incoming_synapses.remove(synapse)
+            else:
+                if synapse in dst.outgoing:
+                    dst.outgoing.remove(synapse)
+                if synapse in dst.incoming:
+                    dst.incoming.remove(synapse)
         except Exception:
             pass
         try:
@@ -1285,26 +1340,42 @@ class Brain:
         except Exception:
             pass
 
-    # Remove a neuron and all of its connected synapses
+    # Remove a neuron and bridge its synapses to avoid gaps
     def remove_neuron(self, neuron: "Neuron") -> None:
+        incomings = list(getattr(neuron, "incoming", []) or [])
+        outgoings = list(getattr(neuron, "outgoing", []) or [])
         try:
-            # Copy lists to avoid modification during iteration
-            for syn in list(getattr(neuron, "incoming", []) or []):
-                self.remove_synapse(syn)
-            for syn in list(getattr(neuron, "outgoing", []) or []):
-                # Some synapses may already be removed from incoming loop; guard
-                if syn in self.synapses:
-                    self.remove_synapse(syn)
+            if incomings and outgoings:
+                for ins in incomings:
+                    for outs in outgoings:
+                        if isinstance(ins.target, Neuron):
+                            try:
+                                ins.target.incoming.remove(ins)
+                            except Exception:
+                                pass
+                        if isinstance(outs.source, Neuron):
+                            try:
+                                outs.source.outgoing.remove(outs)
+                            except Exception:
+                                pass
+                        ins.target = outs
+                        outs.source = ins
+                        if outs not in ins.outgoing_synapses:
+                            ins.outgoing_synapses.append(outs)
+                        if ins not in outs.incoming_synapses:
+                            outs.incoming_synapses.append(ins)
+            else:
+                for syn in incomings + outgoings:
+                    if syn in self.synapses:
+                        self.remove_synapse(syn)
         except Exception:
             pass
-        # Remove from neurons dictionary by its position key
         try:
             pos = getattr(neuron, "position", None)
             if pos is not None and pos in self.neurons:
                 try:
                     del self.neurons[pos]
                 except Exception:
-                    # Fallback: rebuild neurons map without this neuron
                     self.neurons = {k: v for k, v in self.neurons.items() if v is not neuron}
             report("brain", "remove_neuron", {"position": pos}, "events")
         except Exception:
@@ -2000,6 +2071,13 @@ try:
     from .plugins.wanderer_hyperevolution import HyperEvolutionPlugin
     register_wanderer_type("hyperEvolution", HyperEvolutionPlugin())
     __all__ += ["HyperEvolutionPlugin"]
+except Exception:
+    pass
+
+try:
+    from .plugins.wanderer_dynamicdimensions import DynamicDimensionsPlugin
+    register_wanderer_type("dynamicdimensions", DynamicDimensionsPlugin())
+    __all__ += ["DynamicDimensionsPlugin"]
 except Exception:
     pass
 
