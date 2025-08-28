@@ -42,11 +42,11 @@ Core Components
 
 - Training Helpers: High-level flows to run Wanderer training:
   - `run_wanderer_training`: single-wanderer multi-walk loop.
-  - `run_training_with_datapairs`: iterates over `DataPair`s; encodes left/right, injects left into a start neuron, and trains against right via a target provider.
+  - `run_training_with_datapairs`: iterates over `DataPair`s; encodes left/right, injects left into a start neuron, and trains against right via a target provider. Accepts brain-train plugin stacks via `train_type` so scheduling logic can mirror `Brain.train` flows.
     - Supports a **streaming** mode (enabled by default) that never materializes the full dataset and drops consumed samples from memory immediately.
     - Automatically enables brain snapshots during training, writing snapshots every walk to the configured `snapshot_path`.
   - `run_wanderer_epochs_with_datapairs`: repeats dataset for multiple epochs, recording per-epoch deltas.
-  - `quick_train_on_pairs`: builds a minimal 2D `Brain` with configurable `grid_size`, creates a default codec if not provided, and calls `run_training_with_datapairs` with the supplied hyperparameters (`steps_per_pair`, `lr`, `seed`, `wanderer_type`, `neuro_config`, `gradient_clip`, optional `selfattention`). Logs summary under `training/quick`.
+  - `quick_train_on_pairs`: builds a minimal 2D `Brain` with configurable `grid_size`, creates a default codec if not provided, and calls `run_training_with_datapairs` with the supplied hyperparameters (`steps_per_pair`, `lr`, `seed`, `wanderer_type`, `train_type`, `neuro_config`, `gradient_clip`, optional `selfattention`). Logs summary under `training/quick`.
   - `run_wanderers_parallel`: orchestrates multiple datasets with thread-based concurrency (process mode intentionally unimplemented).
   - `run_wine_hello_world`: convenience that loads scikit-learn’s Wine dataset, runs training with neuroplasticity active, and writes per-step wanderer logs to a JSONL file.
 
@@ -330,7 +330,7 @@ SelfAttention Integration
     - `validate_neuron_wiring(neuron)`: returns `{ok, reason}`; for `conv1d` it checks exactly 5 incoming synapses and exactly 1 outgoing synapse. Unknown types are considered OK but are logged for visibility. No automatic neuron creation or connection is performed by the framework.
 - Training: `run_wanderer_training`, `run_training_with_datapairs`, `run_wanderer_epochs_with_datapairs`, `run_wanderers_parallel`, `create_start_neuron`.
 - Datasets/Examples: `run_wine_hello_world`, `export_wanderer_steps_to_jsonl`, `examples/run_wine_with_selfattention.py` (adaptive LR via SelfAttention), `examples/run_hf_image_quality.py` (streamed HF prompt-image quality training with stacked Wanderer plugins).
-  - `run_training_with_datapairs` accepts `selfattention` to attach step-wise control to the shared Wanderer.
+  - `run_training_with_datapairs` accepts `selfattention` to attach step-wise control to the shared Wanderer and `train_type` to apply Brain-training plugins during datapair training.
   - Training helpers accept `gradient_clip` and pass it to the shared `Wanderer`.
 - Reporting: `REPORTER`, `report`, `report_group`, `report_dir`.
 
@@ -478,7 +478,7 @@ DataPair
 Training With DataPairs
 
 - Purpose: High-level helper to consume sequences of `DataPair` items (or raw/encoded `(left, right)` pairs) and perform a training walk per pair.
-- Function: `run_training_with_datapairs(brain, datapairs, codec, steps_per_pair=5, lr=1e-2, wanderer_type=None, seed=None, loss='nn.MSELoss', left_to_start=None, callback=None)`.
+- Function: `run_training_with_datapairs(brain, datapairs, codec, steps_per_pair=5, lr=1e-2, wanderer_type=None, train_type=None, seed=None, loss='nn.MSELoss', left_to_start=None, callback=None)`.
 - Behavior:
   - Normalizes each element to a `DataPair`. Both `left` and `right` are encoded with `UniversalTensorCodec` before use; only encoded data flows through the graph.
   - Selects/creates a start neuron, injects the encoded `left` once via `receive`, then runs a `Wanderer` walk.

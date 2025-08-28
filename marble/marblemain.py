@@ -2507,6 +2507,7 @@ def run_training_with_datapairs(
     steps_per_pair: int = 5,
     lr: float = 1e-2,
     wanderer_type: Optional[str] = None,
+    train_type: Optional[Union[str, Sequence[str]]] = None,
     seed: Optional[int] = None,
     loss: Optional[Union[str, Callable[..., Any], Any]] = "nn.MSELoss",
     left_to_start: Optional[Callable[[Any, "Brain"], Optional["Neuron"]]] = None,
@@ -2523,6 +2524,7 @@ def run_training_with_datapairs(
     - codec: UniversalTensorCodec used for encoding/decoding when needed.
     - left_to_start: optional function mapping left object -> starting Neuron.
     - loss: same semantics as in Wanderer; default uses nn.MSELoss.
+    - train_type: optional Brain-train plugin name(s) applied across datapairs.
 
     Returns: {"history": [per-pair stats], "final_loss": float, "count": int}.
     """
@@ -2626,6 +2628,29 @@ def run_training_with_datapairs(
     except Exception:
         pass
 
+    # Resolve Brain-train plugins (comma-separated or list) and initialize
+    train_plugins: List[Any] = []
+    if isinstance(train_type, str):
+        names = [s.strip() for s in train_type.split(",") if s.strip()]
+        for nm in names:
+            p = _BRAIN_TRAIN_TYPES.get(nm)
+            if p is not None:
+                train_plugins.append(p)
+    elif isinstance(train_type, (list, tuple)):
+        for nm in train_type:
+            p = _BRAIN_TRAIN_TYPES.get(str(nm))
+            if p is not None:
+                train_plugins.append(p)
+
+    cfg = {
+        "num_walks": None,
+        "max_steps": steps_per_pair,
+        "lr": lr,
+        "type_name": train_type,
+    }
+    for p in train_plugins:
+        _on_init_train(p, brain, w, cfg)
+
     for i, item in enumerate(data_iter):
         dp = _normalize_pair(item)
 
@@ -2651,15 +2676,28 @@ def run_training_with_datapairs(
                         start = brain.add_neuron(idx, tensor=0.0)
                 except Exception:
                     start = None
+        # Allow train plugins to choose/override start neuron
+        for p in train_plugins:
+            s = _select_start(brain, w, i, p, None)
+            if s is not None:
+                start = s
         if start is not None:
             start.receive(enc_left)  # inject encoded input into the first neuron
         else:
             start = create_start_neuron(brain, enc_left)
 
-        # Set per-pair target for the shared Wanderer
+        # Merge overrides from train plugins and set per-pair target
+        overrides: Dict[str, Any] = {}
+        for p in train_plugins:
+            ovr = _before_walk_overrides(p, brain, w, i)
+            overrides.update(ovr)
+        ms = int(overrides.get("max_steps", steps_per_pair))
+        lr_i = float(overrides.get("lr", lr))
         _current_target["val"] = enc_right
-        stats = w.walk(max_steps=steps_per_pair, start=start, lr=lr)
+        stats = w.walk(max_steps=ms, start=start, lr=lr_i)
         history.append(stats)
+        for p in train_plugins:
+            _after_walk(p, brain, w, i, stats)
         count += 1
         try:
             report(
@@ -2686,6 +2724,9 @@ def run_training_with_datapairs(
 
     final_loss = history[-1]["loss"] if history else 0.0
     out = {"history": history, "final_loss": final_loss, "count": count}
+    for p in train_plugins:
+        extra = _on_end_train(p, brain, w, history)
+        out = _merge_dict_safe(out, extra)
     try:
         report("training", "datapair_summary", {"count": count, "final_loss": final_loss}, "datapair")
     except Exception:

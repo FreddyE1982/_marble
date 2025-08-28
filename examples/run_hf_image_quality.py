@@ -89,9 +89,7 @@ def main(epochs: int = 1) -> None:
         codec=codec,
     )
     brain = Brain(2)
-    # Brain-training plugins like "warmup_decay" and "curriculum" apply only to
-    # ``Brain.train`` flows and are not compatible with ``run_training_with_datapairs``.
-    # They are therefore omitted here to keep the example runnable.
+    # Include Brain-training plugins to adjust learning rate and step schedule
     sa = SelfAttention(
         routines=[
             QualityAwareRoutine(window=8),
@@ -129,6 +127,7 @@ def main(epochs: int = 1) -> None:
             steps_per_pair=2,
             lr=1e-3,
             wanderer_type=",".join(wplugins),
+            train_type="warmup_decay,curriculum",
             neuro_config=neuro_cfg,
             selfattention=sa,
             streaming=True,
