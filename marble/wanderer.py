@@ -7,6 +7,7 @@ from __future__ import annotations
 from typing import Any, Dict, Optional, List, Tuple, Sequence, Union, Callable
 import time
 import random
+import contextlib
 
 from .graph import _DeviceHelper, Neuron, Synapse
 from .reporter import report
@@ -232,6 +233,16 @@ class Wanderer(_DeviceHelper):
         self._last_step_time = time.time()
         self._walk_loss_sum = 0.0
         self._walk_step_count = 0
+        amp_enabled = bool(getattr(self, '_use_mixed_precision', False))
+        amp_device = 'cuda' if torch.cuda.is_available() and str(self._device).startswith('cuda') else 'cpu'
+        amp_dtype = torch.float16 if amp_device == 'cuda' else torch.bfloat16
+        scaler = getattr(self, '_amp_scaler', None) if amp_enabled else None
+        if amp_enabled and scaler is None:
+            try:
+                scaler = torch.cuda.amp.GradScaler()
+            except Exception:
+                scaler = None
+            self._amp_scaler = scaler
 
         tqdm_cls = _tqdm_factory()
         pbar = tqdm_cls(total=max_steps, leave=False)
@@ -332,13 +343,15 @@ class Wanderer(_DeviceHelper):
             current.weight = w_param  # type: ignore[assignment]
             current.bias = b_param  # type: ignore[assignment]
             try:
-                out = current.forward(carried_value)
+                with (torch.autocast(device_type=amp_device, dtype=amp_dtype) if amp_enabled else contextlib.nullcontext()):
+                    out = current.forward(carried_value)
             finally:
                 pass
 
             outputs.append(out)
 
-            step_loss_t = self._compute_loss([out], override_loss=loss_fn)
+            with (torch.autocast(device_type=amp_device, dtype=amp_dtype) if amp_enabled else contextlib.nullcontext()):
+                step_loss_t = self._compute_loss([out], override_loss=loss_fn)
             cur_loss = float(step_loss_t.detach().to("cpu").item())
             prev_loss = step_metrics[-1]["loss"] if step_metrics else None
             delta = cur_loss - prev_loss if prev_loss is not None else 0.0
@@ -518,12 +531,25 @@ class Wanderer(_DeviceHelper):
                 outputs.append(out_tail)
         except Exception:
             pass
-        if self._finish_stats is not None and "loss_tensor" in self._finish_stats:
-            loss = self._finish_stats["loss_tensor"]
-        else:
-            loss = self._compute_loss(outputs, override_loss=loss_fn)
+        with (torch.autocast(device_type=amp_device, dtype=amp_dtype) if amp_enabled else contextlib.nullcontext()):
+            if self._finish_stats is not None and "loss_tensor" in self._finish_stats:
+                loss = self._finish_stats["loss_tensor"]
+            else:
+                loss = self._compute_loss(outputs, override_loss=loss_fn)
 
-        loss.backward()
+        if amp_enabled and scaler is not None:
+            scaler.scale(loss).backward()
+            scale = scaler.get_scale()
+            params = []
+            for n in self._visited:
+                w_param, b_param = self._param_map[id(n)]
+                params.append(w_param); params.append(b_param)
+            for p in params:
+                if p.grad is not None:
+                    p.grad.data = p.grad.data / scale
+            scaler.update()
+        else:
+            loss.backward()
 
         try:
             gc = getattr(self, "_grad_clip", {}) or {}
