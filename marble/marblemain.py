@@ -1011,7 +1011,7 @@ class Brain:
         self,
         n: int,
         *,
-        size: Union[int, Sequence[int]] = 32,
+        size: Optional[Union[int, Sequence[int]]] = None,
         bounds: Optional[Sequence[Tuple[float, float]]] = None,
         formula: Optional[str] = None,
         max_iters: int = 50,
@@ -1042,29 +1042,38 @@ class Brain:
         self.synapses: List[Synapse] = []
 
         if self.mode == "grid":
-            self.size: Tuple[int, ...] = self._normalize_size(size)
-            if len(self.size) != self.n:
-                raise ValueError("size must have length n")
-            self.bounds: Tuple[Tuple[float, float], ...] = self._normalize_bounds(bounds)
-            if len(self.bounds) != self.n:
-                raise ValueError("bounds must provide (min,max) for each dimension")
-            self.formula = formula
-            self.max_iters = int(max_iters)
-            self.escape_radius = float(escape_radius)
+            self.dynamic = size is None
+            if not self.dynamic:
+                self.size: Tuple[int, ...] = self._normalize_size(size)
+                if len(self.size) != self.n:
+                    raise ValueError("size must have length n")
+                self.bounds: Tuple[Tuple[float, float], ...] = self._normalize_bounds(bounds)
+                if len(self.bounds) != self.n:
+                    raise ValueError("bounds must provide (min,max) for each dimension")
+                self.formula = formula
+                self.max_iters = int(max_iters)
+                self.escape_radius = float(escape_radius)
 
-            # Prepare safe evaluation context
-            self._eval_env = self._build_eval_env()
+                # Prepare safe evaluation context
+                self._eval_env = self._build_eval_env()
 
-            # Build occupancy grid
-            self.occupancy: Dict[Tuple[int, ...], bool] = {}
-            self._populate_occupancy()
-            try:
-                report("brain", "occupancy", {"inside": sum(1 for v in self.occupancy.values() if v), "total": len(self.occupancy)}, "metrics")
-            except Exception:
-                pass
-
-            # Storage of neurons by index
+                # Build occupancy grid
+                self.occupancy: Dict[Tuple[int, ...], bool] = {}
+                self._populate_occupancy()
+                try:
+                    report("brain", "occupancy", {"inside": sum(1 for v in self.occupancy.values() if v), "total": len(self.occupancy)}, "metrics")
+                except Exception:
+                    pass
+            else:
+                self.size = None
+                self.bounds = None  # type: ignore
+                self.formula = None
+                self.max_iters = int(max_iters)
+                self.escape_radius = float(escape_radius)
+                self.occupancy: Dict[Tuple[int, ...], bool] = {}
             self.neurons: Dict[Tuple[int, ...], Neuron] = {}
+            self._dyn_min: List[int] = [0] * self.n
+            self._dyn_max: List[int] = [-1] * self.n
         else:
             # Sparse mode: only track occupied coordinates (floats)
             if sparse_bounds is None:
@@ -1096,9 +1105,17 @@ class Brain:
             except Exception:
                 pass
 
+        # Training progress counters for reporting
+        self._progress_epoch = 0
+        self._progress_total_epochs = 1
+        self._progress_walk = 0
+        self._progress_total_walks = 1
+
     # --- Public API ---
     def is_inside(self, index: Sequence[int]) -> bool:
         if self.mode == "grid":
+            if getattr(self, "dynamic", False):
+                return True
             key = tuple(int(i) for i in index)
             return bool(self.occupancy.get(key, False))
         else:
@@ -1119,6 +1136,8 @@ class Brain:
             idx = tuple(int(i) for i in index)
             if len(idx) != self.n:
                 raise ValueError("index length must equal n")
+            if getattr(self, "dynamic", False):
+                return tuple(float(i) for i in idx)
             return tuple(
                 self._map_index_to_coord(i, dim)
                 for dim, i in enumerate(idx)
@@ -1133,13 +1152,23 @@ class Brain:
     def add_neuron(self, index: Sequence[int], *, tensor: Union[TensorLike, Sequence[float], float, int] = 0.0, **kwargs: Any) -> Neuron:
         if self.mode == "grid":
             idx = tuple(int(i) for i in index)
-            if not self.is_inside(idx):
-                raise ValueError("Neuron index is outside the brain shape")
-            if idx in self.neurons:
-                raise ValueError("Neuron already exists at this index")
+            if not getattr(self, "dynamic", False):
+                if not self.is_inside(idx):
+                    raise ValueError("Neuron index is outside the brain shape")
+                if idx in self.neurons:
+                    raise ValueError("Neuron already exists at this index")
             neuron = Neuron(tensor, **kwargs)
             setattr(neuron, "position", idx)
             self.neurons[idx] = neuron
+            if getattr(self, "dynamic", False):
+                for d, v in enumerate(idx):
+                    if self._dyn_max[d] < self._dyn_min[d]:
+                        self._dyn_min[d] = self._dyn_max[d] = v
+                    else:
+                        if v < self._dyn_min[d]:
+                            self._dyn_min[d] = v
+                        if v > self._dyn_max[d]:
+                            self._dyn_max[d] = v
             try:
                 report("brain", "add_neuron", {"position": idx}, "events")
             except Exception:
@@ -1329,6 +1358,17 @@ class Brain:
 
     def available_indices(self) -> List[Tuple[int, ...]]:
         if self.mode == "grid":
+            if getattr(self, "dynamic", False):
+                if not self.neurons:
+                    out = [(0,) * self.n]
+                else:
+                    nxt0 = self._dyn_max[0] + 1
+                    out = [(nxt0,) + (0,) * (self.n - 1)]
+                try:
+                    report("brain", "available_indices", {"count": len(out)}, "metrics")
+                except Exception:
+                    pass
+                return out
             out = [idx for idx, inside in self.occupancy.items() if inside]
             try:
                 report("brain", "available_indices", {"count": len(out)}, "metrics")
@@ -1343,6 +1383,19 @@ class Brain:
             except Exception:
                 pass
             return out
+
+    def size_stats(self) -> Tuple[int, Optional[int]]:
+        """Return current neuron count and maximum capacity if fixed."""
+        current = len(self.neurons)
+        if getattr(self, "dynamic", False) or getattr(self, "size", None) is None:
+            return current, None
+        cap = 1
+        for v in self.size:
+            try:
+                cap *= int(v)
+            except Exception:
+                cap = 0
+        return current, cap
 
     # --- Sparse mode utilities ---
     def bulk_add_neurons(

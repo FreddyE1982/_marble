@@ -28,7 +28,11 @@ def run_wanderer_training(
 
     w = Wanderer(brain, type_name=wanderer_type, seed=seed, loss=loss, target_provider=target_provider)
     history: List[Dict[str, Any]] = []
+    brain._progress_total_epochs = 1  # type: ignore[attr-defined]
+    brain._progress_epoch = 0  # type: ignore[attr-defined]
+    brain._progress_total_walks = num_walks  # type: ignore[attr-defined]
     for i in range(num_walks):
+        brain._progress_walk = i  # type: ignore[attr-defined]
         start = start_selector(brain) if start_selector is not None else None
         stats = w.walk(max_steps=max_steps, start=start, lr=lr)
         history.append(stats)
@@ -85,6 +89,10 @@ def run_training_with_datapairs(
 
     history: List[Dict[str, Any]] = []
     count = 0
+    try:
+        brain._progress_total_walks = len(datapairs)  # type: ignore[attr-defined]
+    except Exception:
+        brain._progress_total_walks = 0  # type: ignore[attr-defined]
 
     def _normalize_pair(p: Union[DataPair, Tuple[Any, Any], Tuple[Union[TensorLike, Sequence[int]], Union[TensorLike, Sequence[int]]]]) -> DataPair:
         if isinstance(p, DataPair):
@@ -147,6 +155,7 @@ def run_training_with_datapairs(
             pass
 
     for item in datapairs:
+        brain._progress_walk = count  # type: ignore[attr-defined]
         dp = _normalize_pair(item)
         enc_l, enc_r = dp.encode(codec)
         # Create/choose start neuron
@@ -198,7 +207,10 @@ def run_wanderer_epochs_with_datapairs(
 
     prev_final = None
     epochs: List[Dict[str, Any]] = []
+    brain._progress_total_epochs = num_epochs  # type: ignore[attr-defined]
     for e in range(num_epochs):
+        brain._progress_epoch = e  # type: ignore[attr-defined]
+        brain._progress_total_walks = len(dataset)  # type: ignore[attr-defined]
         res = run_training_with_datapairs(
             brain,
             dataset,

@@ -24,6 +24,7 @@ from marble.marblemain import (
     SelfAttention,
 )
 from marble.plugins.selfattention_adaptive_grad_clip import AdaptiveGradClipRoutine
+from marble.plugins.selfattention_findbestneurontype import FindBestNeuronTypeRoutine
 
 
 def _img_to_bytes(img) -> bytes:
@@ -87,11 +88,15 @@ def main(epochs: int = 1) -> None:
         trust_remote_code=True,
         codec=codec,
     )
-    brain = Brain(2, size=(8, 8))
+    brain = Brain(2)
     brain.load_paradigm("warmup_decay", {"warmup_steps": 5})
     brain.load_paradigm("curriculum", {"start_steps": 1, "step_increment": 1})
     sa = SelfAttention(
-        routines=[QualityAwareRoutine(window=8), AdaptiveGradClipRoutine(threshold_ratio=1.3, max_norm=1.0)]
+        routines=[
+            QualityAwareRoutine(window=8),
+            AdaptiveGradClipRoutine(threshold_ratio=1.3, max_norm=1.0),
+            FindBestNeuronTypeRoutine(),
+        ]
     )
     wplugins = [
         "epsilongreedy",

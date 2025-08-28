@@ -22,7 +22,7 @@ Core Components
 - `Neuron` and `Synapse`: Fundamental graph units. Neurons store a tensor-like value and scalar `weight`/`bias` with an `age` counter. Synapses connect neurons with `direction` (uni/bi) and `weight`, and apply scaling on transmitted values. Plugin registries (`register_neuron_type`, `register_synapse_type`) allow custom behaviors (`on_init`, `forward`, `receive`, `transmit`).
 
 - `Brain`: n-dimensional space that can be either:
-  - Grid mode: discrete occupancy over an integer index lattice with world-coordinate bounds. Occupancy can be defined by formulas or Mandelbrot functions (`mandelbrot`, `mandelbrot_nd`).
+  - Grid mode: discrete occupancy over an integer index lattice with world-coordinate bounds. Occupancy can be defined by formulas or Mandelbrot functions (`mandelbrot`, `mandelbrot_nd`). Omitting the `size` parameter enables a fully dynamic grid that expands as neurons are added; capacity becomes unbounded.
   - Sparse mode: only track explicit world coordinates within per-dimension bounds supporting open-ended maxima via `None`.
   Provides neuron placement, connections, coordinate mapping, bulk add, and JSON export/import for sparse brains. Includes basic cross-process file-based locks (Windows-friendly) for neurons and synapses. The brain can persist and restore its entire state via single-file snapshots (`save_snapshot`/`load_snapshot`) using the `.marble` extension. When constructed with `store_snapshots=True`, snapshots are automatically written every `snapshot_freq` wanderer walks into `snapshot_path`.
 
@@ -36,6 +36,7 @@ Core Components
 
 - `Wanderer`: Autograd-based traversal across the graph. At each step, computes outputs from visited neurons using their (learnable) `weight`/`bias` (via temporary autograd parameters), accumulates loss, and performs SGD-style updates. Plugin registry (`register_wanderer_type`) allows custom step choice and loss definitions. Neuroplasticity registry (`register_neuroplasticity_type`) includes a default `BaseNeuroplasticityPlugin` that can grow/prune graph edges and adjust neuron parameters based on walk outcomes.
   - Gradient clipping: configurable per `Wanderer` via `gradient_clip` dict (`method`: `norm` or `value`, with `max_norm`/`norm_type` or `clip_value`). Applied after `loss.backward()` and before parameter updates.
+  - Progress reporting: `Wanderer.walk` now emits a `tqdm` progress bar (or `tqdm.notebook` in IPython) updated each step with epoch/walk counts, neuron and synapse totals, brain size, step speed, path count, and loss metrics.
 
 - Training Helpers: High-level flows to run Wanderer training:
   - `run_wanderer_training`: single-wanderer multi-walk loop.
