@@ -2,8 +2,6 @@ from __future__ import annotations
 
 from typing import Any, List
 
-from ..wanderer import register_wanderer_type
-
 
 class ContrastiveInfoNCEPlugin:
     """Adds an InfoNCE-style contrastive loss across walk outputs.
@@ -52,11 +50,5 @@ class ContrastiveInfoNCEPlugin:
         if not loss_terms:
             return torch.tensor(0.0, device=dev)
         return w * (torch.stack(loss_terms).mean())
-
-
-try:
-    register_wanderer_type("contrastive_infonce", ContrastiveInfoNCEPlugin())
-except Exception:
-    pass
 
 __all__ = ["ContrastiveInfoNCEPlugin"]

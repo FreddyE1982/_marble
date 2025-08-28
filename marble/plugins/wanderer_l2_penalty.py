@@ -2,8 +2,6 @@ from __future__ import annotations
 
 from typing import Any, List
 
-from ..wanderer import register_wanderer_type
-
 
 class L2WeightPenaltyPlugin:
     """Adds L2 penalty over visited neurons' weights and biases to the loss.
@@ -28,11 +26,5 @@ class L2WeightPenaltyPlugin:
         if total is None:
             return torch.tensor(0.0, device=getattr(wanderer, "_device", "cpu"))
         return lam * total
-
-
-try:
-    register_wanderer_type("l2_weight_penalty", L2WeightPenaltyPlugin())
-except Exception:
-    pass
 
 __all__ = ["L2WeightPenaltyPlugin"]
