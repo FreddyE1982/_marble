@@ -511,3 +511,7 @@ New Additive Plugins (this change)
 - Brain training plugin `warmup_decay`: Per-walk scheduler that linearly warms up learning rate to a peak across the first `warmup_walks`, then exponentially decays it each walk; also increases `max_steps` each walk. Config: `warmup_walks` (3), `base_lr` (1e-2), `peak_lr` (5e-2), `decay` (0.9), `start_steps` (2), `step_increment` (1). Registered as `"warmup_decay"` and stackable with existing trainers.
 
 All additions are fully additive and off by default; existing behavior and APIs are preserved. Each plugin/routine logs concise events to `REPORTER` under logical groups (`plugins`, `selfattention`, `training/brain`).
+
+Utility Scripts
+
+Helper scripts `clone_or_update.sh` and `clone_or_update.ps1` automate cloning or updating the repository and perform an editable install via `pip install -e .`.
