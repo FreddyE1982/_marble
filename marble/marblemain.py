@@ -1017,6 +1017,9 @@ class Brain:
         mode: str = "grid",
         sparse_bounds: Optional[Sequence[Union[Tuple[float, float], Tuple[float, None], Tuple[float]]]] = None,
         allow_dissimilar_datasets_in_wanderers: bool = False,
+        store_snapshots: bool = False,
+        snapshot_path: Optional[str] = None,
+        snapshot_freq: Optional[int] = None,
     ) -> None:
         if n < 1:
             raise ValueError("n must be >= 1")
@@ -1076,6 +1079,20 @@ class Brain:
         self._paradigms: List[Any] = []
         # Disabled set of paradigm ids
         self._paradigm_disabled: set = set()
+
+        # Snapshot configuration
+        self.store_snapshots = bool(store_snapshots)
+        self.snapshot_path = snapshot_path
+        self.snapshot_freq = int(snapshot_freq) if snapshot_freq is not None else None
+        if self.store_snapshots:
+            if not self.snapshot_path:
+                raise ValueError("snapshot_path must be provided when store_snapshots is True")
+            if self.snapshot_freq is None:
+                raise ValueError("snapshot_freq must be provided when store_snapshots is True")
+            try:
+                os.makedirs(self.snapshot_path, exist_ok=True)
+            except Exception:
+                pass
 
     # --- Public API ---
     def is_inside(self, index: Sequence[int]) -> bool:
@@ -1443,6 +1460,120 @@ class Brain:
             pass
         return brain
 
+    # --- Snapshot persistence ---
+    def save_snapshot(self, path: Optional[str] = None) -> str:
+        """Persist full brain state to a single `.marble` file.
+
+        If *path* is None, uses configured ``snapshot_path`` and auto-generates a
+        filename ``snapshot_<timestamp>.marble``. Returns the path written.
+        """
+        target = path
+        if target is None:
+            if not self.snapshot_path:
+                raise ValueError("snapshot_path is not configured")
+            ts = int(time.time())
+            target = os.path.join(self.snapshot_path, f"snapshot_{ts}.marble")
+        if not str(target).endswith(".marble"):
+            target = str(target) + ".marble"
+
+        def tensor_to_list(t: Any) -> List[float]:
+            try:
+                if hasattr(t, "detach") and hasattr(t, "tolist"):
+                    return [float(x) for x in t.detach().to("cpu").view(-1).tolist()]
+            except Exception:
+                pass
+            return [float(x) for x in (t if isinstance(t, (list, tuple)) else [t])]
+
+        data: Dict[str, Any] = {
+            "version": 1,
+            "n": self.n,
+            "mode": self.mode,
+            "size": list(getattr(self, "size", [])),
+            "bounds": [list(b) for b in getattr(self, "bounds", [])],
+            "formula": getattr(self, "formula", None),
+            "max_iters": getattr(self, "max_iters", None),
+            "escape_radius": getattr(self, "escape_radius", None),
+            "sparse_bounds": [list(b) for b in getattr(self, "sparse_bounds", [])],
+            "neurons": [],
+            "synapses": [],
+        }
+        for pos, neuron in self.neurons.items():  # type: ignore[union-attr]
+            data["neurons"].append(
+                {
+                    "position": list(pos),
+                    "weight": neuron.weight,
+                    "bias": neuron.bias,
+                    "age": neuron.age,
+                    "type_name": neuron.type_name,
+                    "tensor": tensor_to_list(neuron.tensor),
+                }
+            )
+        for syn in self.synapses:
+            src = getattr(syn.source, "position", None)
+            dst = getattr(syn.target, "position", None)
+            data["synapses"].append(
+                {
+                    "source": list(src),
+                    "target": list(dst),
+                    "direction": syn.direction,
+                    "age": syn.age,
+                    "type_name": syn.type_name,
+                    "weight": syn.weight,
+                }
+            )
+        with open(target, "wb") as f:
+            pickle.dump(data, f)
+        try:
+            report("brain", "snapshot_saved", {"path": target}, "io")
+        except Exception:
+            pass
+        return target
+
+    @classmethod
+    def load_snapshot(cls, path: str) -> "Brain":
+        """Load a brain snapshot previously saved with ``save_snapshot``."""
+        with open(path, "rb") as f:
+            data = pickle.load(f)
+        if not isinstance(data, dict):
+            raise ValueError("Invalid brain snapshot")
+        mode = data.get("mode", "grid")
+        if mode == "sparse":
+            brain = cls(
+                int(data.get("n", 1)),
+                mode="sparse",
+                sparse_bounds=tuple(tuple(b) for b in data.get("sparse_bounds", [])),
+                store_snapshots=False,
+            )
+        else:
+            brain = cls(
+                int(data.get("n", 1)),
+                size=tuple(data.get("size", [])),
+                bounds=tuple(tuple(b) for b in data.get("bounds", [])),
+                formula=data.get("formula"),
+                max_iters=int(data.get("max_iters", 50)),
+                escape_radius=float(data.get("escape_radius", 2.0)),
+                store_snapshots=False,
+            )
+        for item in data.get("neurons", []):
+            brain.add_neuron(
+                item.get("position", []),
+                tensor=item.get("tensor", 0.0),
+                weight=item.get("weight", 1.0),
+                bias=item.get("bias", 0.0),
+                age=item.get("age", 0),
+                type_name=item.get("type_name"),
+            )
+        for syn in data.get("synapses", []):
+            brain.connect(
+                syn.get("source", []),
+                syn.get("target", []),
+                direction=syn.get("direction", "uni"),
+                age=syn.get("age", 0),
+                type_name=syn.get("type_name"),
+                weight=syn.get("weight", 1.0),
+            )
+        return brain
+
     # --- Occupancy/grid helpers ---
     def _normalize_size(self, size: Union[int, Sequence[int]]) -> Tuple[int, ...]:
         if isinstance(size, int):
@@ -1587,6 +1718,19 @@ class Brain:
 
 
 __all__ += ["Brain"]
+
+
+def save_brain_snapshot(brain: "Brain", path: Optional[str] = None) -> str:
+    """Convenience wrapper around ``Brain.save_snapshot``."""
+    return brain.save_snapshot(path)
+
+
+def load_brain_snapshot(path: str) -> "Brain":
+    """Convenience wrapper around ``Brain.load_snapshot``."""
+    return Brain.load_snapshot(path)
+
+
+__all__ += ["save_brain_snapshot", "load_brain_snapshot"]
 
 
 # -----------------------------

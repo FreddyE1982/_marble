@@ -193,6 +193,13 @@ class Wanderer(_DeviceHelper):
                             },
                             "walks",
                         )
+                        if getattr(self.brain, "store_snapshots", False):
+                            freq = getattr(self.brain, "snapshot_freq", None)
+                            if freq and self._walk_counter % int(freq) == 0:
+                                try:
+                                    self.brain.save_snapshot()
+                                except Exception:
+                                    pass
                 except Exception:
                     pass
                 return res if isinstance(res, dict) else {"loss": 0.0, "steps": 0, "visited": 0}
@@ -554,6 +561,13 @@ class Wanderer(_DeviceHelper):
                 },
                 "walks",
             )
+            if getattr(self.brain, "store_snapshots", False):
+                freq = getattr(self.brain, "snapshot_freq", None)
+                if freq and self._walk_counter % int(freq) == 0:
+                    try:
+                        self.brain.save_snapshot()
+                    except Exception:
+                        pass
         except Exception:
             pass
 
