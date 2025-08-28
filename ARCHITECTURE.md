@@ -86,8 +86,10 @@ Packaging and Layout
   - `marble/training.py`: High-level training flows (`run_wanderer_training`, `create_start_neuron`, `run_training_with_datapairs`, `run_wanderer_epochs_with_datapairs`, `run_wanderers_parallel`, `make_default_codec`, `quick_train_on_pairs`).
   Additional subsystems will be modularized incrementally (brain, plugins) while preserving public APIs through `marblemain`.
   - Examples: `examples/run_datapair_training.py` demonstrates a small end-to-end datapair training run.
-  - Neuron plugins for transpose convolutions (`conv_transpose1d`, `conv_transpose2d`, `conv_transpose3d`) are implemented in dedicated modules under `marble/plugins/`, preparing for future removal of duplicate definitions from `marble/marblemain.py`.
-  - Additional neuron plugins (`maxpool1d/2d/3d`, `unfold2d`, `fold2d`, `maxunpool1d/2d/3d`) now reside in self-contained modules within `marble/plugins/` with full implementations.
+  - Neuron plugins for transpose convolutions (`conv_transpose1d`, `conv_transpose2d`, `conv_transpose3d`) are implemented in dedicated modules under `marble/plugins/`.
+  - Additional neuron plugins (`maxpool1d/2d/3d`, `unfold2d`, `fold2d`, `maxunpool1d/2d/3d`) live entirely in `marble/plugins/` and are imported into `marble/marblemain.py` for registration.
+  - Wanderer plugins (`l2_weight_penalty`, `contrastive_infonce`, `td_qlearning`, `distillation`, `bestlosspath`, `alternatepathscreator`, `hyperEvolution`) and brain-training plugins (`warmup_decay`, `curriculum`) are implemented in their own modules under `marble/plugins/` and registered on import.
+  - The default `BaseNeuroplasticityPlugin` resides in `marble/plugins/neuroplasticity_base.py` and self-registers under type name `base`.
   - Wanderer and brain-training plugin implementations (e.g., L2 penalty, curriculum, warmup-decay) are also hosted in their own modules under `marble/plugins/`.
 
 Operational Policy Update
