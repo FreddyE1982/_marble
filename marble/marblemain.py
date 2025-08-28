@@ -27,6 +27,8 @@ import time
 import tempfile
 import hashlib
 import importlib
+import itertools
+import gc
 try:
     import msvcrt  # type: ignore
 except Exception:
@@ -2381,6 +2383,7 @@ def run_training_with_datapairs(
     callback: Optional[Callable[[int, Dict[str, Any], DataPair], None]] = None,
     gradient_clip: Optional[Dict[str, Any]] = None,
     selfattention: Optional["SelfAttention"] = None,
+    streaming: bool = True,
 ) -> Dict[str, Any]:
     """Train over a sequence of DataPairs and return aggregate stats.
 
@@ -2442,13 +2445,32 @@ def run_training_with_datapairs(
             h.update(sig_chunk(enc_r))
         return h.hexdigest()
 
-    dataset_list = list(datapairs)
-    sig = _dataset_sig(dataset_list)
+    if streaming:
+        dp_iter, sig_iter = itertools.tee(datapairs)
+        sig = _dataset_sig(sig_iter)
+        data_iter = dp_iter
+    else:
+        dataset_list = list(datapairs)
+        sig = _dataset_sig(dataset_list)
+        data_iter = iter(dataset_list)
     if getattr(brain, "_dataset_signature", None) is None:
         brain._dataset_signature = sig  # type: ignore[attr-defined]
     else:
         if brain._dataset_signature != sig and not getattr(brain, "allow_dissimilar_datasets_in_wanderers", False):
-            raise ValueError("Dataset mismatch across wanderers on the same brain; set allow_dissimilar_datasets_in_wanderers=True to override")
+            raise ValueError(
+                "Dataset mismatch across wanderers on the same brain; set allow_dissimilar_datasets_in_wanderers=True to override"
+            )
+
+    if not getattr(brain, "store_snapshots", False):
+        try:
+            brain.store_snapshots = True  # type: ignore[attr-defined]
+            if not getattr(brain, "snapshot_path", None):
+                brain.snapshot_path = os.path.join(tempfile.gettempdir(), "marble_snapshots")  # type: ignore[attr-defined]
+            if getattr(brain, "snapshot_freq", None) is None:
+                brain.snapshot_freq = 1  # type: ignore[attr-defined]
+            os.makedirs(brain.snapshot_path, exist_ok=True)  # type: ignore[arg-type]
+        except Exception:
+            pass
 
     # Build a single Wanderer instance for all pairs; target set per-pair
     _current_target: Dict[str, Any] = {"val": None}
@@ -2473,7 +2495,7 @@ def run_training_with_datapairs(
     except Exception:
         pass
 
-    for i, item in enumerate(dataset_list):
+    for i, item in enumerate(data_iter):
         dp = _normalize_pair(item)
 
         # Encode BOTH parts strictly before running the wanderer
@@ -2527,6 +2549,9 @@ def run_training_with_datapairs(
                 callback(i, stats, dp)
             except Exception:
                 pass
+
+        del dp, enc_left, enc_right, item
+        gc.collect()
 
     final_loss = history[-1]["loss"] if history else 0.0
     out = {"history": history, "final_loss": final_loss, "count": count}

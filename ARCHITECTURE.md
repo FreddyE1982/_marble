@@ -39,7 +39,9 @@ Core Components
 
 - Training Helpers: High-level flows to run Wanderer training:
   - `run_wanderer_training`: single-wanderer multi-walk loop.
-  - `run_training_with_datapairs`: iterates over `DataPair`s; encodes left/right, injects left into start neuron, and trains against right via a target provider.
+  - `run_training_with_datapairs`: iterates over `DataPair`s; encodes left/right, injects left into a start neuron, and trains against right via a target provider.
+    - Supports a **streaming** mode (enabled by default) that never materializes the full dataset and drops consumed samples from memory immediately.
+    - Automatically enables brain snapshots during training, writing snapshots every walk to the configured `snapshot_path`.
   - `run_wanderer_epochs_with_datapairs`: repeats dataset for multiple epochs, recording per-epoch deltas.
   - `quick_train_on_pairs`: builds a minimal 2D `Brain` with configurable `grid_size`, creates a default codec if not provided, and calls `run_training_with_datapairs` with the supplied hyperparameters (`steps_per_pair`, `lr`, `seed`, `wanderer_type`, `neuro_config`, `gradient_clip`, optional `selfattention`). Logs summary under `training/quick`.
   - `run_wanderers_parallel`: orchestrates multiple datasets with thread-based concurrency (process mode intentionally unimplemented).
@@ -323,7 +325,7 @@ SelfAttention Integration
   - Neuron-type selection + wiring: SelfAttention exposes `list_neuron_types()` so routines can choose from available neuron types (currently `base` and `conv1d`). Routines MUST perform all wiring themselves when creating special neurons. The framework provides validation only:
     - `validate_neuron_wiring(neuron)`: returns `{ok, reason}`; for `conv1d` it checks exactly 5 incoming synapses and exactly 1 outgoing synapse. Unknown types are considered OK but are logged for visibility. No automatic neuron creation or connection is performed by the framework.
 - Training: `run_wanderer_training`, `run_training_with_datapairs`, `run_wanderer_epochs_with_datapairs`, `run_wanderers_parallel`, `create_start_neuron`.
-- Datasets/Examples: `run_wine_hello_world`, `export_wanderer_steps_to_jsonl`, `examples/run_wine_with_selfattention.py` (adaptive LR via SelfAttention), `examples/run_hf_image_quality.py` (streamed HF prompt-image quality training).
+- Datasets/Examples: `run_wine_hello_world`, `export_wanderer_steps_to_jsonl`, `examples/run_wine_with_selfattention.py` (adaptive LR via SelfAttention), `examples/run_hf_image_quality.py` (streamed HF prompt-image quality training with stacked Wanderer plugins).
   - `run_training_with_datapairs` accepts `selfattention` to attach step-wise control to the shared Wanderer.
   - Training helpers accept `gradient_clip` and pass it to the shared `Wanderer`.
 - Reporting: `REPORTER`, `report`, `report_group`, `report_dir`.
