@@ -106,6 +106,7 @@ def main(epochs: int = 1) -> None:
         "l2_weight_penalty",
         "distillation",
         "wanderalongsynapseweights",
+        "dynamicdimensions",
     ]
     neuro_cfg = {
         "grow_on_step_when_stuck": True,

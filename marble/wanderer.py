@@ -468,18 +468,14 @@ class Wanderer(_DeviceHelper):
             if lock_ctx is not None:
                 with lock_ctx:
                     if dir_str == "forward":
-                        next_syn.transmit(out, direction="forward")
-                        next_neuron = next_syn.target
+                        next_neuron = next_syn.transmit(out, direction="forward")
                     else:
-                        next_syn.transmit(out, direction="backward")
-                        next_neuron = next_syn.source
+                        next_neuron = next_syn.transmit(out, direction="backward")
             else:
                 if dir_str == "forward":
-                    next_syn.transmit(out, direction="forward")
-                    next_neuron = next_syn.target
+                    next_neuron = next_syn.transmit(out, direction="forward")
                 else:
-                    next_syn.transmit(out, direction="backward")
-                    next_neuron = next_syn.source
+                    next_neuron = next_syn.transmit(out, direction="backward")
 
             for nplug in getattr(self, "_neuro_plugins", []) or []:
                 try:

@@ -20,6 +20,7 @@ Core Components
 - `_DeviceHelper`: Internal utility for device selection and tensor conversion. Prefers CUDA when available; falls back to CPU. Used by Neuron, Synapse, Wanderer.
 
 - `Neuron` and `Synapse`: Fundamental graph units. Neurons store a tensor-like value and scalar `weight`/`bias` with an `age` counter. Synapses connect neurons with `direction` (uni/bi) and `weight`, and apply scaling on transmitted values. Plugin registries (`register_neuron_type`, `register_synapse_type`) allow custom behaviors (`on_init`, `forward`, `receive`, `transmit`).
+  Synapses may also connect directly to other synapses; transmission recursively traverses until a neuron endpoint is reached. When a neuron is removed, its adjacent synapses are bridged to maintain path continuity.
 
 - `Brain`: n-dimensional space that can be either:
   - Grid mode: discrete occupancy over an integer index lattice with world-coordinate bounds. Occupancy can be defined by formulas or Mandelbrot functions (`mandelbrot`, `mandelbrot_nd`). Omitting the `size` parameter enables a fully dynamic grid that expands as neurons are added; capacity becomes unbounded.
@@ -34,7 +35,8 @@ Core Components
   - `on_end` dicts merged; later trainers win on conflicts.
   - Built-in: `curriculum` trainer increases `max_steps` across walks. Config: `start_steps` (default 1), `step_increment` (default 1), optional `max_cap`.
 
-- `Wanderer`: Autograd-based traversal across the graph. At each step, computes outputs from visited neurons using their (learnable) `weight`/`bias` (via temporary autograd parameters), accumulates loss, and performs SGD-style updates. Plugin registry (`register_wanderer_type`) allows custom step choice and loss definitions. Neuroplasticity registry (`register_neuroplasticity_type`) includes a default `BaseNeuroplasticityPlugin` that can grow/prune graph edges and adjust neuron parameters based on walk outcomes.
+  - `Wanderer`: Autograd-based traversal across the graph. At each step, computes outputs from visited neurons using their (learnable) `weight`/`bias` (via temporary autograd parameters), accumulates loss, and performs SGD-style updates. Plugin registry (`register_wanderer_type`) allows custom step choice and loss definitions. Neuroplasticity registry (`register_neuroplasticity_type`) includes a default `BaseNeuroplasticityPlugin` that can grow/prune graph edges and adjust neuron parameters based on walk outcomes.
+    - `dynamicdimensions` plugin periodically adds a new dimension to the `Brain`, observes neuron growth, and removes the dimension if it doesn't improve loss.
   - Gradient clipping: configurable per `Wanderer` via `gradient_clip` dict (`method`: `norm` or `value`, with `max_norm`/`norm_type` or `clip_value`). Applied after `loss.backward()` and before parameter updates.
   - Progress reporting: `Wanderer.walk` now emits a `tqdm` progress bar (or `tqdm.notebook` in IPython) updated each step with epoch/walk counts, neuron and synapse totals, brain size, step speed, path count, and loss metrics.
 
