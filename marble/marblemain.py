@@ -2134,6 +2134,13 @@ try:
 except Exception:
     pass
 
+try:
+    from .plugins.wanderer_mixedprecision import MixedPrecisionPlugin
+    register_wanderer_type("mixedprecision", MixedPrecisionPlugin())
+    __all__ += ["MixedPrecisionPlugin"]
+except Exception:
+    pass
+
 # Neuroplasticity plugin registry (moved). Import registry and registrar.
 from .wanderer import register_neuroplasticity_type  # re-exported below
 from .wanderer import NEURO_TYPES_REGISTRY as _NEURO_TYPES
