@@ -169,6 +169,7 @@ Convenience APIs
     - `record_removed_neuron(neuron)`, `record_removed_synapse(synapse)`: snapshot removals (positions, weights, age, type, and incident synapses for neurons) for restoration.
     - `commit_change()`: finalize the record as the latest change.
     - `rollback_last_change() -> bool`: undo the latest recorded change by removing created objects and restoring removed ones (neurons and synapses). All actions are logged under `selfattention/builder`.
+  - Routine: `findbestneurontype` wraps `Brain.add_neuron` to try all registered neuron types, stepping the Wanderer once with `lr=0` through each candidate and keeping the type with the largest loss improvement.
   - Analysis: `SelfAttention.history(last_n=None)` reads the last N per-step records directly from the Reporter (`wanderer_steps/logs`), ordered by step number; there is no separate internal buffer. The `history_size` constructor arg is retained for API stability but history is sourced from Reporter.
 
 Module Refactor: SelfAttention
