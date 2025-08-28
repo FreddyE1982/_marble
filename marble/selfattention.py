@@ -60,6 +60,8 @@ class SelfAttention:
         # Per-neuron learnable parameter registry managed by SelfAttention.
         # Structure: { id(neuron): { name: { 'tensor': torch.Tensor, 'opt': bool, 'lr': Optional[float] } } }
         self._learnables: Dict[int, Dict[str, Dict[str, Any]]] = {}
+        # Global learnable parameters for SelfAttention routines
+        self._global_learnables: Dict[str, Dict[str, Any]] = {}
 
     # API exposed to routines
     def get_param(self, name: str) -> Any:
@@ -136,6 +138,23 @@ class SelfAttention:
             pass
         return t
 
+    def ensure_global_learnable_param(self, name: str, init_value: Any, *, requires_grad: bool = True,
+                                      lr: Optional[float] = None) -> Any:
+        owner = getattr(self, "_owner", None)
+        torch = getattr(owner, "_torch", None) if owner is not None else None
+        device = getattr(owner, "_device", "cpu") if owner is not None else "cpu"
+        if name in self._global_learnables:
+            return self._global_learnables[name]["tensor"]
+        if torch is not None:
+            try:
+                t = torch.tensor(init_value, dtype=torch.float32, device=device, requires_grad=requires_grad)
+            except Exception:
+                t = torch.tensor([init_value], dtype=torch.float32, device=device, requires_grad=requires_grad)
+        else:
+            t = init_value
+        self._global_learnables[name] = {"tensor": t, "opt": False, "lr": lr}
+        return t
+
     def set_param_optimization(self, neuron: "Neuron", name: str, *, enabled: bool = True, lr: Optional[float] = None) -> None:
         nid = id(neuron)
         if nid not in self._learnables or name not in self._learnables[nid]:
@@ -145,9 +164,21 @@ class SelfAttention:
         if lr is not None:
             self._learnables[nid][name]["lr"] = float(lr)
 
+    def set_global_param_optimization(self, name: str, *, enabled: bool = True, lr: Optional[float] = None) -> None:
+        ent = self._global_learnables.get(name)
+        if ent is None:
+            return
+        ent["opt"] = bool(enabled)
+        if lr is not None:
+            ent["lr"] = float(lr)
+
     def get_neuron_param_tensor(self, neuron: "Neuron", name: str) -> Any:
         nid = id(neuron)
         ent = self._learnables.get(nid, {}).get(name)
+        return None if ent is None else ent.get("tensor")
+
+    def get_global_param_tensor(self, name: str) -> Any:
+        ent = self._global_learnables.get(name)
         return None if ent is None else ent.get("tensor")
 
     def list_neuron_learnables(self, neuron: "Neuron") -> List[str]:
@@ -164,6 +195,12 @@ class SelfAttention:
                 t = cfg.get("tensor")
                 if torch is not None and hasattr(t, "requires_grad"):
                     out.append((t, float(cfg.get("lr", default_lr))))
+        for name, cfg in self._global_learnables.items():
+            if not cfg.get("opt"):
+                continue
+            t = cfg.get("tensor")
+            if torch is not None and hasattr(t, "requires_grad"):
+                out.append((t, float(cfg.get("lr", default_lr))))
         return out
 
     def _update_learnables(self, wanderer: "Wanderer") -> None:
