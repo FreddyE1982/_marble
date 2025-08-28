@@ -45,7 +45,7 @@ Core Components
   - `run_wanderers_parallel`: orchestrates multiple datasets with thread-based concurrency (process mode intentionally unimplemented).
   - `run_wine_hello_world`: convenience that loads scikit-learn’s Wine dataset, runs training with neuroplasticity active, and writes per-step wanderer logs to a JSONL file.
 
-- Reporter: Global `REPORTER` instance to record structured data. Convenience functions `report`, `report_group`, `report_dir` provide ergonomic logging and querying. Tests and core flows record key metrics and events for auditability.
+- Reporter: Global `REPORTER` instance to record structured data. Convenience functions `report`, `report_group`, `report_dir`, and `clear_report_group` provide ergonomic logging, querying, and cleanup. Tests and core flows record key metrics and events for auditability.
   - Per-step logs: `Wanderer.walk` records detailed step metrics under group `wanderer_steps/logs` including:
     - time, dt_since_last
     - current_loss (per-step), previous_loss, mean_loss (running per-step mean within walk)
@@ -79,7 +79,7 @@ Packaging and Layout
 - Code: primary entry module `marble/marblemain.py` re-exports public APIs from cohesive submodules:
   - `marble/codec.py`: `UniversalTensorCodec`, `TensorLike`.
   - `marble/datapair.py`: `DataPair` and helpers (`make_datapair`, `encode_datapair`, `decode_datapair`).
-  - `marble/reporter.py`: `Reporter`, `REPORTER`, `report`, `report_group`, `report_dir`, `export_wanderer_steps_to_jsonl`.
+  - `marble/reporter.py`: `Reporter`, `REPORTER`, `report`, `report_group`, `report_dir`, `clear_report_group`, `export_wanderer_steps_to_jsonl`.
   - `marble/hf_utils.py`: Hugging Face login and dataset streaming wrappers with auto-encoding.
   - `marble/graph.py`: `_DeviceHelper`, `Neuron`, `Synapse`, and registries (`_NEURON_TYPES`, `_SYNAPSE_TYPES`, register helpers).
   - `marble/training.py`: High-level training flows (`run_wanderer_training`, `create_start_neuron`, `run_training_with_datapairs`, `run_wanderer_epochs_with_datapairs`, `run_wanderers_parallel`, `make_default_codec`, `quick_train_on_pairs`).

@@ -4987,6 +4987,7 @@ from .reporter import (
     report,
     report_group,
     report_dir,
+    clear_report_group,
     export_wanderer_steps_to_jsonl,
 )
 
@@ -4996,6 +4997,7 @@ __all__ += [
     "report",
     "report_group",
     "report_dir",
+    "clear_report_group",
     "export_wanderer_steps_to_jsonl",
 ]
 
