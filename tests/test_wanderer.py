@@ -62,6 +62,24 @@ class TestWanderer(unittest.TestCase):
         self.assertGreaterEqual(w._plugin_state.get("choose_calls", 0), 1)
         self.assertGreaterEqual(stats["steps"], 1)
 
+    def test_wanderer_exposes_learnable_params(self):
+        from marble.marblemain import register_wanderer_type, Wanderer, Brain
+        import torch
+
+        class ParamPlugin:
+            def loss(self, wanderer, outputs):
+                return torch.stack(list(wanderer.learnable_params.values())).sum()
+
+        register_wanderer_type("paramplug", ParamPlugin())
+        b = Brain(1, mode="sparse", sparse_bounds=((0.0, None),))
+        b.add_neuron((0.0,), tensor=[1.0], weight=1.0, bias=0.0)
+        w = Wanderer(b, type_name="paramplug", seed=1)
+        self.assertEqual(len(w.learnable_params), 10)
+        before = [p.detach().to("cpu").item() for p in w.learnable_params.values()]
+        w.walk(max_steps=1, lr=0.1)
+        after = [p.detach().to("cpu").item() for p in w.learnable_params.values()]
+        self.assertTrue(any(a != b for a, b in zip(after, before)))
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

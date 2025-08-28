@@ -94,6 +94,15 @@ class Wanderer(_DeviceHelper):
         self.type_name = type_name
         self.rng = random.Random(seed)
         self._plugin_state: Dict[str, Any] = {}
+        self._plugin_state["learnable_params"] = {}
+        self.learnable_params: Dict[str, Any] = self._plugin_state["learnable_params"]
+        for i in range(10):
+            self.learnable_params[f"param_{i}"] = self._torch.tensor(
+                0.0,
+                dtype=self._torch.float32,
+                device=self._device,
+                requires_grad=True,
+            )
         self._visited: List[Neuron] = []
         self._param_map: Dict[int, Tuple[Any, Any]] = {}  # id(neuron) -> (w_param, b_param)
         self._loss_spec = loss
@@ -552,6 +561,7 @@ class Wanderer(_DeviceHelper):
             for n in self._visited:
                 w_param, b_param = self._param_map[id(n)]
                 params.append(w_param); params.append(b_param)
+            params.extend(self.learnable_params.values())
             for p in params:
                 if p.grad is not None:
                     p.grad.data = p.grad.data / scale
@@ -568,6 +578,7 @@ class Wanderer(_DeviceHelper):
                 if hasattr(w_param, "grad") or hasattr(b_param, "grad"):
                     params.append(w_param)
                     params.append(b_param)
+            params.extend(self.learnable_params.values())
             if params and method:
                 torch = self._torch  # type: ignore[assignment]
                 if method == "norm":
@@ -608,6 +619,13 @@ class Wanderer(_DeviceHelper):
                 n.bias = float(b_new.item())  # type: ignore[assignment]
             except Exception:
                 n.bias = float(b_new)  # type: ignore[assignment]
+
+        with torch.no_grad():
+            for p in self.learnable_params.values():
+                grad = p.grad if getattr(p, "grad", None) is not None else 0.0
+                p.sub_(lr_eff * grad)
+                if hasattr(p, "grad"):
+                    p.grad = None
 
         try:
             for sa in getattr(self, "_selfattentions", []) or []:
@@ -778,6 +796,11 @@ class Wanderer(_DeviceHelper):
                         else:
                             aligned = tv[: yv.numel()]
                         tgt = aligned
+                        try:
+                            if hasattr(yt, "shape") and hasattr(aligned, "shape") and yt.shape != aligned.shape:
+                                yt = yt.view_as(aligned)
+                        except Exception:
+                            pass
                 except Exception:
                     pass
                 terms.append(loss_mod(yt, tgt))
