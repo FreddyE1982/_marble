@@ -31,6 +31,18 @@ _WANDERER_TYPES = WANDERER_TYPES_REGISTRY
 _NEURO_TYPES = NEURO_TYPES_REGISTRY
 
 
+def _tqdm_factory():
+    try:
+        from IPython import get_ipython  # type: ignore
+        if get_ipython() is not None:  # pragma: no cover - runtime check
+            from tqdm.notebook import tqdm  # type: ignore
+        else:  # pragma: no cover
+            from tqdm import tqdm  # type: ignore
+    except Exception:  # pragma: no cover
+        from tqdm import tqdm  # type: ignore
+    return tqdm
+
+
 class Wanderer(_DeviceHelper):
     """Autograd-driven wanderer that traverses the Brain via neurons/synapses.
 
@@ -221,6 +233,11 @@ class Wanderer(_DeviceHelper):
         self._walk_loss_sum = 0.0
         self._walk_step_count = 0
 
+        tqdm_cls = _tqdm_factory()
+        pbar = tqdm_cls(total=max_steps, leave=False)
+        total_dt = 0.0
+        prev_mean = None
+
         try:
             for n in self.brain.neurons.values():  # type: ignore[union-attr]
                 lock_ctx = None
@@ -333,16 +350,47 @@ class Wanderer(_DeviceHelper):
             except Exception:
                 dt = None
             self._last_step_time = now
-            step_metrics.append({"loss": cur_loss, "delta": delta, "dt": dt})
+            step_metrics.append({"loss": cur_loss, "delta": delta, "dt": dt, "mean_loss": self._walk_loss_sum / max(1, self._walk_step_count + 1)})
             self._walk_loss_sum += cur_loss
             self._walk_step_count += 1
             mean_loss = self._walk_loss_sum / max(1, self._walk_step_count)
+            total_dt += dt if dt else 0.0
 
             try:
                 cum_loss_t = self._compute_loss(outputs, override_loss=loss_fn)
                 cur_walk_loss = float(cum_loss_t.detach().to("cpu").item())
             except Exception:
                 cur_walk_loss = float("nan")
+
+            mean_speed = self._walk_step_count / total_dt if total_dt > 0 else 0.0
+            loss_speed = -(delta / dt) if dt and delta is not None and dt != 0 else 0.0
+            mean_delta = mean_loss - (prev_mean if prev_mean is not None else mean_loss)
+            mean_loss_speed = -(mean_delta / dt) if dt and dt != 0 else 0.0
+            cur_size, cap = (0, None)
+            try:
+                cur_size, cap = self.brain.size_stats()  # type: ignore[attr-defined]
+            except Exception:
+                cur_size = len(getattr(self.brain, "neurons", {}))
+                cap = None
+            desc = f"{getattr(self.brain, '_progress_epoch', 0)+1}/{getattr(self.brain, '_progress_total_epochs', 1)} epochs "
+            desc += f"{getattr(self.brain, '_progress_walk', 0)+1}/{getattr(self.brain, '_progress_total_walks', 1)} walks"
+            pbar.set_description(desc)
+            try:
+                pbar.set_postfix(
+                    neurons=cur_size,
+                    synapses=len(getattr(self.brain, "synapses", [])),
+                    brain=f"{cur_size}/{cap if cap is not None else '-'}",
+                    speed=f"{mean_speed:.2f}",
+                    paths=len(getattr(self.brain, "synapses", [])),
+                    loss=f"{cur_loss:.4f}",
+                    mean_loss=f"{mean_loss:.4f}",
+                    loss_speed=f"{loss_speed:.4f}",
+                    mean_loss_speed=f"{mean_loss_speed:.4f}",
+                )
+            except Exception:
+                pass
+            pbar.update(1)
+            prev_mean = mean_loss
 
             self._global_step_counter += 1
             itemname = f"step_{self._global_step_counter}"
@@ -466,6 +514,7 @@ class Wanderer(_DeviceHelper):
             carried_value = out
             steps += 1
             moved_last = True
+        pbar.close()
 
         try:
             if moved_last and current is not None:
