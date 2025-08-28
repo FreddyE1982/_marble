@@ -89,8 +89,9 @@ def main(epochs: int = 1) -> None:
         codec=codec,
     )
     brain = Brain(2)
-    brain.load_paradigm("warmup_decay", {"warmup_steps": 5})
-    brain.load_paradigm("curriculum", {"start_steps": 1, "step_increment": 1})
+    # Brain-training plugins like "warmup_decay" and "curriculum" apply only to
+    # ``Brain.train`` flows and are not compatible with ``run_training_with_datapairs``.
+    # They are therefore omitted here to keep the example runnable.
     sa = SelfAttention(
         routines=[
             QualityAwareRoutine(window=8),

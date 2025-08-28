@@ -394,3 +394,4 @@ Hugging Face Datasets Policy (additive)
 - Example scripts fetching Hugging Face datasets must use `load_hf_streaming_dataset` and comment which dataset fields are consumed.
 
 50. Utility scripts for repository setup (e.g., `clone_or_update.sh` and `.ps1`) must remain in the repo root, use `git -C` for pulls, and perform editable installs via `pip install -e .`.
+51. Example scripts must reference only existing plugins and paradigms so they run without missing-component errors.
