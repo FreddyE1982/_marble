@@ -141,6 +141,7 @@ Plugin Stacking Policy (additive)
 44. Test runner policy: Treat `pytest` as unavailable/unstable in this environment; the agent SHALL run tests using `unittest` modules by default (leveraging rule 26’s fallback). Only use `pytest` if the user explicitly requests it and stability is verified.
 45. Neuroplasticity: Add new capabilities conservatively with default plugins that are safe and minimally invasive. Hook them into `Wanderer` via plugin registries and ensure all actions are logged via `REPORTER`.
 46. Clear reporter state between tests using `Reporter.clear_group` (via `clear_report_group`) to avoid cross-test interference.
+47. Helper functions that read reporter data must handle missing groups gracefully and return `None` rather than raising exceptions.
 Temporary Test Deferral (additive, non-contradictory)
 
 - HyperEvolution comparison test: Deferred for now to keep CI time stable and avoid flakiness while architecture-search behavior evolves. This does NOT remove or narrow any functionality; it only defers a heavy integration test. Re-enable once stable budgets (pairs/steps/epochs) are agreed.

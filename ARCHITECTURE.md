@@ -55,6 +55,7 @@ Core Components
     - applied_settings (dict applied at step start), current_lr (effective LR used for update)
   - Export: `export_wanderer_steps_to_jsonl(path)` writes collected step records to JSON Lines.
   - Per-walk summaries: After each walk, Wanderer reports `{final_loss, mean_step_loss, steps, visited, timestamp}` under `training/walks`.
+  - Convenience: `get_last_walk_summary()` retrieves the latest record from `training/walks` for quick access in tests or tools.
 
 Device and CUDA Policy
 

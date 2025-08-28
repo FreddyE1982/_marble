@@ -5001,6 +5001,34 @@ __all__ += [
     "export_wanderer_steps_to_jsonl",
 ]
 
+
+def get_last_walk_summary() -> Optional[Dict[str, Any]]:
+    """Return the most recent walk summary recorded under training/walks.
+
+    Reads the global REPORTER's ``training/walks`` group and selects the
+    entry with the highest numeric suffix. Returns ``None`` when the group
+    is empty or missing.
+    """
+
+    try:
+        walks = REPORTER.group("training", "walks")
+    except Exception:
+        return None
+    if not walks:
+        return None
+
+    def _idx(k: str) -> int:
+        try:
+            return int(k.split("_")[-1])
+        except Exception:
+            return -1
+
+    last_key = max(walks.keys(), key=_idx)
+    return walks.get(last_key)
+
+
+__all__ += ["get_last_walk_summary"]
+
 # High-level training helpers (moved)
 from .training import (
     run_training_with_datapairs,
