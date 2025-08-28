@@ -24,7 +24,7 @@ Core Components
 - `Brain`: n-dimensional space that can be either:
   - Grid mode: discrete occupancy over an integer index lattice with world-coordinate bounds. Occupancy can be defined by formulas or Mandelbrot functions (`mandelbrot`, `mandelbrot_nd`).
   - Sparse mode: only track explicit world coordinates within per-dimension bounds supporting open-ended maxima via `None`.
-  Provides neuron placement, connections, coordinate mapping, bulk add, and JSON export/import for sparse brains. Includes basic cross-process file-based locks (Windows-friendly) for neurons and synapses.
+  Provides neuron placement, connections, coordinate mapping, bulk add, and JSON export/import for sparse brains. Includes basic cross-process file-based locks (Windows-friendly) for neurons and synapses. The brain can persist and restore its entire state via single-file snapshots (`save_snapshot`/`load_snapshot`) using the `.marble` extension. When constructed with `store_snapshots=True`, snapshots are automatically written every `snapshot_freq` wanderer walks into `snapshot_path`.
 
 - Brain Training Plugins: Registry (`register_brain_train_type`) and the `Brain.train` method (bound at runtime) to orchestrate multiple wanderer walks with plugin hooks for start selection and per-walk adjustments. Stacking is supported via comma-separated or list `type_name`:
   - `on_init` executed for all trainers in order.
