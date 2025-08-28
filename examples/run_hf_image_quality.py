@@ -93,14 +93,25 @@ def main(epochs: int = 1) -> None:
     sa = SelfAttention(
         routines=[QualityAwareRoutine(window=8), AdaptiveGradClipRoutine(threshold_ratio=1.3, max_norm=1.0)]
     )
-    wplugins = (
-        "epsilongreedy,td_qlearning,bestlosspath,alternatepathscreator,l2_weight_penalty,distillation,wanderalongsynapseweights"
-    )
+    wplugins = [
+        "epsilongreedy",
+        "td_qlearning",
+        "bestlosspath",
+        "alternatepathscreator",
+        "l2_weight_penalty",
+        "distillation",
+        "wanderalongsynapseweights",
+    ]
     neuro_cfg = {
         "grow_on_step_when_stuck": True,
         "max_new_per_walk": 1,
         "enable_prune": True,
         "prune_if_outgoing_gt": 3,
+        "epsilongreedy_epsilon": 0.15,
+        "rl_epsilon": 0.1,
+        "rl_alpha": 0.05,
+        "rl_gamma": 0.95,
+        "l2_lambda": 1e-4,
     }
     for _ in range(int(epochs)):
         pairs = _sample_pairs(ds)
@@ -110,9 +121,10 @@ def main(epochs: int = 1) -> None:
             codec,
             steps_per_pair=2,
             lr=1e-3,
-            wanderer_type=wplugins,
+            wanderer_type=",".join(wplugins),
             neuro_config=neuro_cfg,
             selfattention=sa,
+            streaming=True,
         )
     print("streamed quality training complete")
 
