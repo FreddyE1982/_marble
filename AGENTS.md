@@ -392,3 +392,5 @@ Hugging Face Datasets Policy (additive)
 - Token sourcing: `hf_login` reads the token from the explicit parameter or from `HF_TOKEN`/`HUGGINGFACE_TOKEN` environment variables. No interactive prompts are used in tests.
 - Lazy imports: Hugging Face libraries are imported lazily inside helpers in `marble/marblemain.py` to keep import-time requirements minimal; missing dependencies are reported clearly when a helper is used.
 - Example scripts fetching Hugging Face datasets must use `load_hf_streaming_dataset` and comment which dataset fields are consumed.
+
+50. Utility scripts for repository setup (e.g., `clone_or_update.sh` and `.ps1`) must remain in the repo root, use `git -C` for pulls, and perform editable installs via `pip install -e .`.
