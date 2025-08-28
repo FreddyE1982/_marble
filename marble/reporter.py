@@ -75,6 +75,21 @@ class Reporter:
             node = self._find_group_node(path)
             return {} if node is None else self._summarize(node)
 
+    def clear_group(self, groupname: str, *subgroups: str) -> None:
+        path = (str(groupname),) + tuple(str(s) for s in subgroups)
+        with self._lock:
+            parent: Dict[str, Any] = {"_subgroups": self._groups}
+            cur: Optional[Dict[str, Any]] = parent
+            for name in path[:-1]:
+                if cur is None:
+                    return
+                subs = cur.get("_subgroups", {})
+                cur = subs.get(str(name))
+                if not isinstance(cur, dict):
+                    return
+            subs = cur.get("_subgroups", {}) if cur else {}
+            subs.pop(str(path[-1]), None)
+
     def _find_group_node(self, path: Tuple[str, ...]) -> Optional[Dict[str, Any]]:
         node: Dict[str, Any] = {"_items": {}, "_subgroups": self._groups}
         cur: Optional[Dict[str, Any]] = node
@@ -109,6 +124,10 @@ def report_group(groupname: str, *subgroups: str) -> Dict[str, Any]:
 
 def report_dir(groupname: Optional[str] = None, *subgroups: str) -> Dict[str, Any]:
     return REPORTER.dirtree(groupname, *subgroups)
+
+
+def clear_report_group(groupname: str, *subgroups: str) -> None:
+    REPORTER.clear_group(groupname, *subgroups)
 
 
 def export_wanderer_steps_to_jsonl(path: str, *, groupname: str = "wanderer_steps", subgroups: Sequence[str] = ("logs",)) -> None:
@@ -148,6 +167,7 @@ __all__ = [
     "report",
     "report_group",
     "report_dir",
+    "clear_report_group",
     "export_wanderer_steps_to_jsonl",
 ]
 
