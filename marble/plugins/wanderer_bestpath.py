@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from typing import Any, List, Tuple
 
-from ..wanderer import register_wanderer_type
 from ..reporter import report
 
 
@@ -86,11 +85,5 @@ class BestLossPathPlugin:
             except Exception:
                 pass
         return None, "forward"
-
-
-try:
-    register_wanderer_type("bestlosspath", BestLossPathPlugin())
-except Exception:
-    pass
 
 __all__ = ["BestLossPathPlugin"]
