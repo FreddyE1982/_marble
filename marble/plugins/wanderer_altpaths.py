@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from typing import Any, List
 
-from ..wanderer import register_wanderer_type
 from ..reporter import report
 
 
@@ -80,11 +79,5 @@ class AlternatePathsCreatorPlugin:
             wanderer._plugin_state["altpaths_created"] = created + 1
         except Exception:
             pass
-
-
-try:
-    register_wanderer_type("alternatepathscreator", AlternatePathsCreatorPlugin())
-except Exception:
-    pass
 
 __all__ = ["AlternatePathsCreatorPlugin"]

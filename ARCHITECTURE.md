@@ -87,6 +87,8 @@ Packaging and Layout
   Additional subsystems will be modularized incrementally (brain, plugins) while preserving public APIs through `marblemain`.
   - Examples: `examples/run_datapair_training.py` demonstrates a small end-to-end datapair training run.
   - Neuron plugins for transpose convolutions (`conv_transpose1d`, `conv_transpose2d`, `conv_transpose3d`) are implemented in dedicated modules under `marble/plugins/`, preparing for future removal of duplicate definitions from `marble/marblemain.py`.
+  - Additional neuron plugins (`maxpool1d/2d/3d`, `unfold2d`, `fold2d`, `maxunpool1d/2d/3d`) now reside in self-contained modules within `marble/plugins/` with full implementations.
+  - Wanderer and brain-training plugin implementations (e.g., L2 penalty, curriculum, warmup-decay) are also hosted in their own modules under `marble/plugins/`.
 
 Operational Policy Update
 

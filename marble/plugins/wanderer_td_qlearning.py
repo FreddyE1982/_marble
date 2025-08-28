@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from typing import Any, Optional, List, Tuple
 
-from ..wanderer import register_wanderer_type
 from ..reporter import report
 
 
@@ -86,11 +85,5 @@ class TDQLearningPlugin:
             pass
         # Reset last_syn only after applying update once; keep it tied to previous transition
         self._last_syn = next_syn
-
-
-try:
-    register_wanderer_type("td_qlearning", TDQLearningPlugin())
-except Exception:
-    pass
 
 __all__ = ["TDQLearningPlugin"]

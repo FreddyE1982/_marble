@@ -2,8 +2,6 @@ from __future__ import annotations
 
 from typing import Any, Dict
 
-from ..marblemain import register_brain_train_type
-
 
 class CurriculumTrainPlugin:
     """Brain-train plugin that increases walk max_steps across walks.
@@ -27,11 +25,5 @@ class CurriculumTrainPlugin:
             except Exception:
                 pass
         return {"max_steps": int(ms)}
-
-
-try:
-    register_brain_train_type("curriculum", CurriculumTrainPlugin())
-except Exception:
-    pass
 
 __all__ = ["CurriculumTrainPlugin"]
