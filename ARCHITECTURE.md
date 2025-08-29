@@ -529,3 +529,8 @@ All additions remain fully additive; existing behavior and APIs are preserved. E
 Utility Scripts
 
 Helper scripts `clone_or_update.sh` and `clone_or_update.ps1` automate cloning or updating the repository and perform an editable install via `pip install -e .`.
+
+## 3D Printer Simulator Plan
+
+- Directory `3d_printer_sim` holds a development plan for a future 3D printer simulator.
+- The plan targets full compatibility with unmodified Marlin firmware, including virtual USB/SD interfaces, configurable build volumes, and complete sensor and physics emulation.
