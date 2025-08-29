@@ -56,11 +56,11 @@ Step 8: Documentation and Examples
 
 
 Step 9: Advanced Physics and Failure Modes
-    Substep 9.1: Enable tilting the print bed in any direction with physics respecting orientation
-        Subsubstep 9.1.1: Allow configuration of bed tilt angles along X and Y axes
-        Subsubstep 9.1.2: Adjust gravity and nozzle coordinates for bed orientation
-        Subsubstep 9.1.3: Ensure material deposition and movement calculations respect tilt
-        Subsubstep 9.1.4: Simulate individual bed screw adjustments and compute resulting tilt from uneven tension
+    Substep 9.1: Enable tilting the print bed in any direction with physics respecting orientation [complete]
+        Subsubstep 9.1.1: Allow configuration of bed tilt angles along X and Y axes [complete]
+        Subsubstep 9.1.2: Adjust gravity and nozzle coordinates for bed orientation [complete]
+        Subsubstep 9.1.3: Ensure material deposition and movement calculations respect tilt [complete]
+        Subsubstep 9.1.4: Simulate individual bed screw adjustments and compute resulting tilt from uneven tension [complete]
     Substep 9.2: Model nozzle-to-bed distance effects on filament deposition and dragging
         Subsubstep 9.2.1: Compute real-time nozzle height relative to the tilted bed
         Subsubstep 9.2.2: Alter extrusion width and adhesion based on clearance

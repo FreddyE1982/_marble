@@ -57,3 +57,11 @@ extruders:
 heaters:
   hotend: 200
   bed: 60
+bed_tilt:
+  x: 0
+  y: 0
+bed_screws:
+  front_left: 0
+  front_right: 0
+  back_left: 0
+  back_right: 0

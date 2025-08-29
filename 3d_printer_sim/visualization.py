@@ -117,6 +117,16 @@ class PrinterVisualizer:
         self.scene.add(seg)
         self.filament.append(seg)
 
+    def set_bed_tilt(self, x_deg: float, y_deg: float) -> None:
+        """Rotate the virtual bed around the X and Y axes."""
+
+        from math import radians
+
+        try:
+            self.bed.rotation = (radians(x_deg), radians(y_deg), 0, "XYZ")
+        except Exception:
+            pass
+
 
 __all__ = ["PrinterVisualizer"]
 

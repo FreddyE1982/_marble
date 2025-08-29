@@ -67,6 +67,12 @@ the build volume, motion limits, and extruders. A minimal example:
 build_volume: {x: 220, y: 220, z: 250}
 bed_size: {x: 220, y: 220}
 max_print_dimensions: {x: 200, y: 200, z: 200}
+bed_tilt: {x: 0, y: 0}
+bed_screws:
+  front_left: 0
+  front_right: 0
+  back_left: 0
+  back_right: 0
 extruders:
   - steps_per_mm: 100
     filament_diameter: 1.75

@@ -15,3 +15,7 @@ extruders:
     filament: Reference to one of the filament_types.
 heaters:
   hotend / bed: Default target temperatures in °C applied at start-up.
+bed_tilt:
+  x, y: Tilt angles of the print bed around the X and Y axes in degrees.
+bed_screws:
+  front_left / front_right / back_left / back_right: Relative screw heights in millimetres used to compute bed tilt.
