@@ -61,13 +61,13 @@ Step 9: Advanced Physics and Failure Modes
         Subsubstep 9.1.2: Adjust gravity and nozzle coordinates for bed orientation [complete]
         Subsubstep 9.1.3: Ensure material deposition and movement calculations respect tilt [complete]
         Subsubstep 9.1.4: Simulate individual bed screw adjustments and compute resulting tilt from uneven tension [complete]
-    Substep 9.2: Model nozzle-to-bed distance effects on filament deposition and dragging
-        Subsubstep 9.2.1: Compute real-time nozzle height relative to the tilted bed
-        Subsubstep 9.2.2: Alter extrusion width and adhesion based on clearance
-        Subsubstep 9.2.3: Simulate nozzle dragging, scratching, or collisions when clearance is too low
-        Subsubstep 9.2.4: Reflect layer height errors caused by incorrect leveling
-        Subsubstep 9.2.5: Capture surface deformation and delamination when the nozzle scrapes deposited material
-        Subsubstep 9.2.6: Model part displacement or detachment when nozzle contact exerts excessive force
+    Substep 9.2: Model nozzle-to-bed distance effects on filament deposition and dragging [complete]
+        Subsubstep 9.2.1: Compute real-time nozzle height relative to the tilted bed [complete]
+        Subsubstep 9.2.2: Alter extrusion width and adhesion based on clearance [complete]
+        Subsubstep 9.2.3: Simulate nozzle dragging, scratching, or collisions when clearance is too low [complete]
+        Subsubstep 9.2.4: Reflect layer height errors caused by incorrect leveling [complete]
+        Subsubstep 9.2.5: Capture surface deformation and delamination when the nozzle scrapes deposited material [complete]
+        Subsubstep 9.2.6: Model part displacement or detachment when nozzle contact exerts excessive force [complete]
     Substep 9.3: Implement realistic molten filament behavior including adherence, stickiness, cooling, and layer bonding
         Subsubstep 9.3.1: Model temperature-dependent viscosity and flow characteristics
         Subsubstep 9.3.2: Simulate adhesion to the bed and existing layers
