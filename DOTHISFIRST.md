@@ -24,7 +24,7 @@ in current ML literature.
 ## Steps
 1. Enumerate existing plugin types in the repository. [complete]
 2. Implement advanced neuron plugin suite. [complete]
-3. Implement advanced synapse plugin suite.
+3. Implement advanced synapse plugin suite. [complete]
 4. Implement advanced wanderer plugin suite.
 5. Implement advanced brain_train plugin suite.
 6. Implement advanced selfattention plugin suite.

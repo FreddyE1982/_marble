@@ -550,6 +550,17 @@ New Additive Plugins (this change)
 - Synapse plugin `resonant`: Damped harmonic filter maintaining internal state with learnable `res_freq` and `res_damp` parameters.
 - Synapse plugin `delay`: Exponential moving average over past outputs blended by learnable `delay_alpha`.
 - Synapse plugin `spike_gate`: Logistic gate that passes values above learnable `gate_thresh` with sharpness `gate_sharp`.
+- Synapse plugin `echo_chamber`: Recursively mixes current signals with a
+  decaying memory of prior transmissions via learnable `echo_decay` and
+  `echo_depth`.
+- Synapse plugin `quantum_flip`: Flips transmission sign with learnable
+  probability `flip_prob`, mimicking stochastic quantum parity changes.
+- Synapse plugin `nonlocal_tunnel`: Injects a persistent random offset scaled
+  by learnable `tunnel_strength`, suggesting a shortcut through hidden space.
+- Synapse plugin `fractal_enhance`: Applies repeated sinusoidal boosts
+  controlled by `fract_depth` and `fract_scale` to carve fractal-like patterns.
+- Synapse plugin `phase_noise`: Adds a drifting sinusoidal perturbation whose
+  frequency and amplitude are governed by `noise_freq` and `noise_amp`.
 - Wanderer plugin `l2_weight_penalty`: Contributes an L2 penalty term over the visited neurons’ autograd parameters (weights and biases). Lambda read from `wanderer._neuro_cfg['l2_lambda']` (default `0.0`). Registered as `"l2_weight_penalty"` and composes additively with other loss plugins.
 - SelfAttention routine `adaptive_grad_clip`: Observes per-step loss via the reporter and, when a step loss spikes by a configurable ratio, sets gradient clipping on the owning `Wanderer` for the next step (`method='norm'`, configurable `max_norm`). Constructor defaults: `threshold_ratio=1.5`, `max_norm=1.0`, `cooldown=5`. Registered via `register_selfattention_type("adaptive_grad_clip", ...)`.
 - SelfAttention routine `context_noise_profiler`: Exposes learnable `noise_variance` and `spatial_factor` parameters via `expose_learnable_params`, computes a per-step noise score, and nudges learning rate to compensate for sensor artifacts. Registered as `"context_noise_profiler"`.
