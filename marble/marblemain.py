@@ -383,6 +383,17 @@ except Exception:
     pass
 
 # -----------------------------
+# Neuron Plugin: QuantumType
+# -----------------------------
+
+try:
+    from .plugins.quantumtype import QuantumTypeNeuronPlugin
+    register_neuron_type("quantumtype", QuantumTypeNeuronPlugin())
+    __all__ += ["QuantumTypeNeuronPlugin"]
+except Exception:
+    pass
+
+# -----------------------------
 # Learning Paradigm Plugins (Brain-level orchestration) (Brain-level orchestration)
 # -----------------------------
 
