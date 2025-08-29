@@ -25,6 +25,27 @@ class TestSimulation(unittest.TestCase):
         # A filament segment should have been added
         self.assertEqual(len(sim.visualizer.filament), 1)
 
+    def test_axis_physics(self) -> None:
+        """Axes should respect acceleration and jerk limits."""
+
+        sim = PrinterSimulation()
+        # Tight limits to make physics observable
+        sim.x_motor.max_acceleration = 10
+        sim.x_motor.max_jerk = 5
+        sim.set_axis_velocities(100, 0, 0)
+
+        # First second: jerk limits acceleration
+        sim.update(1.0)
+        self.assertAlmostEqual(sim.x_motor.acceleration, 5)
+        self.assertAlmostEqual(sim.x_motor.velocity, 5)
+        self.assertAlmostEqual(sim.x_motor.position, 5)
+
+        # Second second: acceleration reaches limit
+        sim.update(1.0)
+        self.assertAlmostEqual(sim.x_motor.acceleration, 10)
+        self.assertAlmostEqual(sim.x_motor.velocity, 15)
+        self.assertAlmostEqual(sim.x_motor.position, 20)
+
 
 if __name__ == "__main__":
     unittest.main()

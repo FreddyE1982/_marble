@@ -70,6 +70,12 @@ class TestPrinterConfig(unittest.TestCase):
         data = parse_simple_yaml("a: 1\nb:\n  - 2\n  - 3\n")
         self.assertEqual(data, {"a": 1, "b": [2, 3]})
 
+    def test_example_configs_parse(self) -> None:
+        examples = pathlib.Path("3d_printer_sim/examples")
+        for path in examples.glob("*.yaml"):
+            cfg = load_config(str(path))
+            self.assertGreater(len(cfg.extruders), 0)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -57,3 +57,59 @@ renderer = printer.visualizer.get_isometric_view()
 ```
 
 The extruder moves along the X axis and deposits a short filament segment while the renderer stays in sync.
+
+## Configuring Your Printer
+
+To set up a printer model, create a `config.yaml` file with sections for
+the build volume, motion limits, and extruders. A minimal example:
+
+```yaml
+build_volume: {x: 220, y: 220, z: 250}
+bed_size: {x: 220, y: 220}
+max_print_dimensions: {x: 200, y: 200, z: 200}
+extruders:
+  - steps_per_mm: 100
+    filament_diameter: 1.75
+filament_types:
+  PLA:
+    hotend_temp_range: [190, 220]
+    bed_temp_range: [0, 60]
+heater_targets:
+  hotend: 200
+  bed: 50
+```
+
+Load the configuration using the snippet at the top of this tutorial.
+The loader validates numeric ranges and ensures required sections are
+present. Adjust values to match your printer's specifications.
+
+## Extending Hardware Components
+
+Hardware modules follow simple patterns so they can be extended without
+external dependencies. For example, a new sensor can be implemented as:
+
+```python
+from dataclasses import dataclass
+from microcontroller import Microcontroller
+
+@dataclass
+class DummySensor:
+    mc: Microcontroller
+    pin: int
+    value: float = 0.0
+
+    def read_temperature(self) -> float:
+        return self.value
+```
+
+After creating the sensor, register it with the microcontroller:
+
+```python
+mc = Microcontroller()
+sensor = DummySensor(mc, pin=2)
+mc.map_pin(2, sensor)
+```
+
+Any component that provides an `update(dt)` method can participate in the
+simulation loop, enabling custom hardware to interact with the rest of
+the system.
