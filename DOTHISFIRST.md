@@ -16,19 +16,39 @@ Move remaining plugin classes out of `marble/marblemain.py` into dedicated modul
 # Add new plugin suites
 
 ## Goal
-Introduce five new advanced plugins for each plugin type, exposing all parameters via `expose_learnable_params`.
+Introduce suites of five cutting-edge, highly experimental plugins for each
+existing plugin type. Every plugin must expose all of its parameters via the
+`expose_learnable_params` decorator and explore ideas that have no equivalent
+in current ML literature.
 
 ## Steps
 1. Enumerate existing plugin types in the repository. [complete]
-2. Implement neuron plugin suite (Swish, Mish, GELU, SoftPlus, LeakyExp) and register them with tests and docs. [complete]
-3. Implement synapse plugin suite. [complete]
-4. Implement wanderer plugin suite.
-5. Implement brain_train plugin suite.
-6. Implement selfattention plugin suite.
-7. Implement learning_paradigm plugin suite.
-8. Implement neuroplasticity plugin suite.
+2. Implement advanced neuron plugin suite.
+3. Implement advanced synapse plugin suite.
+4. Implement advanced wanderer plugin suite.
+5. Implement advanced brain_train plugin suite.
+6. Implement advanced selfattention plugin suite.
+7. Implement advanced neuroplasticity plugin suite.
 
 ## Pending tests [complete]
 
 All listed test modules have been executed and their outputs analyzed for
 logical consistency.
+
+# Lock-based thread safety and immutable training
+
+## Goal
+Guarantee that `Brain` instances and their associated `Graph` structures are
+never copied or deep-copied during training and that any thread safety is
+enforced strictly through `Lock` primitives.
+
+## Steps
+1. Audit `marble/training.py`, `marble/graph.py`, and all plugin modules for
+   any use of `copy`, `deepcopy`, or cloning of brain and graph objects during
+   training. Replace such patterns with direct references.
+2. Introduce explicit `threading.Lock` guards around training sections that
+   require thread safety, removing any copy-based safety mechanisms.
+3. Extend tests to assert object identity for brain and graph instances before
+   and after training steps to detect accidental copies.
+4. Document the lock-only policy and immutability guarantees in
+   `ARCHITECTURE.md` and update tutorials if necessary.
