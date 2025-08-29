@@ -67,6 +67,8 @@ the build volume, motion limits, and extruders. A minimal example:
 build_volume: {x: 220, y: 220, z: 250}
 bed_size: {x: 220, y: 220}
 max_print_dimensions: {x: 200, y: 200, z: 200}
+ambient_temperature: 25
+fan_speed: 0.0
 bed_tilt: {x: 0, y: 0}
 bed_screws:
   front_left: 0
@@ -88,6 +90,10 @@ heater_targets:
 Load the configuration using the snippet at the top of this tutorial.
 The loader validates numeric ranges and ensures required sections are
 present. Adjust values to match your printer's specifications.
+
+``ambient_temperature`` sets the surrounding air temperature while
+``fan_speed`` controls additional active cooling, both influencing how
+quickly deposited filament solidifies.
 
 ## Extending Hardware Components
 

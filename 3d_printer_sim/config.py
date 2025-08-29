@@ -187,6 +187,8 @@ class PrinterConfig:
     filament_types: Dict[str, Filament]
     heater_targets: Dict[str, float]
     bed_tilt: BedTilt
+    ambient_temperature: float
+    fan_speed: float
 
 
 def load_config(path: str) -> PrinterConfig:
@@ -213,6 +215,8 @@ def load_config(path: str) -> PrinterConfig:
         bed_tilt = compute_tilt_from_screws(data["bed_screws"], bed_size)
     else:
         bed_tilt = BedTilt.from_dict(data.get("bed_tilt", {"x": 0.0, "y": 0.0}))
+    ambient = float(data.get("ambient_temperature", 25.0))
+    fan = float(data.get("fan_speed", 0.0))
     return PrinterConfig(
         build_volume=build_volume,
         bed_size=bed_size,
@@ -221,5 +225,7 @@ def load_config(path: str) -> PrinterConfig:
         filament_types=filaments,
         heater_targets=heaters,
         bed_tilt=bed_tilt,
+        ambient_temperature=ambient,
+        fan_speed=fan,
     )
 

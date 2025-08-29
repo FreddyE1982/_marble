@@ -14,6 +14,7 @@ import importlib.util
 import pathlib
 import sys
 import math
+from typing import Any, List
 
 # Local imports using importlib to keep the module self-contained
 _stepper_spec = importlib.util.spec_from_file_location(
@@ -44,6 +45,19 @@ _viz_spec.loader.exec_module(_viz_module)
 PrinterVisualizer = _viz_module.PrinterVisualizer
 
 
+@dataclass
+class FilamentSegment:
+    mesh: Any
+    x: float
+    y: float
+    z: float
+    radius: float
+    temperature: float
+    supported: bool
+    solid: bool
+    initial_radius: float
+
+
 @dataclass(init=False)
 class PrinterSimulation:
     """Combine motion, extrusion and visualization."""
@@ -71,8 +85,19 @@ class PrinterSimulation:
     layer_height_error: float
     bed_temperature: float
     optimal_bed_temp: float
+    ambient_temperature: float
+    fan_speed: float
+    segments: List[FilamentSegment]
+    base_cooling_rate: float
+    solidification_temp: float
 
-    def __init__(self, bed_tilt_x: float = 0.0, bed_tilt_y: float = 0.0) -> None:
+    def __init__(
+        self,
+        bed_tilt_x: float = 0.0,
+        bed_tilt_y: float = 0.0,
+        ambient_temperature: float = 25.0,
+        fan_speed: float = 0.0,
+    ) -> None:
         self.bed_tilt_x = float(bed_tilt_x)
         self.bed_tilt_y = float(bed_tilt_y)
         self.gravity = self._compute_gravity()
@@ -96,6 +121,11 @@ class PrinterSimulation:
         self.layer_height_error = 0.0
         self.bed_temperature = 60.0
         self.optimal_bed_temp = 60.0
+        self.ambient_temperature = float(ambient_temperature)
+        self.fan_speed = float(fan_speed)
+        self.segments = []
+        self.base_cooling_rate = 0.1
+        self.solidification_temp = 80.0
 
     # -------------------------------------------------------------- controls
     def set_axis_velocities(self, vx: float, vy: float, vz: float) -> None:
@@ -141,12 +171,13 @@ class PrinterSimulation:
                 base_adh = 0.0
             else:
                 base_adh = 1 - abs(diff) / (self.layer_height * 0.5)
+            tilt_factor = (abs(self.bed_tilt_x) + abs(self.bed_tilt_y)) / 90
             if len(self.visualizer.filament) == 0:
                 if self.nozzle_height < self.layer_height:
                     squish = (self.layer_height - self.nozzle_height) / self.layer_height
-                    width = self.nozzle_diameter * (1 + squish)
+                    width = self.nozzle_diameter * (1 + squish + tilt_factor)
                 else:
-                    width = self.nozzle_diameter
+                    width = self.nozzle_diameter * (1 + tilt_factor)
                 temp_factor = max(
                     0.0,
                     1.0
@@ -155,7 +186,7 @@ class PrinterSimulation:
                 )
                 base_adh *= temp_factor
             else:
-                width = self.nozzle_diameter
+                width = self.nozzle_diameter * (1 + tilt_factor)
 
         flow = self.extruder.last_flow_efficiency
         self.adhesion = base_adh * flow
@@ -164,13 +195,40 @@ class PrinterSimulation:
         self.extrusion_width = width
 
         self.visualizer.update_extruder_position(x, y, z)
+        # update existing filament segments
+        for seg in self.segments:
+            k = self.base_cooling_rate * (1 + self.fan_speed)
+            seg.temperature += (
+                self.ambient_temperature - seg.temperature
+            ) * (1 - math.exp(-k * dt))
+            if not seg.supported and not seg.solid:
+                seg.z = max(0.0, seg.z + self.gravity[2] * dt)
+            if not seg.solid and seg.temperature <= self.solidification_temp:
+                seg.solid = True
+                seg.radius *= 0.98
+            seg.mesh.position = (seg.x, seg.y, seg.z)
+            scale = seg.radius / seg.initial_radius
+            seg.mesh.scale = (scale, 1.0, scale)
 
         if self.extruder.extruded_length > self._last_extruded:
-            if self.adhesion > 0.5 and not self.collision and not self.part_detached:
-                deposit_z = max(z, 0.0)
-                self.visualizer.add_filament_segment(
-                    x, y, deposit_z, radius=self.extrusion_width / 2
+            deposit_z = max(z, 0.0)
+            mesh = self.visualizer.add_filament_segment(
+                x, y, deposit_z, radius=self.extrusion_width / 2
+            )
+            supported = self.adhesion > 0.5 and not self.collision and not self.part_detached
+            self.segments.append(
+                FilamentSegment(
+                    mesh,
+                    x,
+                    y,
+                    deposit_z,
+                    self.extrusion_width / 2,
+                    self.extruder.melt_temperature,
+                    supported,
+                    False,
+                    self.extrusion_width / 2,
                 )
+            )
             self._last_extruded = self.extruder.extruded_length
 
     # ------------------------------------------------------------ internals
