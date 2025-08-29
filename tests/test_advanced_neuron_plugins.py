@@ -36,6 +36,11 @@ class AdvancedNeuronPluginTests(unittest.TestCase):
                 "wav_freq",
                 "wav_bias",
             ],
+            "swish": ["swish_beta"],
+            "mish": ["mish_beta"],
+            "gelu": ["gelu_scale"],
+            "softplus": ["splus_beta", "splus_threshold"],
+            "leakyexp": ["leak_alpha", "leak_beta"],
         }
 
         for name, params in plugins.items():

@@ -12,3 +12,18 @@ Move remaining plugin classes out of `marble/marblemain.py` into dedicated modul
 6. Create a new plugin module for `BaseNeuroplasticityPlugin` (e.g., `marble/plugins/neuroplasticity_base.py`) and move its implementation there with a `register_neuroplasticity_type` call. [complete]
 7. Run the full test suite (`py -3 -m unittest -v tests.<module>`) to ensure all functionality remains intact, focusing on tests covering convolution, pooling, unpooling, and wanderer plugins. [complete]
 8. Update `ARCHITECTURE.md` to document that plugin implementations now reside in their own modules rather than in `marble/marblemain.py`. [complete]
+
+# Add new plugin suites
+
+## Goal
+Introduce five new advanced plugins for each plugin type, exposing all parameters via `expose_learnable_params`.
+
+## Steps
+1. Enumerate existing plugin types in the repository. [complete]
+2. Implement neuron plugin suite (Swish, Mish, GELU, SoftPlus, LeakyExp) and register them with tests and docs. [complete]
+3. Implement synapse plugin suite.
+4. Implement wanderer plugin suite.
+5. Implement brain_train plugin suite.
+6. Implement selfattention plugin suite.
+7. Implement learning_paradigm plugin suite.
+8. Implement neuroplasticity plugin suite.
