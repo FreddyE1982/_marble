@@ -11,7 +11,7 @@ brain is partitioned.
 
 from typing import List
 
-from ..wanderer import register_wanderer_type, expose_learnable_params
+from ..wanderer import expose_learnable_params
 
 
 class AutoLobePlugin:
@@ -49,10 +49,4 @@ class AutoLobePlugin:
 
 
 __all__ = ["AutoLobePlugin"]
-
-
-try:  # pragma: no cover - registration is side effect
-    register_wanderer_type("autolobe", AutoLobePlugin())
-except Exception:  # pragma: no cover - defensive
-    pass
 

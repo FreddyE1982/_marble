@@ -10,7 +10,7 @@ drop rate during training.
 from typing import Any, List
 import random
 
-from ..graph import register_synapse_type, Synapse
+from ..graph import Synapse
 from ..wanderer import expose_learnable_params
 from ..reporter import report
 
@@ -70,11 +70,6 @@ class DropoutSynapsePlugin:
         finally:
             syn.type_name = orig
 
-
-try:
-    register_synapse_type("dropout", DropoutSynapsePlugin())
-except Exception:
-    pass
 
 __all__ = ["DropoutSynapsePlugin"]
 

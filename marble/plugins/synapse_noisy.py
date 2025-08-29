@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any, List
 
-from ..graph import register_synapse_type, Synapse
+from ..graph import Synapse
 from ..reporter import report
 
 
@@ -54,10 +54,5 @@ class NoisySynapsePlugin:
         noisy = [v + (sigma * (_r.random() * 2.0 - 1.0)) for v in vals]
         return Synapse.transmit(syn, noisy, direction=direction)  # type: ignore[misc]
 
-
-try:
-    register_synapse_type("noisy", NoisySynapsePlugin())
-except Exception:
-    pass
 
 __all__ = ["NoisySynapsePlugin"]

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
 
-from ..selfattention import register_selfattention_type
+
 
 
 class Conv1DRandomInsertionRoutine:
@@ -118,10 +118,5 @@ class Conv1DRandomInsertionRoutine:
         # No param updates here; leave evaluation/rollback policy to future extensions
         return None
 
-
-try:
-    register_selfattention_type("conv1d_random_inserter", Conv1DRandomInsertionRoutine())
-except Exception:
-    pass
 
 __all__ = ["Conv1DRandomInsertionRoutine"]

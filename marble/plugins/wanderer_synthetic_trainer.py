@@ -14,7 +14,7 @@ execution time predictable.
 
 from typing import List, Tuple
 
-from ..wanderer import register_wanderer_type, expose_learnable_params
+from ..wanderer import expose_learnable_params
 from ..training import run_training_with_datapairs
 from ..codec import UniversalTensorCodec
 
@@ -57,11 +57,5 @@ class SyntheticTrainingPlugin:
         except Exception:
             pass
         wanderer._synthetic_trained = True
-
-
-try:  # pragma: no cover - registration failure should not break import
-    register_wanderer_type("synthetictrainer", SyntheticTrainingPlugin())
-except Exception:
-    pass
 
 __all__ = ["SyntheticTrainingPlugin"]

@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from typing import Any, Dict
 
-from ..selfattention import register_selfattention_type
 from ..wanderer import expose_learnable_params
 from ..reporter import report
 
@@ -56,11 +55,6 @@ class ContextAwareNoiseRoutine:
             new_lr = min(5e-3, base_lr * 1.05)
         return {"lr_override": float(new_lr)}
 
-
-try:  # pragma: no cover - registration failure handled silently
-    register_selfattention_type("context_noise_profiler", ContextAwareNoiseRoutine())
-except Exception:
-    pass
 
 __all__ = ["ContextAwareNoiseRoutine"]
 

@@ -10,7 +10,7 @@ import math
 import random
 from typing import List, Tuple
 
-from ..wanderer import register_wanderer_type, expose_learnable_params
+from ..wanderer import expose_learnable_params
 
 
 class EntropyAwarePlugin:
@@ -34,10 +34,5 @@ class EntropyAwarePlugin:
             return random.choice(choices)
         return choices[probs.index(max(probs))]
 
-
-try:  # pragma: no cover
-    register_wanderer_type("entropyaware", EntropyAwarePlugin())
-except Exception:
-    pass
 
 __all__ = ["EntropyAwarePlugin"]

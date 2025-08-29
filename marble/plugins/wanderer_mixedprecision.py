@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any
 import torch
 
-from ..wanderer import register_wanderer_type
+
 
 
 class MixedPrecisionPlugin:
@@ -20,10 +20,5 @@ class MixedPrecisionPlugin:
                 scaler = None
             setattr(wanderer, "_amp_scaler", scaler)
 
-
-try:
-    register_wanderer_type("mixedprecision", MixedPrecisionPlugin())
-except Exception:
-    pass
 
 __all__ = ["MixedPrecisionPlugin"]

@@ -9,7 +9,7 @@ specialise transmission dynamics.
 
 from typing import Any, List
 
-from ..graph import register_synapse_type, Synapse
+from ..graph import Synapse
 from ..wanderer import expose_learnable_params
 from ..reporter import report
 
@@ -72,11 +72,6 @@ class ResonantSynapsePlugin:
         finally:
             syn.type_name = orig
 
-
-try:
-    register_synapse_type("resonant", ResonantSynapsePlugin())
-except Exception:
-    pass
 
 __all__ = ["ResonantSynapsePlugin"]
 

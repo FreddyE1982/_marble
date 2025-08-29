@@ -13,7 +13,7 @@ lightweight while demonstrating integration of custom learnable parameters.
 
 from typing import List, Tuple
 
-from ..wanderer import register_wanderer_type, expose_learnable_params
+from ..wanderer import expose_learnable_params
 
 
 class LatentSpacePlugin:
@@ -53,10 +53,5 @@ class LatentSpacePlugin:
             bias = float(latent.norm().detach().to("cpu").item())
         return max(choices, key=lambda cd: float(getattr(cd[0], "weight", 1.0)) + bias)
 
-
-try:  # pragma: no cover - registration failure should not break import
-    register_wanderer_type("latentspace", LatentSpacePlugin())
-except Exception:
-    pass
 
 __all__ = ["LatentSpacePlugin"]

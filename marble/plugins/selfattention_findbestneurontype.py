@@ -23,7 +23,7 @@ evaluation walk happens to trigger further neuron additions.
 
 from typing import Any, Dict, Optional
 
-from ..selfattention import register_selfattention_type
+
 from ..graph import _NEURON_TYPES
 
 
@@ -113,11 +113,6 @@ class FindBestNeuronTypeRoutine:
         except Exception:
             pass
 
-
-try:
-    register_selfattention_type("findbestneurontype", FindBestNeuronTypeRoutine())
-except Exception:
-    pass
 
 __all__ = ["FindBestNeuronTypeRoutine"]
 

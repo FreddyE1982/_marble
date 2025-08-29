@@ -9,7 +9,7 @@ into the current transmission.
 
 from typing import Any, List
 
-from ..graph import register_synapse_type, Synapse
+from ..graph import Synapse
 from ..wanderer import expose_learnable_params
 from ..reporter import report
 
@@ -66,12 +66,6 @@ class DelaySynapsePlugin:
             return Synapse.transmit(syn, out, direction=direction)
         finally:
             syn.type_name = orig
-
-
-try:
-    register_synapse_type("delay", DelaySynapsePlugin())
-except Exception:
-    pass
 
 __all__ = ["DelaySynapsePlugin"]
 
