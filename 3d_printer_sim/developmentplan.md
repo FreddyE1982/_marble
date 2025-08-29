@@ -74,7 +74,7 @@ Step 9: Advanced Physics and Failure Modes
         Subsubstep 9.4.4: Adjust support failure probability based on overhang angle and cooling efficiency
     Substep 9.5: Model print errors such as filament not sticking and spaghetti failures
         Subsubstep 9.5.1: Detect scenarios with insufficient bed or layer adhesion
-        Subsubstep 9.5.2: Produce tangled filament paths when extrusion continues without adhesion
+        Subsubstep 9.5.2: Produce tangled filament paths ("spaghetti") when extrusion continues without adhesion
         Subsubstep 9.5.3: Simulate layer collapse or shifting due to partial adhesion loss
         Subsubstep 9.5.4: Represent layer shifts from skipped steps or mechanical backlash
     Substep 9.6: Simulate fan influences, including print cooling fan, on thermal gradients and print quality
@@ -117,6 +117,7 @@ Step 9: Advanced Physics and Failure Modes
         Subsubstep 9.11.4: Evaluate defects such as ringing, ghosting, and resonance
         Subsubstep 9.11.5: Quantify warping, cracking, and other thermally induced defects
         Subsubstep 9.11.6: Provide a composite quality score combining multiple metrics
+        Subsubstep 9.11.7: Account for belt tension, frame rigidity, and stepper calibration on final print fidelity
 
 Step 10: Comprehensive Marlin Configuration Coverage
     Substep 10.1: Parse Marlin Configuration.h and Configuration_adv.h to enumerate all configuration items
@@ -1282,4 +1283,5 @@ Step 10: Comprehensive Marlin Configuration Coverage
 Step 11: Code Isolation and Dependency Audit
     Substep 11.1: Confirm all modules rely only on Python's standard library or files within 3d_printer_sim
     Substep 11.2: Remove or refactor any code importing modules outside this directory
+        Subsubstep 11.2.1: Replace external YAML dependency with an internal minimal parser in config.py
     Substep 11.3: Add tests verifying absence of external dependencies
