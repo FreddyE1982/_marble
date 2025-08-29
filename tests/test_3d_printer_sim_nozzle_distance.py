@@ -34,7 +34,8 @@ class TestNozzleDistance(unittest.TestCase):
         self.assertTrue(sim.collision)
         self.assertGreater(sim.surface_damage, 0)
         self.assertTrue(sim.part_detached)
-        self.assertEqual(len(sim.visualizer.filament), 0)
+        self.assertEqual(len(sim.visualizer.filament), 1)
+        self.assertFalse(sim.segments[0].supported)
 
     def test_high_clearance_no_adhesion(self) -> None:
         sim = PrinterSimulation()
@@ -42,7 +43,8 @@ class TestNozzleDistance(unittest.TestCase):
         sim.set_extrusion_velocity(100)
         sim.update(0.1)
         self.assertEqual(sim.adhesion, 0.0)
-        self.assertEqual(len(sim.visualizer.filament), 0)
+        self.assertEqual(len(sim.visualizer.filament), 1)
+        self.assertFalse(sim.segments[0].supported)
 
 
 if __name__ == "__main__":

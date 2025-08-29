@@ -9,6 +9,8 @@ max_print_dimensions:
   x: 200
   y: 200
   z: 200
+ambient_temperature: 25
+fan_speed: 0.0
 filament_types:
   PLA:
     hotend_temp:

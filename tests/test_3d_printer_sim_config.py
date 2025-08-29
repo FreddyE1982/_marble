@@ -24,6 +24,8 @@ class TestPrinterConfig(unittest.TestCase):
         self.assertIn("PETG", cfg.filament_types)
         self.assertEqual(cfg.extruders[1].filament, "PETG")
         self.assertAlmostEqual(cfg.heater_targets["hotend"], 200)
+        self.assertAlmostEqual(cfg.ambient_temperature, 25)
+        self.assertAlmostEqual(cfg.fan_speed, 0.0)
 
     def test_missing_section_raises(self) -> None:
         text = (

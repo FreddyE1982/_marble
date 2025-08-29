@@ -30,7 +30,10 @@ class TestAdhesion(unittest.TestCase):
         sim.bed_temperature = 20
         sim.update(0.1)
         low_adh = sim.adhesion
-        count_low = len(sim.visualizer.filament)
+        z_before = sim.segments[0].z
+        sim.set_extrusion_velocity(0)
+        sim.update(0.1)
+        z_after = sim.segments[0].z
 
         sim.extruder.reset()
         sim._last_extruded = 0.0
@@ -38,9 +41,9 @@ class TestAdhesion(unittest.TestCase):
         sim.update(0.1)
 
         self.assertLess(low_adh, 0.5)
-        self.assertEqual(count_low, 0)
+        self.assertLess(z_after, z_before)  # drooping occurred
         self.assertGreater(sim.adhesion, low_adh)
-        self.assertEqual(len(sim.visualizer.filament), 1)
+        self.assertEqual(len(sim.visualizer.filament), 2)
 
     def test_extruder_temperature_influence(self) -> None:
         sim = PrinterSimulation()
@@ -53,7 +56,10 @@ class TestAdhesion(unittest.TestCase):
 
         sim.update(0.1)
         low = sim.adhesion
-        count_low = len(sim.visualizer.filament)
+        z_before = sim.segments[0].z
+        sim.set_extrusion_velocity(0)
+        sim.update(0.1)
+        z_after = sim.segments[0].z
 
         sim.extruder.reset()
         sim._last_extruded = 0.0
@@ -61,9 +67,9 @@ class TestAdhesion(unittest.TestCase):
         sim.update(0.1)
 
         self.assertLess(low, 0.5)
-        self.assertEqual(count_low, 0)
+        self.assertLess(z_after, z_before)
         self.assertGreater(sim.adhesion, low)
-        self.assertEqual(len(sim.visualizer.filament), 1)
+        self.assertEqual(len(sim.visualizer.filament), 2)
 
 
 if __name__ == "__main__":

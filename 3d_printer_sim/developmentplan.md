@@ -71,10 +71,10 @@ Step 9: Advanced Physics and Failure Modes
     Substep 9.3: Implement realistic molten filament behavior including adherence, stickiness, cooling, and layer bonding
         Subsubstep 9.3.1: Model temperature-dependent viscosity and flow characteristics [complete]
         Subsubstep 9.3.2: Simulate adhesion to the bed and existing layers [complete]
-        Subsubstep 9.3.3: Track cooling rates influenced by ambient conditions and fan airflow
-        Subsubstep 9.3.4: Represent stringing or drooping when filament lacks support
-        Subsubstep 9.3.5: Depict filament squish profiles based on nozzle height and bed tilt
-        Subsubstep 9.3.6: Simulate crystallization and shrinkage as filament transitions from molten to solid
+        Subsubstep 9.3.3: Track cooling rates influenced by ambient conditions and fan airflow [complete]
+        Subsubstep 9.3.4: Represent stringing or drooping when filament lacks support [complete]
+        Subsubstep 9.3.5: Depict filament squish profiles based on nozzle height and bed tilt [complete]
+        Subsubstep 9.3.6: Simulate crystallization and shrinkage as filament transitions from molten to solid [complete]
     Substep 9.4: Simulate supports, brims, and other adhesion aids with realistic physics
         Subsubstep 9.4.1: Generate supports and brims based on print geometry
         Subsubstep 9.4.2: Apply distinct adhesion and removal properties to support structures

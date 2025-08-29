@@ -4,6 +4,10 @@ bed_size:
   x, y: Physical bed dimensions in millimetres. Must be positive floats.
 max_print_dimensions:
   x, y, z: Maximum printable dimensions in millimetres. Must be positive floats.
+ambient_temperature:
+  Ambient air temperature in °C affecting filament cooling. Float.
+fan_speed:
+  Cooling fan speed as a fraction from 0.0 (off) to 1.0 (full).
 filament_types:
   <name>:
     hotend_temp: [min, max] recommended hotend temperature in °C.
