@@ -12,31 +12,46 @@ Learned objective prioritizes overall accuracy, then training speed, followed by
 model size and complexity (implicitly via gradients adjusting the gate biases).
 """
 
-from typing import Any, List, Tuple
+from typing import Any, List, Tuple, Optional
 
 from ..wanderer import expose_learnable_params
 
 
 class AutoPlugin:
-    """Meta-plugin that toggles other plugins on a per-step basis."""
+    """Meta-plugin that toggles other plugins on a per-step basis.
 
-    def __init__(self) -> None:
+    Parameters
+    ----------
+    disabled_plugins:
+        Optional list of plugin class names that should be fully disabled.
+        Any Wanderer or neuroplasticity plugin whose class name appears in
+        this list will be removed from the active plugin stacks entirely.
+    """
+
+    def __init__(self, disabled_plugins: Optional[List[str]] = None) -> None:
         self._neuro_wrapped = False
         self._current_neuron_id = 0
+        self._disabled = set(disabled_plugins or [])
 
     def on_init(self, wanderer: "Wanderer") -> None:  # noqa: D401
         """Wrap existing Wanderer plugins with gating proxies."""
 
         wplugins = getattr(wanderer, "_wplugins", [])
         explicit = getattr(wanderer, "_explicit_wplugin_names", set())
-        for i, p in enumerate(list(wplugins)):
+        new_stack: List[Any] = []
+        for p in list(wplugins):
             if p is self:
+                new_stack.append(p)
                 continue
             name = p.__class__.__name__
+            if name in self._disabled:
+                continue
             if name in explicit:
+                new_stack.append(p)
                 continue
             wanderer.ensure_learnable_param(f"autoplugin_bias_{name}", 0.0)
-            wplugins[i] = _GatedPlugin(p, name, self)
+            new_stack.append(_GatedPlugin(p, name, self))
+        wanderer._wplugins = new_stack
 
     def before_walk(self, wanderer: "Wanderer", start: "Neuron") -> None:
         """Ensure neuroplasticity plugins are wrapped before training."""
@@ -45,12 +60,17 @@ class AutoPlugin:
             return
         nplugins = getattr(wanderer, "_neuro_plugins", [])
         explicit_n = getattr(wanderer, "_explicit_neuroplugin_names", set())
-        for i, p in enumerate(list(nplugins)):
+        new_stack: List[Any] = []
+        for p in list(nplugins):
             name = p.__class__.__name__
+            if name in self._disabled:
+                continue
             if name in explicit_n:
+                new_stack.append(p)
                 continue
             wanderer.ensure_learnable_param(f"autoplugin_bias_{name}", 0.0)
-            nplugins[i] = _GatedPlugin(p, name, self)
+            new_stack.append(_GatedPlugin(p, name, self))
+        wanderer._neuro_plugins = new_stack
         self._neuro_wrapped = True
 
     def is_active(
@@ -59,6 +79,8 @@ class AutoPlugin:
         """Return True if the named plugin should be active."""
 
         self._current_neuron_id = 0 if neuron is None else id(neuron)
+        if name in self._disabled:
+            return False
         explicit_w = getattr(wanderer, "_explicit_wplugin_names", set())
         explicit_n = getattr(wanderer, "_explicit_neuroplugin_names", set())
         if name in explicit_w or name in explicit_n:
