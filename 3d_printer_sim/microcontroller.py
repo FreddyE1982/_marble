@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Dict, Optional
+from typing import Dict, Optional, Any
 import importlib.util
 import pathlib
 import sys
@@ -36,6 +36,7 @@ class Microcontroller:
 
     digital_pins: Dict[int, int] = field(default_factory=dict)
     analog_pins: Dict[int, float] = field(default_factory=dict)
+    pin_mapping: Dict[int, Any] = field(default_factory=dict)
     usb: Optional[VirtualUSB] = None
     sd_card: Optional[VirtualSDCard] = None
 
@@ -53,10 +54,25 @@ class Microcontroller:
     def read_analog(self, pin: int) -> float:
         return self.analog_pins.get(pin, 0.0)
 
+    # Pin mapping helpers
+    def map_pin(self, pin: int, component: Any) -> None:
+        """Associate a component with a microcontroller pin."""
+        self.pin_mapping[pin] = component
+
+    def get_mapped_component(self, pin: int) -> Any | None:
+        """Return the component mapped to *pin*, if any."""
+        return self.pin_mapping.get(pin)
+
+    def unmap_pin(self, pin: int) -> None:
+        self.pin_mapping.pop(pin, None)
+
     # USB interface helpers
-    def attach_usb(self, usb: VirtualUSB) -> None:
-        """Attach a :class:`VirtualUSB` interface."""
+    def attach_usb(self, usb: VirtualUSB, pins: Optional[list[int]] = None) -> None:
+        """Attach a :class:`VirtualUSB` interface and optionally map pins."""
         self.usb = usb
+        if pins:
+            for pin in pins:
+                self.map_pin(pin, usb)
 
     def detach_usb(self) -> None:
         self.usb = None
@@ -72,9 +88,12 @@ class Microcontroller:
         return self.usb.read_from_host()
 
     # SD card helpers
-    def attach_sd_card(self, card: VirtualSDCard) -> None:
-        """Attach a :class:`VirtualSDCard`."""
+    def attach_sd_card(self, card: VirtualSDCard, pins: Optional[list[int]] = None) -> None:
+        """Attach a :class:`VirtualSDCard` and optionally map pins."""
         self.sd_card = card
+        if pins:
+            for pin in pins:
+                self.map_pin(pin, card)
 
     def detach_sd_card(self) -> None:
         self.sd_card = None
