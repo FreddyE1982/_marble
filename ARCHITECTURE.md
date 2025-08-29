@@ -29,6 +29,11 @@ Core Components
   - `Polynomial` plugin: Computes `a*x^2 + b*x + c` with coefficients `a`, `b`, `c` as wanderer learnables via `expose_learnable_params`.
   - `Exponential` plugin: Returns `scale * exp(rate * x) + bias` where rate, scale and bias are learned using `expose_learnable_params`.
   - `RBF` plugin: Implements a radial basis function `scale * exp(-gamma*(x-center)^2) + bias` with center, gamma, scale and bias all registered through `expose_learnable_params`.
+  - `Fourier` plugin: Combines two sine/cosine harmonics `a1*sin(f1*x+p1) + a2*cos(f2*x+p2) + bias` with amplitudes, frequencies, phases and bias exposed via `expose_learnable_params`.
+  - `Rational` plugin: Evaluates `(a1*x + b1)/(a2*x + b2) + bias` while exposing all coefficients and bias through `expose_learnable_params`.
+  - `PiecewiseLinear` plugin: Applies two linear segments split at a learnable breakpoint; both slopes and intercepts are registered via `expose_learnable_params`.
+  - `Sigmoid` plugin: Implements `scale / (1 + exp(-k*(x - x0))) + bias` with scale, slope, midpoint and bias learnable via `expose_learnable_params`.
+  - `Wavelet` plugin: Uses a Morlet-style wavelet `scale * exp(-0.5*((x-shift)/sigma)^2) * cos(freq*(x-shift)) + bias`; all parameters are exposed via `expose_learnable_params`.
 
 - `Brain`: n-dimensional space that can be either:
   - Grid mode: discrete occupancy over an integer index lattice with world-coordinate bounds. Occupancy can be defined by formulas or Mandelbrot functions (`mandelbrot`, `mandelbrot_nd`). Omitting the `size` parameter enables a fully dynamic grid that expands as neurons are added; capacity becomes unbounded.
