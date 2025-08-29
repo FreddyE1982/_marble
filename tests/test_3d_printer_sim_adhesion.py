@@ -2,6 +2,8 @@ import importlib.util
 import pathlib
 import unittest
 
+from marble.marblemain import report, clear_report_group
+
 
 def load_module(name: str, filename: str):
     spec = importlib.util.spec_from_file_location(name, pathlib.Path(filename))
@@ -22,6 +24,9 @@ TemperatureSensor = sensors_mod.TemperatureSensor
 
 
 class TestAdhesion(unittest.TestCase):
+    def setUp(self) -> None:
+        clear_report_group("adhesion")
+
     def test_bed_temperature_influence(self) -> None:
         sim = PrinterSimulation()
         sim.z_motor.position = sim.layer_height
@@ -40,6 +45,8 @@ class TestAdhesion(unittest.TestCase):
         sim.bed_temperature = sim.optimal_bed_temp
         sim.update(0.1)
 
+        report("adhesion", "bed_temp", {"low": low_adh, "optimal": sim.adhesion})
+        print("bed adhesion", {"low": low_adh, "optimal": sim.adhesion})
         self.assertLess(low_adh, 0.5)
         self.assertLess(z_after, z_before)  # drooping occurred
         self.assertGreater(sim.adhesion, low_adh)
@@ -66,6 +73,8 @@ class TestAdhesion(unittest.TestCase):
         sensor.set_temperature(240)
         sim.update(0.1)
 
+        report("adhesion", "extruder_temp", {"low": low, "optimal": sim.adhesion})
+        print("extruder adhesion", {"low": low, "optimal": sim.adhesion})
         self.assertLess(low, 0.5)
         self.assertLess(z_after, z_before)
         self.assertGreater(sim.adhesion, low)
