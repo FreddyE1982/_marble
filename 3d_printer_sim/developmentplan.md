@@ -18,9 +18,9 @@ Step 3: Implement Hardware Emulation Layer
     Substep 3.5: Map Marlin I/O pins to simulated components [complete]
 
 Step 4: Develop Motion and Physics Simulation
-    Substep 4.1: Model kinematics for printer axes
-        Subsubstep 4.1.1: Implement stepper motor behavior
-        Subsubstep 4.1.2: Handle acceleration and jerk limits
+    Substep 4.1: Model kinematics for printer axes [complete]
+        Subsubstep 4.1.1: Implement stepper motor behavior [complete]
+        Subsubstep 4.1.2: Handle acceleration and jerk limits [complete]
     Substep 4.2: Simulate extrusion and material deposition
     Substep 4.3: Compute thermal behavior for hotends and bed
 
