@@ -47,12 +47,12 @@ Step 7: Testing Framework
         Subsubstep 7.1.4: Ensure negative axis values raise ValueError [complete]
         Subsubstep 7.1.5: Test parse_simple_yaml handles scalar and list values [complete]
     Substep 7.2: Create integration tests for firmware communication [complete]
-    Substep 7.3: Validate physics simulation against known printer behavior
+    Substep 7.3: Validate physics simulation against known printer behavior [complete]
 
 Step 8: Documentation and Examples
-    Substep 8.1: Write setup guide for configuring printers
-    Substep 8.2: Provide example configurations for common printers
-    Substep 8.3: Document API for extending hardware components
+    Substep 8.1: Write setup guide for configuring printers [complete]
+    Substep 8.2: Provide example configurations for common printers [complete]
+    Substep 8.3: Document API for extending hardware components [complete]
 
 
 Step 9: Advanced Physics and Failure Modes

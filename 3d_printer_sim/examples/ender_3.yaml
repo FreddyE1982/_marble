@@ -1,0 +1,27 @@
+build_volume:
+  x: 220
+  y: 220
+  z: 250
+bed_size:
+  x: 220
+  y: 220
+max_print_dimensions:
+  x: 220
+  y: 220
+  z: 250
+filament_types:
+  PLA:
+    hotend_temp:
+      - 190
+      - 220
+    bed_temp:
+      - 0
+      - 60
+extruders:
+  - id: 0
+    type: bowden
+    hotend: mk8
+    filament: PLA
+heaters:
+  hotend: 200
+  bed: 60

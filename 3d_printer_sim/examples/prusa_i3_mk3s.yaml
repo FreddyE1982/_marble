@@ -1,0 +1,27 @@
+build_volume:
+  x: 250
+  y: 210
+  z: 210
+bed_size:
+  x: 250
+  y: 210
+max_print_dimensions:
+  x: 250
+  y: 210
+  z: 200
+filament_types:
+  PLA:
+    hotend_temp:
+      - 190
+      - 220
+    bed_temp:
+      - 0
+      - 60
+extruders:
+  - id: 0
+    type: direct
+    hotend: e3d_v6
+    filament: PLA
+heaters:
+  hotend: 210
+  bed: 60
