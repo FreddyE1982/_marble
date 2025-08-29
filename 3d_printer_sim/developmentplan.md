@@ -28,10 +28,10 @@ Step 5: Create 3D Visualization Module using a dedicated 3D framework
     Substep 5.1: Render isometric view of printer and prints in the 3D engine [complete]
     Substep 5.2: Render side view focusing on motion [complete]
     Substep 5.3: Render bed-only top-down view [complete]
-    Substep 5.4: Synchronize visualization with physics simulation
-    Substep 5.5: Display all mechanical components (axes, extruder, build plate) as 3D models
-    Substep 5.6: Show live filament deposition and growing print
-    Substep 5.7: Provide camera controls to watch the printer operate in real time
+    Substep 5.4: Synchronize visualization with physics simulation [complete]
+    Substep 5.5: Display all mechanical components (axes, extruder, build plate) as 3D models [complete]
+    Substep 5.6: Show live filament deposition and growing print [complete]
+    Substep 5.7: Provide camera controls to watch the printer operate in real time [complete]
 
 Step 6: Integrate with Marlin
     Substep 6.1: Compile unmodified Marlin to run on emulation layer

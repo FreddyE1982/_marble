@@ -47,6 +47,27 @@ class PrinterVisualizer:
         self.extruder.position = (0, 10, 0)
         self.scene.add(self.extruder)
 
+        # Mechanical axes represented as simple rails
+        rail_mat = MeshLambertMaterial(color="#404040")
+
+        # X axis rail
+        x_geom = BoxGeometry(200, 2, 2)
+        self.x_rail = Mesh(geometry=x_geom, material=rail_mat)
+        self.x_rail.position = (0, 11, 0)
+        self.scene.add(self.x_rail)
+
+        # Y axis rail
+        y_geom = BoxGeometry(2, 2, 200)
+        self.y_rail = Mesh(geometry=y_geom, material=rail_mat)
+        self.y_rail.position = (0, 11, 0)
+        self.scene.add(self.y_rail)
+
+        # Z axis rail
+        z_geom = BoxGeometry(2, 200, 2)
+        self.z_rail = Mesh(geometry=z_geom, material=rail_mat)
+        self.z_rail.position = (0, 100, 0)
+        self.scene.add(self.z_rail)
+
         # Axis lines for reference
         axis_mat = LineBasicMaterial(color="#0000ff")
         axis_geom = BoxGeometry(0, 0, 0)
@@ -66,6 +87,10 @@ class PrinterVisualizer:
     def _set_camera(self, position: List[float]) -> Renderer:
         self.camera.position = position
         self.camera.lookAt((0, 0, 0))
+        return self.renderer
+
+    def get_renderer(self) -> Renderer:
+        """Return the renderer with interactive camera controls."""
         return self.renderer
 
     def get_isometric_view(self) -> Renderer:
