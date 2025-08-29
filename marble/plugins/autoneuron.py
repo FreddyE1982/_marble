@@ -10,22 +10,35 @@ requirements), the plugin rolls back to the previously successful type and
 retries the step so training can continue without breaking gradients.
 """
 
-from typing import Any, List, Optional
+from typing import Any, List, Optional, Sequence
 
 from ..wanderer import expose_learnable_params
 from ..graph import _NEURON_TYPES
 
 
 class AutoNeuronPlugin:
-    """Meta neuron type that dynamically selects other neuron plugins."""
+    """Meta neuron type that dynamically selects other neuron plugins.
 
-    def __init__(self) -> None:
+    Parameters
+    ----------
+    disabled_types:
+        Optional list of neuron type names that must never be selected.
+        Types appearing in this list are excluded from the candidate set,
+        preventing accidental delegation to undesired plugins.
+    """
+
+    def __init__(self, disabled_types: Optional[Sequence[str]] = None) -> None:
         self._current_neuron_id = 0
+        self._disabled = set(disabled_types or [])
 
     # ---- Selection -----------------------------------------------------
     def _candidate_types(self) -> List[Optional[str]]:
         names: List[Optional[str]] = [None]
-        names += [n for n in _NEURON_TYPES.keys() if n != "autoneuron"]
+        names += [
+            n
+            for n in _NEURON_TYPES.keys()
+            if n != "autoneuron" and n not in self._disabled
+        ]
         return names
 
     def _select_type(self, wanderer: "Wanderer", neuron: "Neuron") -> Optional[str]:
