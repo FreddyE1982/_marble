@@ -402,17 +402,32 @@ try:
     from .plugins.polynomial import PolynomialNeuronPlugin
     from .plugins.exponential import ExponentialNeuronPlugin
     from .plugins.rbf import RBFNeuronPlugin
+    from .plugins.fourier import FourierSeriesNeuronPlugin
+    from .plugins.rational import RationalNeuronPlugin
+    from .plugins.piecewise_linear import PiecewiseLinearNeuronPlugin
+    from .plugins.sigmoid import SigmoidNeuronPlugin
+    from .plugins.wavelet import WaveletNeuronPlugin
     register_neuron_type("sinewave", SineWaveNeuronPlugin())
     register_neuron_type("gaussian", GaussianNeuronPlugin())
     register_neuron_type("polynomial", PolynomialNeuronPlugin())
     register_neuron_type("exponential", ExponentialNeuronPlugin())
     register_neuron_type("rbf", RBFNeuronPlugin())
+    register_neuron_type("fourier", FourierSeriesNeuronPlugin())
+    register_neuron_type("rational", RationalNeuronPlugin())
+    register_neuron_type("piecewise_linear", PiecewiseLinearNeuronPlugin())
+    register_neuron_type("sigmoid", SigmoidNeuronPlugin())
+    register_neuron_type("wavelet", WaveletNeuronPlugin())
     __all__ += [
         "SineWaveNeuronPlugin",
         "GaussianNeuronPlugin",
         "PolynomialNeuronPlugin",
         "ExponentialNeuronPlugin",
         "RBFNeuronPlugin",
+        "FourierSeriesNeuronPlugin",
+        "RationalNeuronPlugin",
+        "PiecewiseLinearNeuronPlugin",
+        "SigmoidNeuronPlugin",
+        "WaveletNeuronPlugin",
     ]
 except Exception:
     pass

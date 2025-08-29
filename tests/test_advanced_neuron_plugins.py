@@ -11,6 +11,31 @@ class AdvancedNeuronPluginTests(unittest.TestCase):
             "polynomial": ["poly_a", "poly_b", "poly_c"],
             "exponential": ["exp_rate", "exp_scale", "exp_bias"],
             "rbf": ["rbf_center", "rbf_gamma", "rbf_scale", "rbf_bias"],
+            "fourier": [
+                "fourier_a1",
+                "fourier_f1",
+                "fourier_p1",
+                "fourier_a2",
+                "fourier_f2",
+                "fourier_p2",
+                "fourier_bias",
+            ],
+            "rational": ["rat_a1", "rat_b1", "rat_a2", "rat_b2", "rat_bias"],
+            "piecewise_linear": [
+                "pw_break",
+                "pw_m1",
+                "pw_c1",
+                "pw_m2",
+                "pw_c2",
+            ],
+            "sigmoid": ["sig_scale", "sig_k", "sig_x0", "sig_bias"],
+            "wavelet": [
+                "wav_scale",
+                "wav_shift",
+                "wav_sigma",
+                "wav_freq",
+                "wav_bias",
+            ],
         }
 
         for name, params in plugins.items():
