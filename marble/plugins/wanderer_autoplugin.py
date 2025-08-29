@@ -28,10 +28,13 @@ class AutoPlugin:
         """Wrap existing Wanderer plugins with gating proxies."""
 
         wplugins = getattr(wanderer, "_wplugins", [])
+        explicit = getattr(wanderer, "_explicit_wplugin_names", set())
         for i, p in enumerate(list(wplugins)):
             if p is self:
                 continue
             name = p.__class__.__name__
+            if name in explicit:
+                continue
             wanderer.ensure_learnable_param(f"autoplugin_bias_{name}", 0.0)
             wplugins[i] = _GatedPlugin(p, name, self)
 
@@ -41,8 +44,11 @@ class AutoPlugin:
         if self._neuro_wrapped:
             return
         nplugins = getattr(wanderer, "_neuro_plugins", [])
+        explicit_n = getattr(wanderer, "_explicit_neuroplugin_names", set())
         for i, p in enumerate(list(nplugins)):
             name = p.__class__.__name__
+            if name in explicit_n:
+                continue
             wanderer.ensure_learnable_param(f"autoplugin_bias_{name}", 0.0)
             nplugins[i] = _GatedPlugin(p, name, self)
         self._neuro_wrapped = True
@@ -53,6 +59,10 @@ class AutoPlugin:
         """Return True if the named plugin should be active."""
 
         self._current_neuron_id = 0 if neuron is None else id(neuron)
+        explicit_w = getattr(wanderer, "_explicit_wplugin_names", set())
+        explicit_n = getattr(wanderer, "_explicit_neuroplugin_names", set())
+        if name in explicit_w or name in explicit_n:
+            return True
         torch = getattr(wanderer, "_torch", None)
         if torch is None:
             return True

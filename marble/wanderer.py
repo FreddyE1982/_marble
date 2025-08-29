@@ -125,6 +125,7 @@ class Wanderer(_DeviceHelper):
                 "torch is required for Wanderer autograd. Please install CPU torch (or GPU if available) and retry."
             )
         self.brain = brain
+        orig_type_name = type_name
         if mixedprecision:
             if type_name:
                 names = [s.strip() for s in str(type_name).split(",") if s.strip()]
@@ -133,6 +134,17 @@ class Wanderer(_DeviceHelper):
             else:
                 type_name = "mixedprecision"
         self.type_name = type_name
+        self._explicit_wplugin_names: set[str] = set()
+        if isinstance(orig_type_name, str):
+            _en = [s.strip() for s in orig_type_name.split(",") if s.strip()]
+        elif isinstance(orig_type_name, (list, tuple)):
+            _en = [str(n).strip() for n in orig_type_name if str(n).strip()]
+        else:
+            _en = []
+        for nm in _en:
+            plug = _WANDERER_TYPES.get(nm)
+            if plug is not None:
+                self._explicit_wplugin_names.add(plug.__class__.__name__)
         self.rng = random.Random(seed)
         self._plugin_state: Dict[str, Any] = {}
         self._visited: List[Neuron] = []
@@ -197,14 +209,16 @@ class Wanderer(_DeviceHelper):
         # Resolve stacked neuroplasticity plugins
         self._neuro_type = neuroplasticity_type
         self._neuro_plugins: List[Any] = []
+        self._explicit_neuroplugin_names: set[str] = set()
         if isinstance(neuroplasticity_type, str):
             nnames = [s.strip() for s in neuroplasticity_type.split(",") if s.strip()]
         else:
-            nnames = [str(x) for x in (neuroplasticity_type or [])]
+            nnames = [str(x).strip() for x in (neuroplasticity_type or []) if str(x).strip()]
         for nm in nnames:
             nplug = _NEURO_TYPES.get(nm)
             if nplug is not None:
                 self._neuro_plugins.append(nplug)
+                self._explicit_neuroplugin_names.add(nplug.__class__.__name__)
         for nplug in self._neuro_plugins:
             try:
                 if hasattr(nplug, "on_init"):
