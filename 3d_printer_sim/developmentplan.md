@@ -1,7 +1,7 @@
-Step 1: Analyse Marlin Firmware
-    Substep 1.1: Clone Marlin repository and review hardware abstraction layers
-    Substep 1.2: Identify required interfaces (USB, SD, sensors, motion control)
-    Substep 1.3: Document Marlin's configuration options relevant to simulation
+Step 1: Analyse Marlin Firmware [complete]
+    Substep 1.1: Clone Marlin repository and review hardware abstraction layers [complete]
+    Substep 1.2: Identify required interfaces (USB, SD, sensors, motion control) [complete]
+    Substep 1.3: Document Marlin's configuration options relevant to simulation [complete]
 
 Step 2: Define Simulation Configuration System
     Substep 2.1: Create config file structure

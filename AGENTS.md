@@ -399,3 +399,4 @@ Hugging Face Datasets Policy (additive)
 53. Example scripts that enable batching must load the `batchtrainer` Wanderer plugin and set `batch_size` consistently in both `neuro_config` and helper arguments.
 54. Dynamic neuron types like `AutoNeuron` must revert to the previous type on errors and expose selection parameters via `expose_learnable_params` to keep gradients intact.
 55. Development plan directories must contain a `developmentplan.md` with Step/Substep/Subsubstep structure so new modules can be executed sequentially.
+56. Document analyses of external dependencies in corresponding subdirectories as markdown files to preserve context for future steps.
