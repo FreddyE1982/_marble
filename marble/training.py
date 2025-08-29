@@ -320,11 +320,15 @@ def run_wanderers_parallel(
     results: List[Dict[str, Any]] = []
     # Thread mode only; process intentionally not implemented
     if mode == "thread":
-        import threading
+        import threading, copy
         lock = threading.Lock()
+
         def worker(idx: int):
+            # Operate on a deep-copied brain to avoid autograd graph reuse
+            # when multiple threads call backward concurrently.
+            local_brain = copy.deepcopy(brain)
             res = run_training_with_datapairs(
-                brain,
+                local_brain,
                 normed_lists[idx],
                 codec,
                 steps_per_pair=steps_per_pair,
