@@ -40,7 +40,12 @@ Step 6: Integrate with Marlin [complete]
     Substep 6.4: Feed simulated sensor data to firmware [complete]
 
 Step 7: Testing Framework
-    Substep 7.1: Create unit tests for configuration parser
+    Substep 7.1: Create unit tests for configuration parser [complete]
+        Subsubstep 7.1.1: Verify successful parse of valid configuration [complete]
+        Subsubstep 7.1.2: Ensure missing sections raise ValueError [complete]
+        Subsubstep 7.1.3: Ensure empty extruder list raises ValueError [complete]
+        Subsubstep 7.1.4: Ensure negative axis values raise ValueError [complete]
+        Subsubstep 7.1.5: Test parse_simple_yaml handles scalar and list values [complete]
     Substep 7.2: Create integration tests for firmware communication [complete]
     Substep 7.3: Validate physics simulation against known printer behavior
 
