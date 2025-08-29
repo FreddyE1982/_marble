@@ -58,6 +58,18 @@ renderer = printer.visualizer.get_isometric_view()
 
 The extruder moves along the X axis and deposits a short filament segment while the renderer stays in sync.
 
+5. Add supports and brims:
+
+```python
+printer.generate_brim(radius=10, segments=30)
+printer.set_axis_velocities(0, 0, 0)
+printer.z_motor.position = 10  # start in mid-air to force support generation
+printer.set_extrusion_velocity(100)
+printer.update(1.0)
+```
+
+The `generate_brim` call lays down a circular brim on the build plate. If filament is extruded without underlying material, the simulator automatically creates vertical support structures so the deposit is fully supported.
+
 ## Configuring Your Printer
 
 To set up a printer model, create a `config.yaml` file with sections for

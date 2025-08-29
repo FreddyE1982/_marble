@@ -109,9 +109,39 @@ class PrinterVisualizer:
     def update_extruder_position(self, x: float, y: float, z: float) -> None:
         self.extruder.position = (x, y, z)
 
-    def add_filament_segment(self, x: float, y: float, z: float, radius: float = 0.5) -> None:
-        cyl = CylinderGeometry(radiusTop=radius, radiusBottom=radius, height=1)
+    def add_filament_segment(
+        self, x: float, y: float, z: float, radius: float = 0.5, height: float = 1.0
+    ) -> Mesh:
+        """Add a generic filament segment to the scene."""
+
+        cyl = CylinderGeometry(radiusTop=radius, radiusBottom=radius, height=height)
         mat = MeshLambertMaterial(color="#ffa500")
+        seg = Mesh(cyl, mat)
+        seg.position = (x, y, z)
+        self.scene.add(seg)
+        self.filament.append(seg)
+        return seg
+
+    def add_support_segment(
+        self, x: float, y: float, z: float, radius: float = 0.5, height: float = 1.0
+    ) -> Mesh:
+        """Add a support structure segment in a distinct color."""
+
+        cyl = CylinderGeometry(radiusTop=radius, radiusBottom=radius, height=height)
+        mat = MeshLambertMaterial(color="#00ff00")
+        seg = Mesh(cyl, mat)
+        seg.position = (x, y, z)
+        self.scene.add(seg)
+        self.filament.append(seg)
+        return seg
+
+    def add_brim_segment(
+        self, x: float, y: float, z: float, radius: float = 0.5, height: float = 1.0
+    ) -> Mesh:
+        """Add a brim segment around the model base."""
+
+        cyl = CylinderGeometry(radiusTop=radius, radiusBottom=radius, height=height)
+        mat = MeshLambertMaterial(color="#0000ff")
         seg = Mesh(cyl, mat)
         seg.position = (x, y, z)
         self.scene.add(seg)
