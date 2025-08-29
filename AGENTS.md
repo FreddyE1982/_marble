@@ -402,3 +402,4 @@ Hugging Face Datasets Policy (additive)
 56. Document analyses of external dependencies in corresponding subdirectories as markdown files to preserve context for future steps.
 57. Modules under `3d_printer_sim` must remain self-contained, using only Python's standard library and other files within that directory.
 58. The microcontroller in `3d_printer_sim` must track pin-to-component mappings so tests can verify attached devices by pin number.
+59. Motion modules in `3d_printer_sim` must update deterministically via time-step `update(dt)` functions and enforce configured acceleration and jerk limits validated by unit tests.

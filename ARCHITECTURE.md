@@ -541,3 +541,4 @@ Helper scripts `clone_or_update.sh` and `clone_or_update.ps1` automate cloning o
 - `3d_printer_sim/sdcard.py` offers an in-memory `VirtualSDCard` with mount/unmount support and basic file operations that the microcontroller can expose to firmware.
 - `3d_printer_sim/sensors.py` adds simple analog sensors; `TemperatureSensor` updates a microcontroller's analog pin as its temperature value changes.
 - `3d_printer_sim/microcontroller.py` now maintains a mapping of Marlin-style I/O pins to the components attached to them, allowing sensors and interfaces like USB or SD cards to be registered and looked up by pin.
+- `3d_printer_sim/stepper.py` introduces a deterministic `StepperMotor` model that advances position over time while enforcing acceleration and jerk limits, forming the foundation of printer-axis kinematics.
