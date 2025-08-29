@@ -733,6 +733,12 @@ class Wanderer(_DeviceHelper):
                         pass
         except Exception:
             pass
+        res = {
+            "loss": final_loss_val,
+            "steps": int(steps),
+            "visited": int(len(self._visited)),
+            "step_metrics": step_metrics,
+        }
 
         for nplug in getattr(self, "_neuro_plugins", []) or []:
             try:
@@ -752,13 +758,6 @@ class Wanderer(_DeviceHelper):
                     plug.on_walk_end(self, res)  # type: ignore[attr-defined]
             except Exception:
                 pass
-
-        res = {
-            "loss": final_loss_val,
-            "steps": int(steps),
-            "visited": int(len(self._visited)),
-            "step_metrics": step_metrics,
-        }
         try:
             report("wanderer", "walk", res, "metrics")
         except Exception:

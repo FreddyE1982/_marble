@@ -2271,6 +2271,9 @@ __all__ += ["register_brain_train_type"]
 # Wanderer with Autograd + Plugins
 # -----------------------------
 
+# Import all plugin modules so they self-register with their registries.
+from . import plugins as _plugins  # noqa: F401
+
 # Plugin registry for Wanderer (moved). Import registry and registrar.
 from .wanderer import register_wanderer_type  # re-exported below
 from .wanderer import WANDERER_TYPES_REGISTRY as _WANDERER_TYPES
