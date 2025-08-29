@@ -540,3 +540,4 @@ Helper scripts `clone_or_update.sh` and `clone_or_update.ps1` automate cloning o
 - `3d_printer_sim/usb.py` implements a `VirtualUSB` class with host and device buffers. A microcontroller can attach to this interface to exchange bytes with a host, enabling a virtual USB link for future Marlin communication.
 - `3d_printer_sim/sdcard.py` offers an in-memory `VirtualSDCard` with mount/unmount support and basic file operations that the microcontroller can expose to firmware.
 - `3d_printer_sim/sensors.py` adds simple analog sensors; `TemperatureSensor` updates a microcontroller's analog pin as its temperature value changes.
+- `3d_printer_sim/microcontroller.py` now maintains a mapping of Marlin-style I/O pins to the components attached to them, allowing sensors and interfaces like USB or SD cards to be registered and looked up by pin.

@@ -15,7 +15,7 @@ Step 3: Implement Hardware Emulation Layer
     Substep 3.2: Provide virtual USB interface [complete]
     Substep 3.3: Provide virtual SD card storage [complete]
     Substep 3.4: Simulate temperature and other sensors [complete]
-    Substep 3.5: Map Marlin I/O pins to simulated components
+    Substep 3.5: Map Marlin I/O pins to simulated components [complete]
 
 Step 4: Develop Motion and Physics Simulation
     Substep 4.1: Model kinematics for printer axes

@@ -14,6 +14,8 @@ class AnalogSensor:
 
     def __post_init__(self) -> None:
         self.mc.set_analog(self.pin, self.value)
+        if hasattr(self.mc, "map_pin"):
+            self.mc.map_pin(self.pin, self)
 
     def set_value(self, value: float) -> None:
         self.value = float(value)

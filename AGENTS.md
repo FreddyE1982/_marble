@@ -401,3 +401,4 @@ Hugging Face Datasets Policy (additive)
 55. Development plan directories must contain a `developmentplan.md` with Step/Substep/Subsubstep structure so new modules can be executed sequentially.
 56. Document analyses of external dependencies in corresponding subdirectories as markdown files to preserve context for future steps.
 57. Modules under `3d_printer_sim` must remain self-contained, using only Python's standard library and other files within that directory.
+58. The microcontroller in `3d_printer_sim` must track pin-to-component mappings so tests can verify attached devices by pin number.
