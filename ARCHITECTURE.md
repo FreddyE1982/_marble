@@ -24,6 +24,11 @@ Core Components
 
   - `AutoNeuron` plugin: Learns via `expose_learnable_params` to delegate each forward pass to the most promising neuron type. On failures (e.g., wiring errors), it reverts to the previous successful type and retries, preserving gradient flow. Can be instantiated with `disabled_types=[...]` to skip specific neuron plugins entirely.
   - `QuantumType` plugin: Maintains multiple weight/bias/position states in superposition and blends them via a learnable wave function (logits exposed through `expose_learnable_params`). The forward pass computes the probability-weighted expectation, yielding stable gradients and deterministic behaviour while still expressing quantum-like branching.
+  - `SineWave` plugin: Applies `y = A * sin(F * x + P) + B` using learnable amplitude, frequency, phase and bias registered via `expose_learnable_params`.
+  - `Gaussian` plugin: Evaluates a Gaussian radial basis `scale * exp(-((x-mean)^2)/(2*sigma^2)) + bias` with mean, sigma, scale and bias exposed through `expose_learnable_params`.
+  - `Polynomial` plugin: Computes `a*x^2 + b*x + c` with coefficients `a`, `b`, `c` as wanderer learnables via `expose_learnable_params`.
+  - `Exponential` plugin: Returns `scale * exp(rate * x) + bias` where rate, scale and bias are learned using `expose_learnable_params`.
+  - `RBF` plugin: Implements a radial basis function `scale * exp(-gamma*(x-center)^2) + bias` with center, gamma, scale and bias all registered through `expose_learnable_params`.
 
 - `Brain`: n-dimensional space that can be either:
   - Grid mode: discrete occupancy over an integer index lattice with world-coordinate bounds. Occupancy can be defined by formulas or Mandelbrot functions (`mandelbrot`, `mandelbrot_nd`). Omitting the `size` parameter enables a fully dynamic grid that expands as neurons are added; capacity becomes unbounded.

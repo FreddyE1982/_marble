@@ -394,6 +394,30 @@ except Exception:
     pass
 
 # -----------------------------
+# Neuron Plugins: Advanced types
+# -----------------------------
+try:
+    from .plugins.sinewave import SineWaveNeuronPlugin
+    from .plugins.gaussian import GaussianNeuronPlugin
+    from .plugins.polynomial import PolynomialNeuronPlugin
+    from .plugins.exponential import ExponentialNeuronPlugin
+    from .plugins.rbf import RBFNeuronPlugin
+    register_neuron_type("sinewave", SineWaveNeuronPlugin())
+    register_neuron_type("gaussian", GaussianNeuronPlugin())
+    register_neuron_type("polynomial", PolynomialNeuronPlugin())
+    register_neuron_type("exponential", ExponentialNeuronPlugin())
+    register_neuron_type("rbf", RBFNeuronPlugin())
+    __all__ += [
+        "SineWaveNeuronPlugin",
+        "GaussianNeuronPlugin",
+        "PolynomialNeuronPlugin",
+        "ExponentialNeuronPlugin",
+        "RBFNeuronPlugin",
+    ]
+except Exception:
+    pass
+
+# -----------------------------
 # Learning Paradigm Plugins (Brain-level orchestration) (Brain-level orchestration)
 # -----------------------------
 
