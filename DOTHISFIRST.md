@@ -27,8 +27,8 @@ in current ML literature.
 3. Implement advanced synapse plugin suite. [complete]
 4. Implement advanced wanderer plugin suite. [complete]
 5. Implement advanced brain_train plugin suite. [complete]
-6. Implement advanced selfattention plugin suite.
-7. Implement advanced neuroplasticity plugin suite.
+6. Implement advanced selfattention plugin suite. [complete]
+7. Implement advanced neuroplasticity plugin suite. [complete]
 
 ## Pending tests [complete]
 
