@@ -21,7 +21,7 @@ Introduce five new advanced plugins for each plugin type, exposing all parameter
 ## Steps
 1. Enumerate existing plugin types in the repository. [complete]
 2. Implement neuron plugin suite (Swish, Mish, GELU, SoftPlus, LeakyExp) and register them with tests and docs. [complete]
-3. Implement synapse plugin suite.
+3. Implement synapse plugin suite. [complete]
 4. Implement wanderer plugin suite.
 5. Implement brain_train plugin suite.
 6. Implement selfattention plugin suite.

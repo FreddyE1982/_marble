@@ -619,6 +619,11 @@ __all__ += [
 # -----------------------------
 
 from .plugins.synapse_noisy import NoisySynapsePlugin as _NoisySynapsePlugin  # noqa: F401
+from .plugins.synapse_dropout import DropoutSynapsePlugin as _DropoutSynapsePlugin  # noqa: F401
+from .plugins.synapse_hebbian import HebbianSynapsePlugin as _HebbianSynapsePlugin  # noqa: F401
+from .plugins.synapse_resonant import ResonantSynapsePlugin as _ResonantSynapsePlugin  # noqa: F401
+from .plugins.synapse_delay import DelaySynapsePlugin as _DelaySynapsePlugin  # noqa: F401
+from .plugins.synapse_spike_gate import SpikeGateSynapsePlugin as _SpikeGateSynapsePlugin  # noqa: F401
 
 
 # -----------------------------
