@@ -24,11 +24,14 @@ Step 4: Develop Motion and Physics Simulation
     Substep 4.2: Simulate extrusion and material deposition [complete]
     Substep 4.3: Compute thermal behavior for hotends and bed [complete]
 
-Step 5: Create 3D Visualization Module
-    Substep 5.1: Render isometric view of printer and prints
-    Substep 5.2: Render side view focusing on motion
-    Substep 5.3: Render bed-only top-down view
+Step 5: Create 3D Visualization Module using a dedicated 3D framework
+    Substep 5.1: Render isometric view of printer and prints in the 3D engine [complete]
+    Substep 5.2: Render side view focusing on motion [complete]
+    Substep 5.3: Render bed-only top-down view [complete]
     Substep 5.4: Synchronize visualization with physics simulation
+    Substep 5.5: Display all mechanical components (axes, extruder, build plate) as 3D models
+    Substep 5.6: Show live filament deposition and growing print
+    Substep 5.7: Provide camera controls to watch the printer operate in real time
 
 Step 6: Integrate with Marlin
     Substep 6.1: Compile unmodified Marlin to run on emulation layer
@@ -1327,3 +1330,10 @@ Step 14: Visualization Fidelity Assurance
     Substep 14.4: Add tests verifying full coverage of simulated physics in the 3D view
         Subsubstep 14.4.1: Render sample frames and assert positional and thermal accuracy
         Subsubstep 14.4.2: Ensure newly added physics features introduce matching visual indicators
+
+Step 15: Complete Printer Rendering in External 3D Engine
+    Substep 15.1: Choose and integrate a 3D framework such as Unity or Three.js
+    Substep 15.2: Import detailed printer geometry and assemble moving parts
+    Substep 15.3: Stream simulation state to the engine for live visualization
+    Substep 15.4: Render filament extrusion and finished prints with physical accuracy
+    Substep 15.5: Support interaction features (start, pause, inspect) mirroring a physical printer

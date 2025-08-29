@@ -400,6 +400,8 @@ Hugging Face Datasets Policy (additive)
 54. Dynamic neuron types like `AutoNeuron` must revert to the previous type on errors and expose selection parameters via `expose_learnable_params` to keep gradients intact.
 55. Development plan directories must contain a `developmentplan.md` with Step/Substep/Subsubstep structure so new modules can be executed sequentially.
 56. Document analyses of external dependencies in corresponding subdirectories as markdown files to preserve context for future steps.
-57. Modules under `3d_printer_sim` must remain self-contained, using only Python's standard library and other files within that directory.
+57. Modules under `3d_printer_sim` must remain self-contained, using only Python's standard library and other files within that directory. This restriction applies only to repository code; external dependencies installed via package managers are permitted when needed.
 58. The microcontroller in `3d_printer_sim` must track pin-to-component mappings so tests can verify attached devices by pin number.
 59. Motion modules in `3d_printer_sim` must update deterministically via time-step `update(dt)` functions and enforce configured acceleration and jerk limits validated by unit tests.
+60. For work inside `3d_printer_sim`, do not install or rely on `torch`; other dependencies may be installed as required.
+61. Visualization for the printer simulator must leverage a dedicated 3D framework (e.g., Unity, Three.js, or similar) so that every simulated component—including moving axes, print bed, and deposited filament—has a live visual counterpart.
