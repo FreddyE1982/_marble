@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any, Dict
 
 from ..reporter import report
-from ..wanderer import register_neuroplasticity_type
+
 
 
 class BaseNeuroplasticityPlugin:
@@ -141,12 +141,6 @@ class BaseNeuroplasticityPlugin:
                 pass
         except Exception:
             pass
-
-
-try:
-    register_neuroplasticity_type("base", BaseNeuroplasticityPlugin())
-except Exception:
-    pass
 
 
 __all__ = ["BaseNeuroplasticityPlugin"]

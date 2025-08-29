@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from typing import List, Tuple
 
-from ..wanderer import register_wanderer_type
+PLUGIN_NAME = "epsilongreedy"
+
+
 
 
 class EpsilonGreedyChooserPlugin:
@@ -22,10 +24,5 @@ class EpsilonGreedyChooserPlugin:
         # fallback to highest weight
         return max(choices, key=lambda cd: float(getattr(cd[0], "weight", 1.0)))
 
-
-try:
-    register_wanderer_type("epsilongreedy", EpsilonGreedyChooserPlugin())
-except Exception:
-    pass
 
 __all__ = ["EpsilonGreedyChooserPlugin"]

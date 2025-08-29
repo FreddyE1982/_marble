@@ -9,7 +9,7 @@ the threshold and sharpness of the gate.
 from typing import Any, List
 import math
 
-from ..graph import register_synapse_type, Synapse
+from ..graph import Synapse
 from ..wanderer import expose_learnable_params
 from ..reporter import report
 
@@ -71,11 +71,6 @@ class SpikeGateSynapsePlugin:
         finally:
             syn.type_name = orig
 
-
-try:
-    register_synapse_type("spike_gate", SpikeGateSynapsePlugin())
-except Exception:
-    pass
 
 __all__ = ["SpikeGateSynapsePlugin"]
 

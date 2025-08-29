@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from typing import Any, Dict
 
-from ..selfattention import register_selfattention_type
 from ..reporter import report
 
 
@@ -51,10 +50,5 @@ class AdaptiveGradClipRoutine:
             self._since = max(0, self._since - 1)
         return None
 
-
-try:
-    register_selfattention_type("adaptive_grad_clip", AdaptiveGradClipRoutine())
-except Exception:
-    pass
 
 __all__ = ["AdaptiveGradClipRoutine"]

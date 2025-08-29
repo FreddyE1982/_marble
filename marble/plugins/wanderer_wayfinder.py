@@ -12,7 +12,7 @@ Wanderer learnable parameters via :func:`expose_learnable_params`.
 from typing import Any, Dict, List, Tuple, Optional
 import random
 
-from ..wanderer import register_wanderer_type, expose_learnable_params
+from ..wanderer import expose_learnable_params
 from ..reporter import report
 
 
@@ -209,12 +209,5 @@ class WayfinderPlugin:
     def on_walk_end(self, wanderer: "Wanderer") -> None:
         w_id = id(wanderer)
         self._last_node.pop(w_id, None)
-
-
-try:  # pragma: no cover - registration should not break tests on import
-    register_wanderer_type("wayfinder", WayfinderPlugin())
-except Exception:
-    pass
-
 __all__ = ["WayfinderPlugin"]
 

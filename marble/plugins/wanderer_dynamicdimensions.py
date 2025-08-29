@@ -3,7 +3,6 @@ from __future__ import annotations
 from typing import Any, Dict
 
 from ..reporter import report
-from ..wanderer import register_wanderer_type
 
 
 class DynamicDimensionsPlugin:
@@ -48,8 +47,5 @@ class DynamicDimensionsPlugin:
             except Exception:
                 pass
             self._pending = True
-
-
-register_wanderer_type("dynamicdimensions", DynamicDimensionsPlugin())
 
 __all__ = ["DynamicDimensionsPlugin"]

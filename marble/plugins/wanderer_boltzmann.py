@@ -11,7 +11,7 @@ from typing import List, Tuple
 import math
 import random
 
-from ..wanderer import register_wanderer_type, expose_learnable_params
+from ..wanderer import expose_learnable_params
 
 
 class BoltzmannChooserPlugin:
@@ -48,10 +48,5 @@ class BoltzmannChooserPlugin:
                 return choice
         return choices[-1]
 
-
-try:  # pragma: no cover - registration failure should not break import
-    register_wanderer_type("boltzmann", BoltzmannChooserPlugin())
-except Exception:
-    pass
 
 __all__ = ["BoltzmannChooserPlugin"]

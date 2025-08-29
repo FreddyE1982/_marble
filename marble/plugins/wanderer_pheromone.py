@@ -8,7 +8,7 @@ deposit rates, biasing traversal toward frequently used paths.
 
 from typing import Dict, List, Tuple
 
-from ..wanderer import register_wanderer_type, expose_learnable_params
+from ..wanderer import expose_learnable_params
 
 
 class PheromoneTrailPlugin:
@@ -43,10 +43,5 @@ class PheromoneTrailPlugin:
         state[choice[0]] = state.get(choice[0], 0.0) + depo
         return choice
 
-
-try:  # pragma: no cover
-    register_wanderer_type("pheromone", PheromoneTrailPlugin())
-except Exception:
-    pass
 
 __all__ = ["PheromoneTrailPlugin"]

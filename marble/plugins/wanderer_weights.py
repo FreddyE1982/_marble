@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import List, Tuple
 
-from ..wanderer import register_wanderer_type
+
 
 
 class WanderAlongSynapseWeightsPlugin:
@@ -20,10 +20,5 @@ class WanderAlongSynapseWeightsPlugin:
                 best_w = w
         return best
 
-
-try:
-    register_wanderer_type("wanderalongsynapseweights", WanderAlongSynapseWeightsPlugin())
-except Exception:
-    pass
 
 __all__ = ["WanderAlongSynapseWeightsPlugin"]

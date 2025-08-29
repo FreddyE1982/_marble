@@ -10,7 +10,7 @@ import math
 import random
 from typing import List, Tuple
 
-from ..wanderer import register_wanderer_type, expose_learnable_params
+from ..wanderer import expose_learnable_params
 
 
 class TemporalDecayPlugin:
@@ -36,10 +36,5 @@ class TemporalDecayPlugin:
             return random.choice(choices)
         return max(choices, key=lambda cd: float(getattr(cd[0], "weight", 1.0)))
 
-
-try:  # pragma: no cover
-    register_wanderer_type("temporaldecay", TemporalDecayPlugin())
-except Exception:
-    pass
 
 __all__ = ["TemporalDecayPlugin"]

@@ -3,7 +3,7 @@ from __future__ import annotations
 import torch
 from typing import Any, List
 
-from ..wanderer import register_wanderer_type
+
 
 
 class QualityWeightedLossPlugin:
@@ -21,13 +21,6 @@ class QualityWeightedLossPlugin:
         tgt = tgt.view_as(y)
         weight = tgt.clamp(min=0.0)
         return (weight * (y - tgt) ** 2).mean()
-
-
-try:
-    register_wanderer_type("qualityweightedloss", QualityWeightedLossPlugin())
-except Exception:
-    pass
-
 
 __all__ = ["QualityWeightedLossPlugin"]
 

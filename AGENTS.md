@@ -429,3 +429,10 @@ Details:
 Benefit: Ensures tests are both observable and trustworthy, enabling quick detection of subtle logic errors.
 Verification: Each test run prints or reports meaningful data, and successful tests show internally consistent values.
 Rollback Plan: Remove this rule block from AGENTS.md if testing policies change.
+
+67) Automatic Plugin Discovery Rule
+
+Rule: Plugins must register solely through automatic discovery. Adding a module under `marble/plugins` or defining a `*Paradigm` class in `marble/marblemain.py` is sufficient for registration—direct `register_*` calls are forbidden.
+Context: Ensures a consistent, zero-boilerplate plugin workflow.
+Benefit: Simplifies extension and eliminates manual registry bookkeeping.
+Rollback Plan: Remove this rule if manual registration ever becomes necessary again.

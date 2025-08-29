@@ -101,15 +101,6 @@ __all__ += [
 ]
 
 
-# Register conv1d plugin via dedicated module
-try:
-    from .plugins.conv1d import Conv1DNeuronPlugin
-    register_neuron_type("conv1d", Conv1DNeuronPlugin())
-except Exception:
-    pass
-
-
-
 # -----------------------------
 # Convolution wiring helpers
 # -----------------------------
@@ -288,165 +279,6 @@ class _ConvNDCommon:
         return v
 
 
-try:
-    from .plugins.conv2d import Conv2DNeuronPlugin
-    from .plugins.conv3d import Conv3DNeuronPlugin
-    register_neuron_type("conv2d", Conv2DNeuronPlugin())
-    register_neuron_type("conv3d", Conv3DNeuronPlugin())
-except Exception:
-    pass
-
-
-
-# -----------------------------
-# Neuron Plugins: ConvTranspose1D/2D/3D
-# -----------------------------
-
-try:
-    from .plugins.conv_transpose1d import ConvTranspose1DNeuronPlugin
-    from .plugins.conv_transpose2d import ConvTranspose2DNeuronPlugin
-    from .plugins.conv_transpose3d import ConvTranspose3DNeuronPlugin
-    register_neuron_type("conv_transpose1d", ConvTranspose1DNeuronPlugin())
-    register_neuron_type("conv_transpose2d", ConvTranspose2DNeuronPlugin())
-    register_neuron_type("conv_transpose3d", ConvTranspose3DNeuronPlugin())
-    __all__ += [
-        "ConvTranspose1DNeuronPlugin",
-        "ConvTranspose2DNeuronPlugin",
-        "ConvTranspose3DNeuronPlugin",
-    ]
-except Exception:
-    pass
-
-# -----------------------------
-# Neuron Plugins: MaxPool1D/2D/3D
-# -----------------------------
-
-try:
-    from .plugins.maxpool1d import MaxPool1DNeuronPlugin
-    from .plugins.maxpool2d import MaxPool2DNeuronPlugin
-    from .plugins.maxpool3d import MaxPool3DNeuronPlugin
-    register_neuron_type("maxpool1d", MaxPool1DNeuronPlugin())
-    register_neuron_type("maxpool2d", MaxPool2DNeuronPlugin())
-    register_neuron_type("maxpool3d", MaxPool3DNeuronPlugin())
-    __all__ += [
-        "MaxPool1DNeuronPlugin",
-        "MaxPool2DNeuronPlugin",
-        "MaxPool3DNeuronPlugin",
-    ]
-except Exception:
-    pass
-
-# -----------------------------
-# Neuron Plugins: Unfold2D and Fold2D
-# -----------------------------
-
-try:
-    from .plugins.unfold2d import Unfold2DNeuronPlugin
-    from .plugins.fold2d import Fold2DNeuronPlugin
-    register_neuron_type("unfold2d", Unfold2DNeuronPlugin())
-    register_neuron_type("fold2d", Fold2DNeuronPlugin())
-    __all__ += [
-        "Unfold2DNeuronPlugin",
-        "Fold2DNeuronPlugin",
-    ]
-except Exception:
-    pass
-
-# -----------------------------
-# Neuron Plugins: MaxUnpool1D/2D/3D
-# -----------------------------
-
-try:
-    from .plugins.maxunpool1d import MaxUnpool1DNeuronPlugin
-    from .plugins.maxunpool2d import MaxUnpool2DNeuronPlugin
-    from .plugins.maxunpool3d import MaxUnpool3DNeuronPlugin
-    register_neuron_type("maxunpool1d", MaxUnpool1DNeuronPlugin())
-    register_neuron_type("maxunpool2d", MaxUnpool2DNeuronPlugin())
-    register_neuron_type("maxunpool3d", MaxUnpool3DNeuronPlugin())
-    __all__ += [
-        "MaxUnpool1DNeuronPlugin",
-        "MaxUnpool2DNeuronPlugin",
-        "MaxUnpool3DNeuronPlugin",
-    ]
-except Exception:
-    pass
-
-# -----------------------------
-# Neuron Plugin: AutoNeuron
-# -----------------------------
-
-try:
-    from .plugins.autoneuron import AutoNeuronPlugin
-    register_neuron_type("autoneuron", AutoNeuronPlugin())
-    __all__ += ["AutoNeuronPlugin"]
-except Exception:
-    pass
-
-# -----------------------------
-# Neuron Plugin: QuantumType
-# -----------------------------
-
-try:
-    from .plugins.quantumtype import QuantumTypeNeuronPlugin
-    register_neuron_type("quantumtype", QuantumTypeNeuronPlugin())
-    __all__ += ["QuantumTypeNeuronPlugin"]
-except Exception:
-    pass
-
-# -----------------------------
-# Neuron Plugins: Advanced types
-# -----------------------------
-try:
-    from .plugins.sinewave import SineWaveNeuronPlugin
-    from .plugins.gaussian import GaussianNeuronPlugin
-    from .plugins.polynomial import PolynomialNeuronPlugin
-    from .plugins.exponential import ExponentialNeuronPlugin
-    from .plugins.rbf import RBFNeuronPlugin
-    from .plugins.fourier import FourierSeriesNeuronPlugin
-    from .plugins.rational import RationalNeuronPlugin
-    from .plugins.piecewise_linear import PiecewiseLinearNeuronPlugin
-    from .plugins.sigmoid import SigmoidNeuronPlugin
-    from .plugins.wavelet import WaveletNeuronPlugin
-    from .plugins.swish import SwishNeuronPlugin
-    from .plugins.mish import MishNeuronPlugin
-    from .plugins.gelu import GELUNeuronPlugin
-    from .plugins.softplus import SoftPlusNeuronPlugin
-    from .plugins.leaky_exp import LeakyExpNeuronPlugin
-    register_neuron_type("sinewave", SineWaveNeuronPlugin())
-    register_neuron_type("gaussian", GaussianNeuronPlugin())
-    register_neuron_type("polynomial", PolynomialNeuronPlugin())
-    register_neuron_type("exponential", ExponentialNeuronPlugin())
-    register_neuron_type("rbf", RBFNeuronPlugin())
-    register_neuron_type("fourier", FourierSeriesNeuronPlugin())
-    register_neuron_type("rational", RationalNeuronPlugin())
-    register_neuron_type("piecewise_linear", PiecewiseLinearNeuronPlugin())
-    register_neuron_type("sigmoid", SigmoidNeuronPlugin())
-    register_neuron_type("wavelet", WaveletNeuronPlugin())
-    register_neuron_type("swish", SwishNeuronPlugin())
-    register_neuron_type("mish", MishNeuronPlugin())
-    register_neuron_type("gelu", GELUNeuronPlugin())
-    register_neuron_type("softplus", SoftPlusNeuronPlugin())
-    register_neuron_type("leakyexp", LeakyExpNeuronPlugin())
-    __all__ += [
-        "SineWaveNeuronPlugin",
-        "GaussianNeuronPlugin",
-        "PolynomialNeuronPlugin",
-        "ExponentialNeuronPlugin",
-        "RBFNeuronPlugin",
-        "FourierSeriesNeuronPlugin",
-        "RationalNeuronPlugin",
-        "PiecewiseLinearNeuronPlugin",
-        "SigmoidNeuronPlugin",
-        "WaveletNeuronPlugin",
-        "SwishNeuronPlugin",
-        "MishNeuronPlugin",
-        "GELUNeuronPlugin",
-        "SoftPlusNeuronPlugin",
-        "LeakyExpNeuronPlugin",
-    ]
-except Exception:
-    pass
-
 # -----------------------------
 # Learning Paradigm Plugins (Brain-level orchestration) (Brain-level orchestration)
 # -----------------------------
@@ -525,10 +357,6 @@ class AdaptiveLRParadigm:
             pass
 
 
-try:
-    register_learning_paradigm_type("adaptive_lr", AdaptiveLRParadigm)
-except Exception:
-    pass
 
 def add_paradigm(brain: "Brain", name: str, config: Optional[Dict[str, Any]] = None) -> Any:
     """Load and attach a learning paradigm onto a Brain (alias to Brain.load_paradigm)."""
@@ -614,123 +442,6 @@ __all__ += [
 ]
 
 
-# -----------------------------
-# Synapse Plugins: Noisy Transmission
-# -----------------------------
-
-from .plugins.synapse_noisy import NoisySynapsePlugin as _NoisySynapsePlugin  # noqa: F401
-from .plugins.synapse_dropout import DropoutSynapsePlugin as _DropoutSynapsePlugin  # noqa: F401
-from .plugins.synapse_hebbian import HebbianSynapsePlugin as _HebbianSynapsePlugin  # noqa: F401
-from .plugins.synapse_resonant import ResonantSynapsePlugin as _ResonantSynapsePlugin  # noqa: F401
-from .plugins.synapse_delay import DelaySynapsePlugin as _DelaySynapsePlugin  # noqa: F401
-from .plugins.synapse_spike_gate import SpikeGateSynapsePlugin as _SpikeGateSynapsePlugin  # noqa: F401
-
-
-# -----------------------------
-# Wanderer Plugins: L2 Weight Penalty and Others
-# -----------------------------
-
-try:
-    from .plugins.wanderer_l2_penalty import L2WeightPenaltyPlugin
-    from .plugins.wanderer_contrastive_infonce import ContrastiveInfoNCEPlugin
-    from .plugins.wanderer_td_qlearning import TDQLearningPlugin
-    from .plugins.wanderer_distillation import DistillationPlugin
-    from .plugins.wanderer_triple_contrast import TripleWanderersContrastPlugin
-    register_wanderer_type("l2_weight_penalty", L2WeightPenaltyPlugin())
-    register_wanderer_type("contrastive_infonce", ContrastiveInfoNCEPlugin())
-    register_wanderer_type("td_qlearning", TDQLearningPlugin())
-    register_wanderer_type("distillation", DistillationPlugin())
-    register_wanderer_type("triple_contrast", TripleWanderersContrastPlugin())
-    __all__ += [
-        "L2WeightPenaltyPlugin",
-        "ContrastiveInfoNCEPlugin",
-        "TDQLearningPlugin",
-        "DistillationPlugin",
-        "TripleWanderersContrastPlugin",
-    ]
-except Exception:
-    pass
-
-# Ensure additional Wanderer plugins register their learnable parameters.
-try:  # pragma: no cover - plugin availability may vary
-    from .plugins import (
-        wanderer_boltzmann as _wanderer_boltzmann,
-        wanderer_pheromone as _wanderer_pheromone,
-        wanderer_momentum as _wanderer_momentum,
-        wanderer_temporal_decay as _wanderer_temporal_decay,
-        wanderer_entropy as _wanderer_entropy,
-    )  # noqa: F401
-except Exception:
-    pass
-
-# -----------------------------
-# SelfAttention Routine: Adaptive Grad Clip
-# -----------------------------
-
-class AdaptiveGradClipRoutine:
-    """Adjusts gradient clipping based on step loss spikes.
-
-    If current per-step loss grows by more than `threshold_ratio` over the
-    previous step, set gradient clipping (method='norm', max_norm).
-    Fields (constructor/defaults): threshold_ratio=1.5, max_norm=1.0, cooldown=5
-    """
-
-    def __init__(self, threshold_ratio: float = 1.5, max_norm: float = 1.0, cooldown: int = 5) -> None:
-        self.threshold_ratio = float(threshold_ratio)
-        self.max_norm = float(max_norm)
-        self.cooldown = int(max(0, cooldown))
-        self._since = 0
-
-    def on_init(self, selfattention: "SelfAttention") -> None:
-        self._since = 0
-
-    def after_step(self, selfattention: "SelfAttention", reporter_ro: Any, wanderer: "Wanderer", step_index: int, ctx: Dict[str, Any]):
-        try:
-            cur = float(ctx.get("cur_loss_tensor").detach().to("cpu").item()) if ctx.get("cur_loss_tensor") is not None else None
-        except Exception:
-            cur = None
-        prev = None
-        try:
-            last = reporter_ro.item(f"step_{max(1, getattr(wanderer, '_global_step_counter', 1)) - 1}", "wanderer_steps", "logs")
-            if isinstance(last, dict) and ("current_loss" in last):
-                prev = float(last.get("current_loss"))
-        except Exception:
-            prev = None
-        if cur is None or prev is None:
-            return None
-        if prev <= 0.0:
-            return None
-        ratio = cur / prev
-        if ratio >= self.threshold_ratio and self._since <= 0:
-            try:
-                selfattention.set_param("_grad_clip", {"method": "norm", "max_norm": float(self.max_norm), "norm_type": 2.0})
-                report("selfattention", "gradclip_enable", {"ratio": ratio, "max_norm": float(self.max_norm)}, "events")
-            except Exception:
-                pass
-            self._since = self.cooldown
-        else:
-            self._since = max(0, self._since - 1)
-        return None
-
-
-try:
-    register_selfattention_type("adaptive_grad_clip", AdaptiveGradClipRoutine())
-    __all__ += ["AdaptiveGradClipRoutine"]
-except Exception:
-    pass
-
-
-# -----------------------------
-# Brain Training Plugin: Warmup-Decay
-# -----------------------------
-
-try:
-    from .plugins.brain_train_warmup_decay import WarmupDecayTrainPlugin
-    register_brain_train_type("warmup_decay", WarmupDecayTrainPlugin())
-    __all__ += ["WarmupDecayTrainPlugin"]
-except Exception:
-    pass
-
 class GrowthParadigm:
     def __init__(self, config: Optional[Dict[str, Any]] = None) -> None:
         cfg = dict(config or {})
@@ -811,12 +522,6 @@ class GrowthParadigm:
             report("training", "paradigm_growth_end", {"from": getattr(last, "position", None), "to": idx}, "events")
         except Exception:
             pass
-
-
-try:
-    register_learning_paradigm_type("growth", GrowthParadigm)
-except Exception:
-    pass
 
 
 class SupervisedConvParadigm:
@@ -911,14 +616,6 @@ class EvolutionaryPathsParadigm:
             pass
 
 
-try:
-    register_learning_paradigm_type("supervised_conv", SupervisedConvParadigm)
-    register_learning_paradigm_type("epsilon_greedy", EpsilonGreedyParadigm)
-    register_learning_paradigm_type("evolutionary_paths", EvolutionaryPathsParadigm)
-except Exception:
-    pass
-
-
 class SineWaveEncodingParadigm:
     """Random sine-wave encoding of start neuron input at the beginning of each walk.
 
@@ -986,12 +683,6 @@ class SineWaveEncodingParadigm:
             report("training", "sine_encoding", {"dim": n, "waves": len(self._params or [])}, "events")
         except Exception:
             pass
-
-
-try:
-    register_learning_paradigm_type("sine_encoding", SineWaveEncodingParadigm)
-except Exception:
-    pass
 
 # Additional Learning Paradigms: Hebbian, Contrastive, Reinforcement, Student-Teacher
 
@@ -1082,13 +773,24 @@ class StudentTeacherParadigm:
                 wanderer._neuro_cfg[k] = self.cfg[k]
 
 
-try:
-    register_learning_paradigm_type("hebbian", HebbianParadigm)
-    register_learning_paradigm_type("contrastive", ContrastiveParadigm)
-    register_learning_paradigm_type("reinforcement", ReinforcementParadigm)
-    register_learning_paradigm_type("student_teacher", StudentTeacherParadigm)
-except Exception:
-    pass
+def _auto_register_local_paradigms() -> None:
+    import inspect
+
+    def _camel_to_snake(name: str) -> str:
+        out: List[str] = []
+        for i, ch in enumerate(name):
+            if ch.isupper() and i > 0 and (name[i - 1].islower() or (i + 1 < len(name) and name[i + 1].islower())):
+                out.append("_")
+            out.append(ch.lower())
+        return "".join(out)
+
+    for nm, obj in list(globals().items()):
+        if inspect.isclass(obj) and nm.endswith("Paradigm"):
+            register_learning_paradigm_type(_camel_to_snake(nm[:-9]), obj)
+
+
+_auto_register_local_paradigms()
+
 # -----------------------------
 # Brain: n-Dimensional Structure
 # -----------------------------
@@ -2074,26 +1776,6 @@ def register_brain_train_type(name: str, plugin: Any) -> None:
     _BRAIN_TRAIN_TYPES[name] = plugin
 
 
-try:
-    from .plugins.brain_train_curriculum import CurriculumTrainPlugin
-    register_brain_train_type("curriculum", CurriculumTrainPlugin())
-    __all__ += ["CurriculumTrainPlugin"]
-except Exception:
-    pass
-
-try:
-    from .plugins.brain_train_qualityaware import QualityAwareTrainPlugin
-    register_brain_train_type("qualityaware", QualityAwareTrainPlugin())
-    __all__ += ["QualityAwareTrainPlugin"]
-except Exception:
-    pass
-
-try:
-    from .plugins.brain_train_earlystop import EarlyStoppingTrainPlugin
-    register_brain_train_type("earlystop", EarlyStoppingTrainPlugin())
-    __all__ += ["EarlyStoppingTrainPlugin"]
-except Exception:
-    pass
 
 
 def _merge_dict_safe(base: Dict[str, Any], extra: Optional[Dict[str, Any]]) -> Dict[str, Any]:
@@ -2284,63 +1966,6 @@ try:
 except Exception:
     pass
 
-try:
-    from .plugins.wanderer_bestpath import BestLossPathPlugin
-    from .plugins.wanderer_altpaths import AlternatePathsCreatorPlugin
-    register_wanderer_type("bestlosspath", BestLossPathPlugin())
-    register_wanderer_type("alternatepathscreator", AlternatePathsCreatorPlugin())
-    __all__ += ["BestLossPathPlugin", "AlternatePathsCreatorPlugin"]
-except Exception:
-    pass
-
-try:
-    from .plugins.wanderer_hyperevolution import HyperEvolutionPlugin
-    register_wanderer_type("hyperEvolution", HyperEvolutionPlugin())
-    __all__ += ["HyperEvolutionPlugin"]
-except Exception:
-    pass
-
-try:
-    from .plugins.wanderer_autoplugin import AutoPlugin
-    register_wanderer_type("autoplugin", AutoPlugin())
-    __all__ += ["AutoPlugin"]
-except Exception:
-    pass
-
-try:
-    from .plugins.wanderer_autolobe import AutoLobePlugin
-    register_wanderer_type("autolobe", AutoLobePlugin())
-    __all__ += ["AutoLobePlugin"]
-except Exception:
-    pass
-
-try:
-    from .plugins.wanderer_dynamicdimensions import DynamicDimensionsPlugin
-    register_wanderer_type("dynamicdimensions", DynamicDimensionsPlugin())
-    __all__ += ["DynamicDimensionsPlugin"]
-except Exception:
-    pass
-
-try:
-    from .plugins.wanderer_batchtrainer import BatchTrainingPlugin
-    register_wanderer_type("batchtrainer", BatchTrainingPlugin())
-    __all__ += ["BatchTrainingPlugin"]
-except Exception:
-    pass
-
-try:
-    from .plugins.wanderer_qualityweightedloss import QualityWeightedLossPlugin
-    register_wanderer_type("qualityweightedloss", QualityWeightedLossPlugin())
-    __all__ += ["QualityWeightedLossPlugin"]
-except Exception:
-    pass
-
-try:
-    from .plugins.wanderer_mixedprecision import MixedPrecisionPlugin
-    register_wanderer_type("mixedprecision", MixedPrecisionPlugin())
-    __all__ += ["MixedPrecisionPlugin"]
-except Exception:
-    pass
 
 # Neuroplasticity plugin registry (moved). Import registry and registrar.
 from .wanderer import register_neuroplasticity_type  # re-exported below
@@ -2368,247 +1993,17 @@ __all__ += [
 # SelfAttention (moved to its own module)
 # -----------------------------
 from .selfattention import SelfAttention, register_selfattention_type, attach_selfattention
+from .plugins.selfattention_conv1d_inserter import Conv1DRandomInsertionRoutine
 
 __all__ += ["SelfAttention", "register_selfattention_type", "attach_selfattention"]
 
 
+# Trigger automatic plugin discovery
+from . import plugins as _plugins  # noqa: F401
+
 # -----------------------------
-# SelfAttention Routine: Conv1D random insertion with rollback
+# High-level Helpers
 # -----------------------------
-
-class Conv1DRandomInsertionRoutine:
-    """Insert a conv1d neuron every N steps; remove if loss not improved.
-
-    - period: check insertion every `period` global steps (from Reporter).
-    - eval_after: number of steps to wait after insertion before evaluation.
-    - kernel: default kernel for conv1d parameter neuron.
-
-    Routines operate via SelfAttention.after_step hook and only use
-    the provided Wanderer/Brain APIs (no imports), as per architecture.
-    """
-
-    def __init__(self, period: int = 20, eval_after: int = 10, kernel: Optional[List[float]] = None, max_data_sources: int = 1) -> None:
-        self.period = max(1, int(period))
-        self.eval_after = max(1, int(eval_after))
-        self.kernel = list(kernel) if isinstance(kernel, list) else [1.0, 0.0, -1.0]
-        self._active: Optional[Dict[str, Any]] = None
-        self.max_data_sources = max(0, int(max_data_sources))
-
-    def _global_step(self, sa: "SelfAttention") -> int:
-        try:
-            return len(sa.history())
-        except Exception:
-            return 0
-
-    def _mean_loss(self, sa: "SelfAttention", start: int, end: Optional[int]) -> float:
-        try:
-            hist = sa.history()
-            if end is None or end > len(hist):
-                end = len(hist)
-            vals: List[float] = []
-            for rec in hist[start:end]:
-                v = rec.get("current_loss")
-                try:
-                    vals.append(float(v))
-                except Exception:
-                    pass
-            return (sum(vals) / max(1, len(vals))) if vals else float("inf")
-        except Exception:
-            return float("inf")
-
-    def _random_free_index(self, brain: "Brain"):
-        try:
-            candidates = list(brain.available_indices())
-        except Exception:
-            candidates = []
-        random.shuffle(candidates)
-        for idx in candidates:
-            try:
-                if brain.get_neuron(idx) is None:
-                    return idx
-            except Exception:
-                continue
-        return candidates[0] if candidates else (0,) * int(getattr(brain, "n", 1))
-
-    def _pick_param_sources(self, brain: "Brain", exclude: List["Neuron"]) -> List["Neuron"]:
-        # Deterministically select 5 existing neurons not in exclude
-        ex = set(id(n) for n in exclude)
-        candidates = []
-        try:
-            for n in getattr(brain, "neurons", {}).values():
-                if id(n) not in ex:
-                    candidates.append(n)
-        except Exception:
-            candidates = []
-        # Sort deterministically by position tuple then id for stability
-        def keyfn(n):
-            pos = getattr(n, "position", None)
-            return (0, tuple(pos)) if isinstance(pos, tuple) else (1, id(n))
-        candidates.sort(key=keyfn)
-        return candidates[:5]
-
-    def _splice_conv(self, brain: "Brain", syn: Optional["Synapse"]) -> Dict[str, Any]:
-        if syn is not None:
-            src = syn.source
-            dst = syn.target
-        else:
-            neurons = list(getattr(brain, "neurons", {}).values())
-            if len(neurons) >= 2:
-                src, dst = random.sample(neurons, 2)
-            else:
-                # Not enough existing neurons to define a destination; abort
-                raise RuntimeError("Conv1D insertion skipped: not enough existing neurons for destination")
-
-        # Collect 5 pre-existing parameter source neurons
-        params = self._pick_param_sources(brain, exclude=[dst])
-        if len(params) < 5:
-            raise RuntimeError("Conv1D insertion skipped: need 5 pre-existing parameter neurons")
-
-        # Create conv as a base neuron first (no plugin yet), then wire strictly: 5 params -> conv, conv -> dst
-        conv = brain.add_neuron(self._random_free_index(brain), tensor=[0.0])
-        created_syns: List["Synapse"] = []
-        # wire parameters (5 incoming) using existing neurons; mark as params
-        for pn in params:
-            created_syns.append(brain.connect(getattr(pn, "position"), getattr(conv, "position"), direction="uni", type_name="param"))
-        # Optional: attach one or more data sources if available (pre-existing only)
-        try:
-            all_neurons = [n for n in getattr(brain, "neurons", {}).values()]
-        except Exception:
-            all_neurons = []
-        used = set(id(x) for x in ([conv, dst] + list(params)))
-        data_sources = []
-        for n in all_neurons:
-            if id(n) in used:
-                continue
-            data_sources.append(n)
-            if len(data_sources) >= self.max_data_sources:
-                break
-        for dn in data_sources:
-            created_syns.append(brain.connect(getattr(dn, "position"), getattr(conv, "position"), direction="uni", type_name="data"))
-
-        # one outgoing
-        created_syns.append(brain.connect(getattr(conv, "position"), getattr(dst, "position"), direction="uni"))
-
-        # Strictly promote to conv1d now; if validation fails, rollback
-        try:
-            conv.type_name = "conv1d"
-            plugin = _NEURON_TYPES.get("conv1d")
-            if plugin is not None and hasattr(plugin, "on_init"):
-                plugin.on_init(conv)  # type: ignore[attr-defined]
-        except Exception:
-            for syn_created in list(created_syns):
-                try:
-                    brain.remove_synapse(syn_created)
-                except Exception:
-                    pass
-            try:
-                brain.remove_neuron(conv)
-            except Exception:
-                pass
-            raise
-
-        try:
-            info = SelfAttention().validate_neuron_wiring(conv)
-            report("selfattention", "conv1d_splice", {"ok": bool(info.get("ok", True))}, "builder")
-        except Exception:
-            pass
-
-        return {
-            "conv": conv,
-            "params": params,
-            "created_synapses": created_syns,
-            "replaced_synapse": syn,
-            "src": src,
-            "dst": dst,
-        }
-
-    def after_step(self, sa: "SelfAttention", ro, wanderer: "Wanderer", step_idx: int, ctx: Dict[str, Any]):
-        brain = getattr(wanderer, "brain", None)
-        if brain is None:
-            return None
-        gstep = self._global_step(sa)
-
-        # If evaluating an active insertion
-        if self._active is not None:
-            inserted = int(self._active.get("insert_gstep", gstep))
-            if (gstep - inserted) >= self.eval_after:
-                mean_after = self._mean_loss(sa, inserted, inserted + self.eval_after)
-                baseline = float(self._active.get("baseline_current_loss", float("inf")))
-                improved = mean_after < baseline
-                try:
-                    report("selfattention", "conv1d_eval", {"baseline": baseline, "mean_after": mean_after, "improved": improved}, "builder")
-                except Exception:
-                    pass
-                if not improved:
-                    # Remove created structures and restore replaced synapse
-                    try:
-                        for syn in list(self._active.get("created_synapses", [])):
-                            try:
-                                brain.remove_synapse(syn)
-                            except Exception:
-                                pass
-                        try:
-                            brain.remove_neuron(self._active["conv"])  # type: ignore[index]
-                        except Exception:
-                            pass
-                        for pn in self._active.get("params", []):
-                            try:
-                                brain.remove_neuron(pn)
-                            except Exception:
-                                pass
-                        rs = self._active.get("replaced_synapse")
-                        if rs is not None:
-                            try:
-                                brain.connect(getattr(self._active["src"], "position"), getattr(self._active["dst"], "position"), direction=getattr(rs, "direction", "uni"), age=getattr(rs, "age", 0), type_name=getattr(rs, "type_name", None))
-                            except Exception:
-                                pass
-                        report("selfattention", "conv1d_removed", {"reason": "no_improvement"}, "builder")
-                    except Exception:
-                        pass
-                else:
-                    try:
-                        report("selfattention", "conv1d_kept", {"improved": True}, "builder")
-                    except Exception:
-                        pass
-                self._active = None
-            return None
-
-        # Trigger insertion periodically
-        if gstep > 0 and (gstep % self.period) == 0:
-            try:
-                syns = [s for s in getattr(brain, "synapses", []) if getattr(s, "direction", "uni") == "uni"]
-            except Exception:
-                syns = []
-            chosen = random.choice(syns) if syns else None
-            try:
-                structures = self._splice_conv(brain, chosen)
-                # Baseline current per-step loss from last step
-                baseline = float("inf")
-                try:
-                    last = sa.history(1)
-                    if last:
-                        v = last[-1].get("current_loss")
-                        if v is not None:
-                            baseline = float(v)
-                except Exception:
-                    pass
-                self._active = {**structures, "insert_gstep": gstep, "baseline_current_loss": baseline}
-                try:
-                    report("selfattention", "conv1d_inserted", {"gstep": gstep}, "builder")
-                except Exception:
-                    pass
-            except Exception:
-                # Ignore failures this cycle
-                pass
-        return None
-
-
-# Register routine type for easy wiring via SelfAttention(type_name=...)
-try:
-    register_selfattention_type("conv1d_random_inserter", Conv1DRandomInsertionRoutine())
-    __all__ += ["Conv1DRandomInsertionRoutine"]
-except Exception:
-    pass
 
 # -----------------------------
 # High-level Helpers

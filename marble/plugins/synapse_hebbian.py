@@ -9,7 +9,7 @@ rate and weight decay.
 
 from typing import Any, List
 
-from ..graph import register_synapse_type, Synapse
+from ..graph import Synapse
 from ..wanderer import expose_learnable_params
 from ..reporter import report
 
@@ -76,11 +76,6 @@ class HebbianSynapsePlugin:
 
         return out_neuron
 
-
-try:
-    register_synapse_type("hebbian", HebbianSynapsePlugin())
-except Exception:
-    pass
 
 __all__ = ["HebbianSynapsePlugin"]
 

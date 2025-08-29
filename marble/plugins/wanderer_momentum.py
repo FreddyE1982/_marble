@@ -9,7 +9,7 @@ through :func:`expose_learnable_params`.
 
 from typing import List, Tuple
 
-from ..wanderer import register_wanderer_type, expose_learnable_params
+from ..wanderer import expose_learnable_params
 
 
 class MomentumBiasPlugin:
@@ -35,10 +35,5 @@ class MomentumBiasPlugin:
         wanderer._plugin_state["momentum"] = coef * prev + float(getattr(choice[0], "weight", 1.0))
         return choice
 
-
-try:  # pragma: no cover
-    register_wanderer_type("momentum", MomentumBiasPlugin())
-except Exception:
-    pass
 
 __all__ = ["MomentumBiasPlugin"]
