@@ -49,16 +49,48 @@ Step 8: Documentation and Examples
 
 Step 9: Advanced Physics and Failure Modes
     Substep 9.1: Enable tilting the print bed in any direction with physics respecting orientation
+        Subsubstep 9.1.1: Allow configuration of bed tilt angles along X and Y axes
+        Subsubstep 9.1.2: Adjust gravity and nozzle coordinates for bed orientation
+        Subsubstep 9.1.3: Ensure material deposition and movement calculations respect tilt
     Substep 9.2: Model nozzle-to-bed distance effects on filament deposition and dragging
+        Subsubstep 9.2.1: Compute real-time nozzle height relative to the tilted bed
+        Subsubstep 9.2.2: Alter extrusion width and adhesion based on clearance
+        Subsubstep 9.2.3: Simulate nozzle dragging, scratching, or collisions when clearance is too low
+        Subsubstep 9.2.4: Reflect layer height errors caused by incorrect leveling
     Substep 9.3: Implement realistic molten filament behavior including adherence, stickiness, cooling, and layer bonding
+        Subsubstep 9.3.1: Model temperature-dependent viscosity and flow characteristics
+        Subsubstep 9.3.2: Simulate adhesion to the bed and existing layers
+        Subsubstep 9.3.3: Track cooling rates influenced by ambient conditions and fan airflow
+        Subsubstep 9.3.4: Represent stringing or drooping when filament lacks support
     Substep 9.4: Simulate supports, brims, and other adhesion aids with realistic physics
+        Subsubstep 9.4.1: Generate supports and brims based on print geometry
+        Subsubstep 9.4.2: Apply distinct adhesion and removal properties to support structures
     Substep 9.5: Model print errors such as filament not sticking and spaghetti failures
+        Subsubstep 9.5.1: Detect scenarios with insufficient bed or layer adhesion
+        Subsubstep 9.5.2: Produce tangled filament paths when extrusion continues without adhesion
     Substep 9.6: Simulate fan influences, including print cooling fan, on thermal gradients and print quality
+        Subsubstep 9.6.1: Configure multiple fans with variable speeds and airflow directions
+        Subsubstep 9.6.2: Modify cooling rates and material properties according to fan output
+        Subsubstep 9.6.3: Evaluate effects on overhangs, bridges, and general surface quality
     Substep 9.7: Provide realistic nozzle mechanics including clog states and diameter variations
+        Subsubstep 9.7.1: Allow configuration of nozzle clog severity from partial to full
+        Subsubstep 9.7.2: Modify extrusion flow and pressure based on clog conditions
+        Subsubstep 9.7.3: Permit dynamic nozzle diameter changes to simulate wear or variation
     Substep 9.8: Model filament issues such as breakage and varying diameter, all configurable
+        Subsubstep 9.8.1: Represent filament diameter variability and its effect on flow rate
+        Subsubstep 9.8.2: Simulate filament break or run-out conditions during printing
+        Subsubstep 9.8.3: Provide configuration hooks for material-specific behaviors
     Substep 9.9: Simulate heating dynamics with speed, temperature imbalances, and transient changes
+        Subsubstep 9.9.1: Model ramp-up and cool-down times for hotend and bed
+        Subsubstep 9.9.2: Account for spatial temperature gradients across bed and nozzle
+        Subsubstep 9.9.3: Include thermal inertia and feedback control loops
     Substep 9.10: Implement realistic leveling physics and Z0 setting effects
+        Subsubstep 9.10.1: Allow configurable leveling errors and compensation mechanisms
+        Subsubstep 9.10.2: Simulate Z0 calibration routines and offset adjustments
+        Subsubstep 9.10.3: Reflect resulting first-layer thickness variations
     Substep 9.11: Ensure all factors influencing print quality are represented in the simulation
+        Subsubstep 9.11.1: Integrate interactions between thermal, mechanical, and material effects
+        Subsubstep 9.11.2: Provide metrics for resulting print quality defects
 
 Step 10: Comprehensive Marlin Configuration Coverage
     Substep 10.1: Parse Marlin Configuration.h and Configuration_adv.h to enumerate all configuration items
