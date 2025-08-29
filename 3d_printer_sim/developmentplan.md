@@ -21,8 +21,8 @@ Step 4: Develop Motion and Physics Simulation
     Substep 4.1: Model kinematics for printer axes [complete]
         Subsubstep 4.1.1: Implement stepper motor behavior [complete]
         Subsubstep 4.1.2: Handle acceleration and jerk limits [complete]
-    Substep 4.2: Simulate extrusion and material deposition
-    Substep 4.3: Compute thermal behavior for hotends and bed
+    Substep 4.2: Simulate extrusion and material deposition [complete]
+    Substep 4.3: Compute thermal behavior for hotends and bed [complete]
 
 Step 5: Create 3D Visualization Module
     Substep 5.1: Render isometric view of printer and prints

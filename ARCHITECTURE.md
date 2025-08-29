@@ -542,3 +542,5 @@ Helper scripts `clone_or_update.sh` and `clone_or_update.ps1` automate cloning o
 - `3d_printer_sim/sensors.py` adds simple analog sensors; `TemperatureSensor` updates a microcontroller's analog pin as its temperature value changes.
 - `3d_printer_sim/microcontroller.py` now maintains a mapping of Marlin-style I/O pins to the components attached to them, allowing sensors and interfaces like USB or SD cards to be registered and looked up by pin.
 - `3d_printer_sim/stepper.py` introduces a deterministic `StepperMotor` model that advances position over time while enforcing acceleration and jerk limits, forming the foundation of printer-axis kinematics.
+- `3d_printer_sim/extruder.py` couples a stepper motor with filament geometry to track extruded length and deposited volume.
+- `3d_printer_sim/thermal.py` provides `Heater` implementations for hotends and heated beds, updating `TemperatureSensor` readings while respecting configurable heating and cooling rates.
