@@ -54,6 +54,7 @@ Core Components
   - `after_walk` executed for all.
   - `on_end` dicts merged; later trainers win on conflicts.
   - Built-in: `curriculum` trainer increases `max_steps` across walks. Config: `start_steps` (default 1), `step_increment` (default 1), optional `max_cap`.
+  - Advanced suite: `meta_optimizer`, `entropy_gate`, `gradient_memory`, `temporal_mix`, and `sync_shift` plugins. Each exposes learnable parameters via `expose_learnable_params` to influence learning rate, walk length, loss memory, temporal pacing, or start-neuron selection.
 
   - `Wanderer`: Autograd-based traversal across the graph. At each step, computes outputs from visited neurons using their (learnable) `weight`/`bias` (via temporary autograd parameters), accumulates loss, and performs SGD-style updates. Plugin registry (`register_wanderer_type`) allows custom step choice and loss definitions. Neuroplasticity registry (`register_neuroplasticity_type`) includes a default `BaseNeuroplasticityPlugin` that can grow/prune graph edges and adjust neuron parameters based on walk outcomes.
     - `dynamicdimensions` plugin periodically adds a new dimension to the `Brain`, observes neuron growth, and removes the dimension if it doesn't improve loss.
