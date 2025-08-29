@@ -1,5 +1,5 @@
 import unittest
-HAVE_TORCH = False
+import torch
 
 from marble.marblemain import Brain, Wanderer
 
@@ -12,7 +12,6 @@ class TestNewWandererPlugins(unittest.TestCase):
         b.connect((0.0, 0.0), (1.0, 0.0), direction="bi")
         return b
 
-    @unittest.skipUnless(HAVE_TORCH, "torch required")
     def test_plugins_register_learnables(self):
         plugins = {
             "boltzmann": "temperature",

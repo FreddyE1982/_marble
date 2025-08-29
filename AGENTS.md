@@ -408,3 +408,12 @@ Hugging Face Datasets Policy (additive)
 62. After every change within `3d_printer_sim`, evaluate whether new tasks for visualization or full live 3D rendering are required. If so, update `3d_printer_sim/developmentplan.md` with the necessary steps.
 63. Treat the `3d_printer_sim` directory as a fully distinct project. Repository rules that only concern other parts of the repo do not apply inside this folder unless they logically make sense for both projects.
 64. All steps in `3d_printer_sim/developmentplan.md` must be implemented fully and exactly as written—no mocking, stubs, skeletons, or minimal implementations are ever permitted.
+65) No Skipped Tests Rule
+
+Rule: Tests must never be skipped; install all missing dependencies and resolve any warnings or runtime errors during testing.
+Context: Repository-wide testing activities.
+Problem: Skipped tests or unresolved warnings/errors can hide defects and undermine reliability.
+Benefit: Ensures complete test coverage and stable, predictable code behavior.
+Non-Conflict Statement: This rule complements the existing testing policy without contradicting any prior rule.
+Verification: Running the entire test suite reports zero skipped tests and emits no warnings or runtime errors.
+Rollback Plan: Remove this rule block from AGENTS.md if the testing policy changes.
