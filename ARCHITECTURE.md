@@ -535,6 +535,10 @@ Convenience
 
 New Additive Plugins (this change)
 
+- Neuron plugins `quantum_tunnel`, `fractal_logistic`, `hyperbolic_blend`,
+  `oscillating_decay` and `echo_mix`: experimental activations exploring
+  tunneling effects, chaotic logistic iterations, hyperbolic mixes,
+  damped oscillations and short-term echo memory.
 - Synapse plugin `noisy`: Adds zero-mean Gaussian noise during `transmit`. Configure per-synapse via `syn._plugin_state['sigma']` (default `0.01`). Runs on CUDA when available; otherwise falls back to Python lists. Registered by name `"noisy"`.
 - Synapse plugin `dropout`: Zeroes transmissions with learnable probability `dropout_p`, allowing stochastic pruning of paths during training.
 - Synapse plugin `hebbian`: Online Hebbian rule updating `synapse.weight` by `hebb_rate` and decaying via `hebb_decay`, both learnable.
