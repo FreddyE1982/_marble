@@ -59,6 +59,17 @@ class PrinterSimulation:
     bed_tilt_y: float
     gravity: tuple[float, float, float]
 
+    # Nozzle state relative to the bed
+    nozzle_diameter: float
+    layer_height: float
+    nozzle_height: float
+    extrusion_width: float
+    adhesion: float
+    collision: bool
+    surface_damage: float
+    part_detached: bool
+    layer_height_error: float
+
     def __init__(self, bed_tilt_x: float = 0.0, bed_tilt_y: float = 0.0) -> None:
         self.bed_tilt_x = float(bed_tilt_x)
         self.bed_tilt_y = float(bed_tilt_y)
@@ -71,6 +82,16 @@ class PrinterSimulation:
         e_motor = StepperMotor(max_acceleration=1000, max_jerk=1000)
         self.extruder = Extruder(e_motor, steps_per_mm=100, filament_diameter=1.75)
         self._last_extruded = 0.0
+
+        self.nozzle_diameter = 0.4
+        self.layer_height = 0.2
+        self.nozzle_height = 0.0
+        self.extrusion_width = self.nozzle_diameter
+        self.adhesion = 1.0
+        self.collision = False
+        self.surface_damage = 0.0
+        self.part_detached = False
+        self.layer_height_error = 0.0
 
     # -------------------------------------------------------------- controls
     def set_axis_velocities(self, vx: float, vy: float, vz: float) -> None:
@@ -97,10 +118,42 @@ class PrinterSimulation:
         x, y, z = self._apply_tilt(
             self.x_motor.position, self.y_motor.position, self.z_motor.position
         )
+
+        # --- nozzle to bed distance and related effects ---
+        self.nozzle_height = z
+        self.layer_height_error = self.nozzle_height - self.layer_height
+        if self.nozzle_height < 0:
+            self.collision = True
+            self.surface_damage += -self.nozzle_height
+            if abs(self.x_motor.velocity) + abs(self.y_motor.velocity) > 1:
+                self.part_detached = True
+            self.adhesion = 0.0
+            width = self.nozzle_diameter
+        else:
+            self.collision = False
+            if self.nozzle_height < self.layer_height:
+                squish = (self.layer_height - self.nozzle_height) / self.layer_height
+                width = self.nozzle_diameter * (1 + squish)
+                self.adhesion = 1.0
+            else:
+                width = self.nozzle_diameter
+                if self.nozzle_height > self.layer_height * 1.5:
+                    self.adhesion = 0.0
+                else:
+                    self.adhesion = 1 - (
+                        (self.nozzle_height - self.layer_height)
+                        / (self.layer_height * 0.5)
+                    )
+        self.extrusion_width = width
+
         self.visualizer.update_extruder_position(x, y, z)
 
         if self.extruder.extruded_length > self._last_extruded:
-            self.visualizer.add_filament_segment(x, y, z)
+            if self.adhesion > 0.5 and not self.collision and not self.part_detached:
+                deposit_z = max(z, 0.0)
+                self.visualizer.add_filament_segment(
+                    x, y, deposit_z, radius=self.extrusion_width / 2
+                )
             self._last_extruded = self.extruder.extruded_length
 
     # ------------------------------------------------------------ internals

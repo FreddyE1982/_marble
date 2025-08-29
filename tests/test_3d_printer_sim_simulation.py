@@ -17,12 +17,14 @@ PrinterSimulation = module.PrinterSimulation
 class TestSimulation(unittest.TestCase):
     def test_visual_sync_and_filament(self):
         sim = PrinterSimulation()
-        sim.set_axis_velocities(1, 2, 3)
+        # Keep nozzle at first-layer height to allow adhesion
+        sim.z_motor.position = 0.2
+        sim.set_axis_velocities(1, 2, 0)
         sim.set_extrusion_velocity(100)  # 1 mm/s with steps_per_mm=100
         sim.update(1.0)
         # Visualizer should track axis positions
-        self.assertEqual(list(sim.visualizer.extruder.position), [1, 2, 3])
-        # A filament segment should have been added
+        self.assertEqual(list(sim.visualizer.extruder.position), [1, 2, 0.2])
+        # A filament segment should have been added due to sufficient adhesion
         self.assertEqual(len(sim.visualizer.filament), 1)
 
     def test_axis_physics(self) -> None:
