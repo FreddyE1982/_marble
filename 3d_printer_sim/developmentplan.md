@@ -11,7 +11,7 @@ Step 2: Define Simulation Configuration System
     Substep 2.2: Implement parser and validation for configuration [complete]
 
 Step 3: Implement Hardware Emulation Layer
-    Substep 3.1: Emulate microcontroller architecture compatible with Marlin
+    Substep 3.1: Emulate microcontroller architecture compatible with Marlin [complete]
     Substep 3.2: Provide virtual USB interface
     Substep 3.3: Provide virtual SD card storage
     Substep 3.4: Simulate temperature and other sensors
