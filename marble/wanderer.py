@@ -11,6 +11,7 @@ import contextlib
 import inspect
 
 from .graph import _DeviceHelper, Neuron, Synapse
+from .lobe import Lobe
 from .reporter import report
 
 # Core registries for Wanderer and Neuroplasticity plugins
@@ -245,9 +246,10 @@ class Wanderer(_DeviceHelper):
         start: Optional[Neuron] = None,
         lr: float = 1e-2,
         loss_fn: Optional[Callable[[List[Any]], Any]] = None,
+        lobe: Optional[Lobe] = None,
     ) -> Dict[str, Any]:
         torch = self._torch  # type: ignore[assignment]
-
+        self._active_lobe = lobe
         plug = None
         for p in getattr(self, "_wplugins", []) or []:
             if hasattr(p, "walk"):
@@ -317,7 +319,10 @@ class Wanderer(_DeviceHelper):
         prev_mean = None
 
         try:
-            for n in self.brain.neurons.values():  # type: ignore[union-attr]
+            neuron_iter = (
+                getattr(lobe, "neurons", None) if lobe is not None else self.brain.neurons.values()
+            )
+            for n in neuron_iter:  # type: ignore[union-attr]
                 lock_ctx = None
                 try:
                     if hasattr(self.brain, "lock_neuron"):
@@ -758,26 +763,32 @@ class Wanderer(_DeviceHelper):
             report("wanderer", "walk", res, "metrics")
         except Exception:
             pass
+        self._active_lobe = None
         return res
 
     def _random_start(self) -> Optional[Neuron]:
-        if not self.brain.neurons:
+        pool = list(getattr(getattr(self, "_active_lobe", None), "neurons", []) or [])
+        if not pool:
+            pool = list(self.brain.neurons.values())
+        if not pool:
             return None
         try:
-            idx = self.rng.randrange(0, len(self.brain.neurons))
-            return list(self.brain.neurons.values())[idx]  # type: ignore[call-arg]
+            idx = self.rng.randrange(0, len(pool))
+            return pool[idx]
         except Exception:
-            for n in self.brain.neurons.values():  # type: ignore[call-arg]
+            for n in pool:
                 return n
             return None
 
     def _gather_choices(self, n: Neuron) -> List[Tuple[Synapse, str]]:
         choices: List[Tuple[Synapse, str]] = []
+        allowed = getattr(getattr(self, "_active_lobe", None), "synapses", None)
         for s in n.outgoing:
             if s.direction in ("uni", "bi"):
-                choices.append((s, "forward"))
+                if allowed is None or s in allowed:
+                    choices.append((s, "forward"))
         for s in n.incoming:
-            if s.direction == "bi":
+            if s.direction == "bi" and (allowed is None or s in allowed):
                 choices.append((s, "backward"))
         return choices
 

@@ -29,6 +29,8 @@ Core Components
   - Sparse mode: only track explicit world coordinates within per-dimension bounds supporting open-ended maxima via `None`.
   Provides neuron placement, connections, coordinate mapping, bulk add, and JSON export/import for sparse brains. Includes basic cross-process file-based locks (Windows-friendly) for neurons and synapses. The brain can persist and restore its entire state via single-file snapshots (`save_snapshot`/`load_snapshot`) using the `.marble` extension. When constructed with `store_snapshots=True`, snapshots are automatically written every `snapshot_freq` wanderer walks into `snapshot_path`.
 
+- `Lobe`: defines a subset of a Brain by selecting specific neurons and synapses. A lobe can be trained independently and may either inherit the active Wanderer plugin stack or supply its own `plugin_types` and `neuro_config` for isolated experimentation.
+
 - Brain Training Plugins: Registry (`register_brain_train_type`) and the `Brain.train` method (bound at runtime) to orchestrate multiple wanderer walks with plugin hooks for start selection and per-walk adjustments. Stacking is supported via comma-separated or list `type_name`:
   - `on_init` executed for all trainers in order.
   - `choose_start` last non-None wins.
@@ -44,8 +46,8 @@ Core Components
   - Mixed precision: `MixedPrecisionPlugin` uses `torch.amp.GradScaler` with automatic CUDA detection, avoiding warnings when GPUs are absent.
 
 - Training Helpers: High-level flows to run Wanderer training:
-  - `run_wanderer_training`: single-wanderer multi-walk loop.
-  - `run_training_with_datapairs`: iterates over `DataPair`s; encodes left/right, injects left into a start neuron, and trains against right via a target provider. Accepts brain-train plugin stacks via `train_type` so scheduling logic can mirror `Brain.train` flows.
+  - `run_wanderer_training`: single-wanderer multi-walk loop. Accepts an optional `lobe` so only a subset of the Brain is traversed, with plugin stacks inherited or overridden per lobe.
+  - `run_training_with_datapairs`: iterates over `DataPair`s; encodes left/right, injects left into a start neuron, and trains against right via a target provider. Accepts brain-train plugin stacks via `train_type` and can restrict walks to a provided `lobe` for localized training.
     - Supports a **streaming** mode (enabled by default) that never materializes the full dataset and drops consumed samples from memory immediately.
     - Optionally groups datapairs into batches when used with the `batchtrainer` Wanderer plugin (`batch_size` parameter) so each Wanderer step processes the entire batch simultaneously.
     - Automatically enables brain snapshots during training, writing snapshots every walk to the configured `snapshot_path`.
@@ -445,7 +447,7 @@ Synapse Weights
 
 Training Helper
 
-- `run_wanderer_training(brain, num_walks=10, max_steps=10, lr=1e-2, start_selector=None, wanderer_type=None, seed=None, loss=None, target_provider=None, callback=None)` runs multiple walks and returns `{history, final_loss}`.
+- `run_wanderer_training(brain, num_walks=10, max_steps=10, lr=1e-2, start_selector=None, wanderer_type=None, seed=None, loss=None, target_provider=None, callback=None, neuro_config=None, lobe=None)` runs multiple walks and returns `{history, final_loss}`.
 - Loss handling: Wanderer supports a custom callable or a string like `"nn.MSELoss"`. For nn losses, a `target_provider` can supply targets per output; otherwise zeros are used by default.
 - Per-step metrics: Each walk records `step_metrics` with `loss` and `delta` (change from previous step’s loss).
 
@@ -487,7 +489,7 @@ DataPair
 Training With DataPairs
 
 - Purpose: High-level helper to consume sequences of `DataPair` items (or raw/encoded `(left, right)` pairs) and perform a training walk per pair.
-- Function: `run_training_with_datapairs(brain, datapairs, codec, steps_per_pair=5, lr=1e-2, wanderer_type=None, train_type=None, seed=None, loss='nn.MSELoss', left_to_start=None, callback=None)`.
+- Function: `run_training_with_datapairs(brain, datapairs, codec, steps_per_pair=5, lr=1e-2, wanderer_type=None, train_type=None, seed=None, loss='nn.MSELoss', left_to_start=None, callback=None, neuro_config=None, gradient_clip=None, selfattention=None, lobe=None, mixedprecision=True)`.
 - Behavior:
   - Normalizes each element to a `DataPair`. Both `left` and `right` are encoded with `UniversalTensorCodec` before use; only encoded data flows through the graph.
   - Selects/creates a start neuron, injects the encoded `left` once via `receive`, then runs a `Wanderer` walk.

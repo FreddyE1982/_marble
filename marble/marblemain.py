@@ -87,6 +87,8 @@ from .graph import (
     Synapse,
 )
 
+from .lobe import Lobe
+
 __all__ += [
     "_DeviceHelper",
     "_NEURON_TYPES",
@@ -95,6 +97,7 @@ __all__ += [
     "register_synapse_type",
     "Neuron",
     "Synapse",
+    "Lobe",
 ]
 
 
@@ -1130,6 +1133,9 @@ class Brain:
         # Global learnable parameters for brain-level plugins
         self._learnables: Dict[str, Dict[str, Any]] = {}
 
+        # Named lobes (subgraphs of neurons and synapses)
+        self.lobes: Dict[str, Lobe] = {}
+
     # --- Public API ---
     def is_inside(self, index: Sequence[int]) -> bool:
         if self.mode == "grid":
@@ -1232,6 +1238,30 @@ class Brain:
         except Exception:
             pass
         return syn
+
+    def define_lobe(
+        self,
+        name: str,
+        neurons: Sequence[Neuron],
+        synapses: Optional[Sequence[Synapse]] = None,
+        *,
+        inherit_plugins: bool = True,
+        plugin_types: Optional[Union[str, Sequence[str]]] = None,
+        neuro_config: Optional[Dict[str, Any]] = None,
+    ) -> Lobe:
+        """Register and return a named lobe built from given neurons/synapses."""
+        lobe = Lobe(
+            neurons,
+            synapses,
+            plugin_types=plugin_types,
+            neuro_config=neuro_config,
+            inherit_plugins=inherit_plugins,
+        )
+        self.lobes[name] = lobe
+        return lobe
+
+    def get_lobe(self, name: str) -> Optional[Lobe]:
+        return self.lobes.get(name)
 
     # Learning paradigms API
     def load_paradigm(self, name: str, config: Optional[Dict[str, Any]] = None) -> Any:
@@ -2665,6 +2695,7 @@ def run_training_with_datapairs(
       selfattention: Optional["SelfAttention"] = None,
       streaming: bool = True,
       batch_size: Optional[int] = None,
+      lobe: Optional[Lobe] = None,
       mixedprecision: bool = True,
   ) -> Dict[str, Any]:
     """Train over a sequence of DataPairs and return aggregate stats.
@@ -2761,13 +2792,18 @@ def run_training_with_datapairs(
     def _target_provider(_y: Any) -> Any:
         return _current_target["val"]
 
+    cfg = neuro_config
+    wtype = wanderer_type
+    if lobe is not None and not getattr(lobe, "inherit_plugins", True):
+        wtype = lobe.plugin_types
+        cfg = lobe.neuro_config
     w = Wanderer(
         brain,
-        type_name=wanderer_type,
+        type_name=wtype,
         seed=seed,
         loss=loss,
         target_provider=_target_provider,
-        neuro_config=neuro_config,
+        neuro_config=cfg,
         gradient_clip=gradient_clip,
         mixedprecision=mixedprecision,
     )
@@ -2856,7 +2892,8 @@ def run_training_with_datapairs(
         ms = int(overrides.get("max_steps", steps_per_pair))
         lr_i = float(overrides.get("lr", lr))
         _current_target["val"] = enc_right
-        stats = w.walk(max_steps=ms, start=start, lr=lr_i)
+        stats = w.walk(max_steps=ms, start=start, lr=lr_i, lobe=lobe)
+        stats["plugins"] = [p.__class__.__name__ for p in getattr(w, "_wplugins", []) or []]
         history.append(stats)
         for p in train_plugins:
             _after_walk(p, brain, w, idx, stats)
