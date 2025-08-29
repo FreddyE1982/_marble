@@ -1292,3 +1292,24 @@ Step 12: Filament and Thermal Configuration
     Substep 12.3: Allow configuration of target temperatures for all heaters and validate against filament temperature ranges
     Substep 12.4: Update thermal model to use exponential heating and cooling for more realistic physics
     Substep 12.5: Add tests covering filament configuration parsing and thermal range enforcement
+
+Step 13: Filament Material Physics
+    Substep 13.1: Catalog physical properties for each supported filament type
+        Subsubstep 13.1.1: Record density, specific heat capacity, and thermal conductivity
+        Subsubstep 13.1.2: Capture viscosity curves and glass transition or melting ranges
+    Substep 13.2: Integrate material properties into extrusion and thermal models
+        Subsubstep 13.2.1: Compute nozzle pressure and flow using viscosity data
+        Subsubstep 13.2.2: Apply heat transfer using material-specific conductivity and heat capacity
+        Subsubstep 13.2.3: Model cooling and solidification rates for each filament
+    Substep 13.3: Simulate material‑specific behaviors
+        Subsubstep 13.3.1: Represent warping and shrinkage during cooling
+        Subsubstep 13.3.2: Capture elasticity or brittleness differences between filaments
+        Subsubstep 13.3.3: Adjust adhesion strength and layer bonding based on material
+        Subsubstep 13.3.4: Model stringing and oozing tendencies using melt flow index
+    Substep 13.4: Preserve directory isolation while adding physics models
+        Subsubstep 13.4.1: Use only standard library and local modules within 3d_printer_sim
+        Subsubstep 13.4.2: Add tests verifying absence of external dependencies
+    Substep 13.5: Validate filament physics through targeted tests
+        Subsubstep 13.5.1: Ensure extrusion behavior changes with viscosity inputs
+        Subsubstep 13.5.2: Confirm thermal simulations reflect material heat properties
+        Subsubstep 13.5.3: Verify warping or elasticity effects manifest per filament type
