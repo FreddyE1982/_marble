@@ -27,8 +27,10 @@ class TestVirtualUSB(unittest.TestCase):
         usb = VirtualUSB()
         usb.connect()
         usb.send_from_host(b"hi")
+        print("host->device:", usb.read_from_host())
         self.assertEqual(usb.read_from_host(), b"hi")
         usb.send_from_device(b"ok")
+        print("device->host:", usb.read_from_device())
         self.assertEqual(usb.read_from_device(), b"ok")
 
     def test_attach_to_microcontroller(self):
@@ -37,8 +39,10 @@ class TestVirtualUSB(unittest.TestCase):
         mcu = Microcontroller()
         mcu.attach_usb(usb)
         mcu.usb_send(b"data")
+        print("mcu->host:", usb.read_from_device())
         self.assertEqual(usb.read_from_device(), b"data")
         usb.send_from_host(b"host")
+        print("host->mcu:", mcu.usb_receive())
         self.assertEqual(mcu.usb_receive(), b"host")
 
 

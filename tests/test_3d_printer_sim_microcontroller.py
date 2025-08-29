@@ -17,14 +17,20 @@ class TestMicrocontroller(unittest.TestCase):
     def test_digital_io(self) -> None:
         mc = Microcontroller()
         mc.set_digital(13, 1)
-        self.assertEqual(mc.read_digital(13), 1)
-        self.assertEqual(mc.read_digital(12), 0)
+        val13 = mc.read_digital(13)
+        val12 = mc.read_digital(12)
+        print("digital pins:", val13, val12)
+        self.assertEqual(val13, 1)
+        self.assertEqual(val12, 0)
 
     def test_analog_io(self) -> None:
         mc = Microcontroller()
         mc.set_analog(0, 3.3)
-        self.assertAlmostEqual(mc.read_analog(0), 3.3)
-        self.assertEqual(mc.read_analog(1), 0.0)
+        val0 = mc.read_analog(0)
+        val1 = mc.read_analog(1)
+        print("analog pins:", val0, val1)
+        self.assertAlmostEqual(val0, 3.3)
+        self.assertEqual(val1, 0.0)
 
 
 if __name__ == "__main__":

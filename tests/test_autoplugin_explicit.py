@@ -18,10 +18,12 @@ class TestAutoPluginExplicit(unittest.TestCase):
         )
         w.ensure_learnable_param("autoplugin_bias_EpsilonGreedyChooserPlugin", -10.0)
         auto = next(p for p in w._wplugins if isinstance(p, AutoPlugin))
-        self.assertTrue(auto.is_active(w, "EpsilonGreedyChooserPlugin", None))
-        self.assertTrue(
-            any(isinstance(p, EpsilonGreedyChooserPlugin) for p in w._wplugins)
-        )
+        active = auto.is_active(w, "EpsilonGreedyChooserPlugin", None)
+        print("plugin active:", active)
+        self.assertTrue(active)
+        present = any(isinstance(p, EpsilonGreedyChooserPlugin) for p in w._wplugins)
+        print("plugin present:", present)
+        self.assertTrue(present)
 
 
 if __name__ == "__main__":

@@ -17,6 +17,7 @@ class TestLatentAndSyntheticPlugins(unittest.TestCase):
         w.walk(max_steps=1, lr=1e-2)
         lv = w.get_learnable_param_tensor("latent_vector")
         report("tests", "latent_shape", {"shape": list(lv.shape)}, "plugins")
+        print("latent shape:", list(lv.shape))
         self.assertTrue(lv.numel() >= 1)
 
     def test_synthetic_training_plugin_runs(self) -> None:
@@ -25,6 +26,7 @@ class TestLatentAndSyntheticPlugins(unittest.TestCase):
         w.walk(max_steps=1, lr=1e-2)
         done = getattr(w, "_synthetic_trained", False)
         report("tests", "synthetic_done", {"done": bool(done)}, "plugins")
+        print("synthetic done:", done)
         self.assertTrue(done)
 
 

@@ -19,8 +19,10 @@ class TestAutoPluginExclude(unittest.TestCase):
         w = Wanderer(b, type_name="epsilongreedy,autoplugin_no_eps", neuroplasticity_type="base", seed=0)
 
         # The excluded plugin should not be present in the wanderer stack
+        plugins = [p.__class__.__name__ for p in w._wplugins]
+        print("plugins:", plugins)
         self.assertFalse(
-            any("EpsilonGreedyChooserPlugin" == p.__class__.__name__ for p in w._wplugins)
+            any("EpsilonGreedyChooserPlugin" == name for name in plugins)
         )
 
 

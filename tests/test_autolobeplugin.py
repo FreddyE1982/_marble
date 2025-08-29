@@ -19,8 +19,8 @@ class TestAutoLobePlugin(unittest.TestCase):
         self.assertIn("autolobe_low", b.lobes)
         self.assertIn("autolobe_high", b.lobes)
         self.assertIn("autolobe_threshold", w._learnables)
-
         report("tests/autolobe", "done", {"lobes": list(b.lobes.keys())}, "tests")
+        print("lobes created:", list(b.lobes.keys()))
 
 
 if __name__ == "__main__":

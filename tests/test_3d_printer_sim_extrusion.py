@@ -31,6 +31,7 @@ class TestExtruder(unittest.TestCase):
         extruder = Extruder(motor, steps_per_mm=100, filament_diameter=1.75)
         extruder.set_target_velocity(100)  # steps per second
         extruder.update(1.0)
+        print("length and volume:", extruder.extruded_length, extruder.deposited_volume)
         self.assertAlmostEqual(extruder.extruded_length, 1.0)
         expected_volume = math.pi * (1.75 / 2) ** 2 * 1.0
         self.assertAlmostEqual(extruder.deposited_volume, expected_volume)
@@ -53,7 +54,7 @@ class TestExtruder(unittest.TestCase):
         extruder.update(1.0)
         high_eff = extruder.last_flow_efficiency
         high_vol = extruder.deposited_volume
-
+        print("flow eff/vol:", low_eff, low_vol, high_eff, high_vol)
         self.assertGreater(high_eff, low_eff)
         self.assertGreater(high_vol, low_vol)
 

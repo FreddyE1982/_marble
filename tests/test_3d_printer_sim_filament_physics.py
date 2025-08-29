@@ -31,7 +31,7 @@ class TestFilamentPhysics(unittest.TestCase):
         sim_fan.update(0.1)
         sim_fan.update(1.0)
         temp_fan = sim_fan.segments[0].temperature
-
+        print("temps fan/no_fan:", temp_fan, temp_no_fan)
         self.assertLess(temp_fan, temp_no_fan)
 
     def test_shrinkage_after_cooling(self) -> None:
@@ -42,6 +42,7 @@ class TestFilamentPhysics(unittest.TestCase):
         initial_radius = sim.segments[0].radius
         for _ in range(20):
             sim.update(1.0)
+        print("radius initial/final:", initial_radius, sim.segments[0].radius)
         self.assertTrue(sim.segments[0].solid)
         self.assertLess(sim.segments[0].radius, initial_radius)
 
@@ -57,7 +58,7 @@ class TestFilamentPhysics(unittest.TestCase):
         sim_tilt.set_extrusion_velocity(100)
         sim_tilt.update(0.1)
         width_tilt = sim_tilt.extrusion_width
-
+        print("widths flat/tilt:", width_flat, width_tilt)
         self.assertGreater(width_tilt, width_flat)
 
 

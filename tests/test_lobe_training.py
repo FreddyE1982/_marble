@@ -28,6 +28,7 @@ class LobeTrainingTests(unittest.TestCase):
             loss=lambda outs: outs[0].sum(),
             lobe=lobe1,
         )
+        print("plugins after lobe1:", res1["history"][0]["plugins"])
         self.assertIn("EpsilonGreedyChooserPlugin", res1["history"][0]["plugins"])
         self.assertNotEqual(w0_before, float(n0.weight))
         self.assertEqual(w2_before, float(n2.weight))
@@ -49,6 +50,7 @@ class LobeTrainingTests(unittest.TestCase):
             loss=lambda outs: outs[0].sum(),
             lobe=lobe2,
         )
+        print("plugins after lobe2:", res2["history"][0]["plugins"])
         self.assertIn("WanderAlongSynapseWeightsPlugin", res2["history"][0]["plugins"])
         self.assertNotIn("EpsilonGreedyChooserPlugin", res2["history"][0]["plugins"])
 

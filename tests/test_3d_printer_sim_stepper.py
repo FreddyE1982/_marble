@@ -25,10 +25,12 @@ class TestStepperMotor(unittest.TestCase):
         motor = StepperMotor(max_acceleration=10, max_jerk=5)
         motor.set_target_velocity(100)
         motor.update(1.0)
+        print("step1 accel/vel/pos:", motor.acceleration, motor.velocity, motor.position)
         self.assertAlmostEqual(motor.acceleration, 5)
         self.assertAlmostEqual(motor.velocity, 5)
         self.assertAlmostEqual(motor.position, 5)
         motor.update(1.0)
+        print("step2 accel/vel/pos:", motor.acceleration, motor.velocity, motor.position)
         self.assertAlmostEqual(motor.acceleration, 10)
         self.assertAlmostEqual(motor.velocity, 15)
         self.assertAlmostEqual(motor.position, 20)
@@ -37,14 +39,17 @@ class TestStepperMotor(unittest.TestCase):
         motor = StepperMotor(max_acceleration=50, max_jerk=2)
         motor.set_target_velocity(100)
         motor.update(1.0)
+        print("jerk step1 accel:", motor.acceleration)
         self.assertAlmostEqual(motor.acceleration, 2)
         motor.update(1.0)
+        print("jerk step2 accel:", motor.acceleration)
         self.assertAlmostEqual(motor.acceleration, 4)
 
     def test_pin_mapping(self) -> None:
         mcu = Microcontroller()
         motor = StepperMotor(max_acceleration=10, max_jerk=5)
         mcu.map_pin(1, motor)
+        print("mapped component:", mcu.get_mapped_component(1))
         self.assertIs(mcu.get_mapped_component(1), motor)
 
 

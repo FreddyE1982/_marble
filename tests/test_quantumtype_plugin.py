@@ -49,8 +49,8 @@ class TestQuantumTypeNeuron(unittest.TestCase):
             val = float(out)
 
         REPORTER.item[("output", "quantum")] = val
-
         expected = (0.2689414213699951 * (2.0 * 3.0) + 0.7310585786300049 * (-1.0 * 3.0))
+        print("quantum output vs expected:", val, expected)
         self.assertAlmostEqual(val, expected, places=5)
 
 

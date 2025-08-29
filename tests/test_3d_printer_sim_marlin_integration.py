@@ -48,6 +48,7 @@ class TestMarlinIntegration(unittest.TestCase):
             firmware = MarlinFirmware(pathlib.Path(src))
             # Using a no-op command that succeeds
             firmware.compile(pathlib.Path(build), compile_cmd=["true"])
+            print("compile run completed")
 
     def test_send_gcode_forwarding(self) -> None:
         mc = Microcontroller()
@@ -56,6 +57,7 @@ class TestMarlinIntegration(unittest.TestCase):
         mc.attach_usb(usb)
         firmware = MarlinFirmware(pathlib.Path("."))
         firmware.send_gcode(mc, "G28")
+        print("usb host buffer:", usb.host_buffer)
         self.assertEqual(usb.host_buffer, [b"G28\n"])
 
     def test_sd_card_mount(self) -> None:
@@ -63,8 +65,10 @@ class TestMarlinIntegration(unittest.TestCase):
         card = VirtualSDCard()
         mc.attach_sd_card(card)
         mc.mount_sd_card()
+        print("card mounted:", card.mounted)
         self.assertTrue(card.mounted)
         mc.unmount_sd_card()
+        print("card mounted after unmount:", card.mounted)
         self.assertFalse(card.mounted)
 
     def test_feed_sensor_data(self) -> None:
@@ -77,6 +81,7 @@ class TestMarlinIntegration(unittest.TestCase):
         firmware = MarlinFirmware(pathlib.Path("."))
         firmware.feed_sensor_data(mc)
         sent = usb.device_buffer[0].decode("ascii")
+        print("sensor data sent:", sent)
         self.assertIn("D1:1", sent)
         self.assertIn("A2:3.3", sent)
 

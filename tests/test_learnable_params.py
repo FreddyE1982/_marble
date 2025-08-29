@@ -53,7 +53,11 @@ class LearnableParamTests(unittest.TestCase):
         w._update_learnables()
         brain._update_learnables()
         sa._update_learnables(w)
-
+        print(
+            "params before/after:",
+            a_before.tolist(),
+            w.get_learnable_param_tensor("a").tolist(),
+        )
         self.assertFalse(torch.equal(a_before, w.get_learnable_param_tensor("a")))
         self.assertFalse(torch.equal(wp_before, w.get_learnable_param_tensor("wp")))
         self.assertFalse(torch.equal(bp_before, brain.get_learnable_param_tensor("bp")))

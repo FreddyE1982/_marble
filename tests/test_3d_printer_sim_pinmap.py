@@ -45,23 +45,29 @@ class TestPinMapping(unittest.TestCase):
     def test_sensor_auto_maps(self) -> None:
         mc = Microcontroller()
         sensor = TemperatureSensor(mc=mc, pin=0, value=25.0)
-        self.assertIs(mc.get_mapped_component(0), sensor)
+        mapped = mc.get_mapped_component(0)
+        print("sensor mapped to pin 0:", mapped)
+        self.assertIs(mapped, sensor)
 
     def test_manual_and_interface_mapping(self) -> None:
         mc = Microcontroller()
         mc.map_pin(13, "led")
+        print("pin13 mapped:", mc.get_mapped_component(13))
         self.assertEqual(mc.get_mapped_component(13), "led")
         mc.unmap_pin(13)
+        print("pin13 after unmap:", mc.get_mapped_component(13))
         self.assertIsNone(mc.get_mapped_component(13))
 
         usb = VirtualUSB()
         usb.connect()
         mc.attach_usb(usb, pins=[1, 2])
+        print("USB mapped pins:", mc.get_mapped_component(1))
         self.assertIs(mc.get_mapped_component(1), usb)
 
         card = VirtualSDCard()
         card.mount()
         mc.attach_sd_card(card, pins=[10])
+        print("SD card mapped pin:", mc.get_mapped_component(10))
         self.assertIs(mc.get_mapped_component(10), card)
 
 

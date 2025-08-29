@@ -42,6 +42,7 @@ class TestBedTiltConfig(unittest.TestCase):
             tmp.write(text)
             tmp.flush()
             cfg = load_config(tmp.name)
+        print("bed tilt angles:", cfg.bed_tilt.x, cfg.bed_tilt.y)
         self.assertAlmostEqual(cfg.bed_tilt.x, 1)
         self.assertAlmostEqual(cfg.bed_tilt.y, 2)
 
@@ -55,6 +56,7 @@ class TestBedTiltConfig(unittest.TestCase):
             tmp.flush()
             cfg = load_config(tmp.name)
         expected = math.degrees(math.atan2(1, 100))
+        print("computed screw tilt:", cfg.bed_tilt.x, cfg.bed_tilt.y, "expected", expected)
         self.assertAlmostEqual(cfg.bed_tilt.x, expected)
         self.assertAlmostEqual(cfg.bed_tilt.y, 0.0)
 
@@ -67,10 +69,12 @@ class TestBedTiltSimulation(unittest.TestCase):
         sim.z_motor.position = 10
         sim.update(0.1)
         x, y, z = sim.visualizer.extruder.position
+        print("extruder pos:", x, y, z)
         self.assertAlmostEqual(x, 0.0, places=5)
         self.assertAlmostEqual(y, -10.0, places=5)
         self.assertAlmostEqual(z, 0.0, places=5)
         gx, gy, gz = sim.gravity
+        print("gravity:", gx, gy, gz)
         self.assertAlmostEqual(gx, 0.0, places=5)
         self.assertAlmostEqual(gy, -9.81, places=2)
         self.assertAlmostEqual(gz, 0.0, places=5)
