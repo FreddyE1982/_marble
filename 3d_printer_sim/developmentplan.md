@@ -1285,3 +1285,10 @@ Step 11: Code Isolation and Dependency Audit
     Substep 11.2: Remove or refactor any code importing modules outside this directory
         Subsubstep 11.2.1: Replace external YAML dependency with an internal minimal parser in config.py
     Substep 11.3: Add tests verifying absence of external dependencies
+
+Step 12: Filament and Thermal Configuration
+    Substep 12.1: Expand config.yaml to list common filament types (PLA, ABS, PETG, Nylon, TPU) with hotend and bed temperature ranges
+    Substep 12.2: Enable extruder entries to reference a filament type and parse these associations in config.py
+    Substep 12.3: Allow configuration of target temperatures for all heaters and validate against filament temperature ranges
+    Substep 12.4: Update thermal model to use exponential heating and cooling for more realistic physics
+    Substep 12.5: Add tests covering filament configuration parsing and thermal range enforcement

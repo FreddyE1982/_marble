@@ -19,6 +19,9 @@ class TestPrinterConfig(unittest.TestCase):
         cfg = load_config("3d_printer_sim/config.yaml")
         self.assertEqual(len(cfg.extruders), 2)
         self.assertEqual(cfg.build_volume.z, 250)
+        self.assertIn("PETG", cfg.filament_types)
+        self.assertEqual(cfg.extruders[1].filament, "PETG")
+        self.assertAlmostEqual(cfg.heater_targets["hotend"], 200)
 
 
 if __name__ == "__main__":

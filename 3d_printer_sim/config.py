@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, List
+from typing import Any, List, Dict, Tuple
 
 
 def _parse_value(token: str) -> Any:
@@ -107,12 +107,44 @@ class Extruder:
     id: int
     type: str
     hotend: str
+    filament: str
 
     @staticmethod
     def from_dict(d: dict) -> "Extruder":
-        if "id" not in d or "type" not in d or "hotend" not in d:
-            raise ValueError("extruder requires id, type and hotend")
-        return Extruder(int(d["id"]), str(d["type"]), str(d["hotend"]))
+        if "id" not in d or "type" not in d or "hotend" not in d or "filament" not in d:
+            raise ValueError("extruder requires id, type, hotend and filament")
+        return Extruder(
+            int(d["id"]),
+            str(d["type"]),
+            str(d["hotend"]),
+            str(d["filament"]),
+        )
+
+
+@dataclass
+class Filament:
+    name: str
+    hotend_temp_range: Tuple[float, float]
+    bed_temp_range: Tuple[float, float]
+
+    @staticmethod
+    def from_dict(name: str, d: dict) -> "Filament":
+        if "hotend_temp" not in d or "bed_temp" not in d:
+            raise ValueError("filament type requires hotend_temp and bed_temp ranges")
+        hotend = d["hotend_temp"]
+        bed = d["bed_temp"]
+        if not (
+            isinstance(hotend, list)
+            and len(hotend) == 2
+            and isinstance(bed, list)
+            and len(bed) == 2
+        ):
+            raise ValueError("temperature ranges must be [min, max] lists")
+        return Filament(
+            name,
+            (float(hotend[0]), float(hotend[1])),
+            (float(bed[0]), float(bed[1])),
+        )
 
 
 @dataclass
@@ -121,6 +153,8 @@ class PrinterConfig:
     bed_size: BedSize
     max_print_dimensions: Volume
     extruders: List[Extruder]
+    filament_types: Dict[str, Filament]
+    heater_targets: Dict[str, float]
 
 
 def load_config(path: str) -> PrinterConfig:
@@ -134,10 +168,21 @@ def load_config(path: str) -> PrinterConfig:
     if not isinstance(data["extruders"], list) or not data["extruders"]:
         raise ValueError("extruders must be a non-empty list")
     extruders = [Extruder.from_dict(e) for e in data["extruders"]]
+    if "filament_types" not in data or not isinstance(data["filament_types"], dict):
+        raise ValueError("filament_types section is required")
+    filaments = {
+        name: Filament.from_dict(name, info)
+        for name, info in data["filament_types"].items()
+    }
+    heaters = {
+        name: float(temp) for name, temp in (data.get("heaters") or {}).items()
+    }
     return PrinterConfig(
         build_volume=build_volume,
         bed_size=bed_size,
         max_print_dimensions=max_print,
         extruders=extruders,
+        filament_types=filaments,
+        heater_targets=heaters,
     )
 

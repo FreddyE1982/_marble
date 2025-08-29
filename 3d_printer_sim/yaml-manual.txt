@@ -1,0 +1,17 @@
+build_volume:
+  x, y, z: Printable volume in millimetres. Must be positive floats.
+bed_size:
+  x, y: Physical bed dimensions in millimetres. Must be positive floats.
+max_print_dimensions:
+  x, y, z: Maximum printable dimensions in millimetres. Must be positive floats.
+filament_types:
+  <name>:
+    hotend_temp: [min, max] recommended hotend temperature in °C.
+    bed_temp: [min, max] recommended bed temperature in °C.
+extruders:
+  - id: Numeric identifier.
+    type: Mechanical style, e.g. direct or bowden.
+    hotend: Hotend model name.
+    filament: Reference to one of the filament_types.
+heaters:
+  hotend / bed: Default target temperatures in °C applied at start-up.

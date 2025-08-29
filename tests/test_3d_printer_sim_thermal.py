@@ -2,6 +2,7 @@ import importlib.util
 import pathlib
 import sys
 import unittest
+import math
 
 
 def load_module(name: str, filename: str):
@@ -26,16 +27,17 @@ class TestThermal(unittest.TestCase):
     def test_heating_and_cooling(self) -> None:
         mc = Microcontroller()
         sensor = TemperatureSensor(mc, pin=1, value=25.0)
-        bed = HeatedBed(sensor, heating_rate=100, cooling_rate=50)
-        bed.set_target_temperature(200)
+        bed = HeatedBed(sensor, heating_rate=0.5, cooling_rate=0.25, temp_range=(0, 120))
+        bed.set_target_temperature(100)
         bed.update(1.0)
-        self.assertAlmostEqual(sensor.read_temperature(), 125)
-        self.assertAlmostEqual(mc.read_analog(1), 125)
-        bed.update(1.0)
-        self.assertAlmostEqual(sensor.read_temperature(), 200)
+        expected = 25.0 + (100.0 - 25.0) * (1 - math.exp(-0.5))
+        self.assertAlmostEqual(sensor.read_temperature(), expected)
+        with self.assertRaises(ValueError):
+            bed.set_target_temperature(200)
         bed.set_target_temperature(50)
         bed.update(1.0)
-        self.assertAlmostEqual(sensor.read_temperature(), 150)
+        expected_cool = expected + (50.0 - expected) * (1 - math.exp(-0.25))
+        self.assertAlmostEqual(sensor.read_temperature(), expected_cool)
 
 
 if __name__ == "__main__":
