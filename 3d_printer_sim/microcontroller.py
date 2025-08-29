@@ -87,6 +87,14 @@ class Microcontroller:
             raise RuntimeError("USB not attached")
         return self.usb.read_from_host()
 
+    def send_gcode(self, command: str) -> None:
+        """Forward a G-code command string to the attached USB host."""
+
+        if not self.usb:
+            raise RuntimeError("USB not attached")
+        line = (command.strip() + "\n").encode("ascii")
+        self.usb.send_from_host(line)
+
     # SD card helpers
     def attach_sd_card(self, card: VirtualSDCard, pins: Optional[list[int]] = None) -> None:
         """Attach a :class:`VirtualSDCard` and optionally map pins."""
@@ -97,6 +105,15 @@ class Microcontroller:
 
     def detach_sd_card(self) -> None:
         self.sd_card = None
+
+    def mount_sd_card(self) -> None:
+        if not self.sd_card:
+            raise RuntimeError("SD card not attached")
+        self.sd_card.mount()
+
+    def unmount_sd_card(self) -> None:
+        if self.sd_card:
+            self.sd_card.unmount()
 
     def sd_write_file(self, path: str, data: bytes) -> None:
         if not self.sd_card:
@@ -112,3 +129,24 @@ class Microcontroller:
         if not self.sd_card:
             raise RuntimeError("SD card not attached")
         return self.sd_card.list_files()
+
+    # Sensor reporting helpers
+    def get_sensor_state(self) -> dict[str, float]:
+        """Return a combined mapping of digital and analog pin values."""
+
+        state: dict[str, float] = {}
+        for pin, value in self.digital_pins.items():
+            state[f"D{pin}"] = float(value)
+        for pin, value in self.analog_pins.items():
+            state[f"A{pin}"] = float(value)
+        return state
+
+    def transmit_sensor_data(self) -> None:
+        """Send current sensor state to the firmware over USB."""
+
+        if not self.usb:
+            raise RuntimeError("USB not attached")
+        payload = ";".join(
+            f"{pin}:{val}" for pin, val in sorted(self.get_sensor_state().items())
+        ).encode("ascii")
+        self.usb.send_from_device(payload)

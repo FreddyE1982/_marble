@@ -33,15 +33,15 @@ Step 5: Create 3D Visualization Module using a dedicated 3D framework
     Substep 5.6: Show live filament deposition and growing print [complete]
     Substep 5.7: Provide camera controls to watch the printer operate in real time [complete]
 
-Step 6: Integrate with Marlin
-    Substep 6.1: Compile unmodified Marlin to run on emulation layer
-    Substep 6.2: Forward G-code commands through virtual USB
-    Substep 6.3: Expose virtual SD card to Marlin for file operations
-    Substep 6.4: Feed simulated sensor data to firmware
+Step 6: Integrate with Marlin [complete]
+    Substep 6.1: Compile unmodified Marlin to run on emulation layer [complete]
+    Substep 6.2: Forward G-code commands through virtual USB [complete]
+    Substep 6.3: Expose virtual SD card to Marlin for file operations [complete]
+    Substep 6.4: Feed simulated sensor data to firmware [complete]
 
 Step 7: Testing Framework
     Substep 7.1: Create unit tests for configuration parser
-    Substep 7.2: Create integration tests for firmware communication
+    Substep 7.2: Create integration tests for firmware communication [complete]
     Substep 7.3: Validate physics simulation against known printer behavior
 
 Step 8: Documentation and Examples
