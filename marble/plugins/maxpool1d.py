@@ -3,10 +3,10 @@ from __future__ import annotations
 from typing import List
 
 from ..reporter import report
-from .conv1d import Conv1DNeuronPlugin
+from .conv1d import Conv1DNeuronPlugin as _Conv1DNeuronPlugin
 
 
-class MaxPool1DNeuronPlugin(Conv1DNeuronPlugin):
+class MaxPool1DNeuronPlugin(_Conv1DNeuronPlugin):
     def on_init(self, neuron: "Neuron") -> None:
         inc = list(getattr(neuron, "incoming", []) or [])
         out = list(getattr(neuron, "outgoing", []) or [])
@@ -97,4 +97,7 @@ class MaxPool1DNeuronPlugin(Conv1DNeuronPlugin):
 
 
 __all__ = ["MaxPool1DNeuronPlugin"]
+
+# Remove base class alias to keep plugin discovery focused on MaxPool1DNeuronPlugin
+del _Conv1DNeuronPlugin
 

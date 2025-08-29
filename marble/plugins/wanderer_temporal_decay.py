@@ -38,3 +38,5 @@ class TemporalDecayPlugin:
 
 
 __all__ = ["TemporalDecayPlugin"]
+
+PLUGIN_NAME = "temporaldecay"

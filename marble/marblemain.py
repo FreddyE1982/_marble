@@ -786,7 +786,7 @@ def _auto_register_local_paradigms() -> None:
 
     for nm, obj in list(globals().items()):
         if inspect.isclass(obj) and nm.endswith("Paradigm"):
-            register_learning_paradigm_type(_camel_to_snake(nm[:-9]), obj)
+            register_learning_paradigm_type(_camel_to_snake(nm[:-8]), obj)
 
 
 _auto_register_local_paradigms()
@@ -2000,6 +2000,15 @@ __all__ += ["SelfAttention", "register_selfattention_type", "attach_selfattentio
 
 # Trigger automatic plugin discovery
 from . import plugins as _plugins  # noqa: F401
+from .plugins.wanderer_contrastive_infonce import ContrastiveInfoNCEPlugin
+from .plugins.wanderer_td_qlearning import TDQLearningPlugin
+from .plugins.wanderer_distillation import DistillationPlugin
+
+__all__ += [
+    "ContrastiveInfoNCEPlugin",
+    "TDQLearningPlugin",
+    "DistillationPlugin",
+]
 
 # -----------------------------
 # High-level Helpers

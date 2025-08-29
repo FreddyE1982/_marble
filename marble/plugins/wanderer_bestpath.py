@@ -87,3 +87,5 @@ class BestLossPathPlugin:
         return None, "forward"
 
 __all__ = ["BestLossPathPlugin"]
+
+PLUGIN_NAME = "bestlosspath"
