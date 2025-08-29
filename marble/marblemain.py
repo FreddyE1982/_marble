@@ -2175,6 +2175,13 @@ except Exception:
     pass
 
 try:
+    from .plugins.wanderer_autoplugin import AutoPlugin
+    register_wanderer_type("autoplugin", AutoPlugin())
+    __all__ += ["AutoPlugin"]
+except Exception:
+    pass
+
+try:
     from .plugins.wanderer_dynamicdimensions import DynamicDimensionsPlugin
     register_wanderer_type("dynamicdimensions", DynamicDimensionsPlugin())
     __all__ += ["DynamicDimensionsPlugin"]
