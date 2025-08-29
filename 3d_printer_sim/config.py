@@ -103,6 +103,37 @@ class BedSize:
 
 
 @dataclass
+class BedTilt:
+    x: float
+    y: float
+
+    @staticmethod
+    def from_dict(d: dict) -> "BedTilt":
+        if "x" not in d or "y" not in d:
+            raise ValueError("bed_tilt requires x and y angles")
+        return BedTilt(float(d["x"]), float(d["y"]))
+
+
+def compute_tilt_from_screws(screws: dict, bed_size: BedSize) -> BedTilt:
+    required = {"front_left", "front_right", "back_left", "back_right"}
+    if set(screws) != required:
+        raise ValueError("bed_screws require front_left, front_right, back_left and back_right")
+    fl = float(screws["front_left"])
+    fr = float(screws["front_right"])
+    bl = float(screws["back_left"])
+    br = float(screws["back_right"])
+    front_avg = (fl + fr) / 2
+    back_avg = (bl + br) / 2
+    left_avg = (fl + bl) / 2
+    right_avg = (fr + br) / 2
+    import math
+
+    tilt_x = math.degrees(math.atan2(front_avg - back_avg, bed_size.y))
+    tilt_y = math.degrees(math.atan2(left_avg - right_avg, bed_size.x))
+    return BedTilt(tilt_x, tilt_y)
+
+
+@dataclass
 class Extruder:
     id: int
     type: str
@@ -155,6 +186,7 @@ class PrinterConfig:
     extruders: List[Extruder]
     filament_types: Dict[str, Filament]
     heater_targets: Dict[str, float]
+    bed_tilt: BedTilt
 
 
 def load_config(path: str) -> PrinterConfig:
@@ -177,6 +209,10 @@ def load_config(path: str) -> PrinterConfig:
     heaters = {
         name: float(temp) for name, temp in (data.get("heaters") or {}).items()
     }
+    if "bed_screws" in data:
+        bed_tilt = compute_tilt_from_screws(data["bed_screws"], bed_size)
+    else:
+        bed_tilt = BedTilt.from_dict(data.get("bed_tilt", {"x": 0.0, "y": 0.0}))
     return PrinterConfig(
         build_volume=build_volume,
         bed_size=bed_size,
@@ -184,5 +220,6 @@ def load_config(path: str) -> PrinterConfig:
         extruders=extruders,
         filament_types=filaments,
         heater_targets=heaters,
+        bed_tilt=bed_tilt,
     )
 

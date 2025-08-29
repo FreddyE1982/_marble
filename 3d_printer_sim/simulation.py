@@ -13,6 +13,7 @@ from dataclasses import dataclass
 import importlib.util
 import pathlib
 import sys
+import math
 
 # Local imports using importlib to keep the module self-contained
 _stepper_spec = importlib.util.spec_from_file_location(
@@ -43,7 +44,7 @@ _viz_spec.loader.exec_module(_viz_module)
 PrinterVisualizer = _viz_module.PrinterVisualizer
 
 
-@dataclass
+@dataclass(init=False)
 class PrinterSimulation:
     """Combine motion, extrusion and visualization."""
 
@@ -54,8 +55,16 @@ class PrinterSimulation:
     extruder: Extruder
     _last_extruded: float = 0.0
 
-    def __init__(self) -> None:
+    bed_tilt_x: float
+    bed_tilt_y: float
+    gravity: tuple[float, float, float]
+
+    def __init__(self, bed_tilt_x: float = 0.0, bed_tilt_y: float = 0.0) -> None:
+        self.bed_tilt_x = float(bed_tilt_x)
+        self.bed_tilt_y = float(bed_tilt_y)
+        self.gravity = self._compute_gravity()
         self.visualizer = PrinterVisualizer()
+        self.visualizer.set_bed_tilt(self.bed_tilt_x, self.bed_tilt_y)
         self.x_motor = StepperMotor(max_acceleration=1000, max_jerk=1000)
         self.y_motor = StepperMotor(max_acceleration=1000, max_jerk=1000)
         self.z_motor = StepperMotor(max_acceleration=1000, max_jerk=1000)
@@ -85,17 +94,35 @@ class PrinterSimulation:
         self.z_motor.update(dt)
         self.extruder.update(dt)
 
-        # Synchronize extruder position with axis positions
-        self.visualizer.update_extruder_position(
+        x, y, z = self._apply_tilt(
             self.x_motor.position, self.y_motor.position, self.z_motor.position
         )
+        self.visualizer.update_extruder_position(x, y, z)
 
-        # Add a filament segment when new material is extruded
         if self.extruder.extruded_length > self._last_extruded:
-            self.visualizer.add_filament_segment(
-                self.x_motor.position, self.y_motor.position, self.z_motor.position
-            )
+            self.visualizer.add_filament_segment(x, y, z)
             self._last_extruded = self.extruder.extruded_length
+
+    # ------------------------------------------------------------ internals
+    def _apply_tilt(self, x: float, y: float, z: float) -> tuple[float, float, float]:
+        rx = math.radians(self.bed_tilt_x)
+        ry = math.radians(self.bed_tilt_y)
+        # rotate around X
+        y1 = y * math.cos(rx) - z * math.sin(rx)
+        z1 = y * math.sin(rx) + z * math.cos(rx)
+        # rotate around Y
+        x2 = x * math.cos(ry) + z1 * math.sin(ry)
+        z2 = -x * math.sin(ry) + z1 * math.cos(ry)
+        return x2, y1, z2
+
+    def _compute_gravity(self) -> tuple[float, float, float]:
+        rx = math.radians(self.bed_tilt_x)
+        ry = math.radians(self.bed_tilt_y)
+        gx, gy, gz = 0.0, 0.0, -9.81
+        # undo rotation around Y then X to express gravity in bed coordinates
+        gx, gz = gx * math.cos(-ry) - gz * math.sin(-ry), gx * math.sin(-ry) + gz * math.cos(-ry)
+        gy, gz = gy * math.cos(-rx) - gz * math.sin(-rx), gy * math.sin(-rx) + gz * math.cos(-rx)
+        return (gx, gy, gz)
 
 
 __all__ = ["PrinterSimulation"]
