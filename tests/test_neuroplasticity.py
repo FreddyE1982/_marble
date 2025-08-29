@@ -8,6 +8,7 @@ class TestNeuroplasticity(unittest.TestCase):
         self.Codec = UniversalTensorCodec
         self.make_dp = make_datapair
         self.reporter = REPORTER
+        self.reporter.clear_group("neuroplasticity")
 
     def test_base_plugin_grows_graph_when_no_outgoing(self):
         b = self.Brain(2, size=(6, 6))
@@ -30,11 +31,13 @@ class TestNeuroplasticity(unittest.TestCase):
         after_neuron_count = len(b.neurons)
         print("neuroplasticity grow count:", before_neuron_count, "->", after_neuron_count)
 
-        # Either added a neuron or already had outgoing edges from last
-        self.assertGreaterEqual(after_neuron_count, before_neuron_count)
+        # Neuron count must increase
+        self.assertGreater(after_neuron_count, before_neuron_count)
         # Reporter emitted events
         init_log = self.reporter.item("init", "neuroplasticity", "events")
+        grow_log = self.reporter.item("grow", "neuroplasticity", "events")
         self.assertIsNotNone(init_log)
+        self.assertIsNotNone(grow_log)
 
 
 if __name__ == "__main__":
