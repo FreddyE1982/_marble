@@ -9,6 +9,7 @@ from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Tupl
 from .codec import UniversalTensorCodec, TensorLike
 from .datapair import DataPair
 from .reporter import report
+from .lobe import Lobe
 
 
 def run_wanderer_training(
@@ -23,16 +24,24 @@ def run_wanderer_training(
     loss: Optional[Union[str, Callable[..., Any], Any]] = None,
     target_provider: Optional[Callable[[Any], Any]] = None,
     callback: Optional[Callable[[int, Dict[str, Any]], None]] = None,
+    neuro_config: Optional[Dict[str, Any]] = None,
+    lobe: Optional[Lobe] = None,
     mixedprecision: bool = True,
 ) -> Dict[str, Any]:
     from .marblemain import Wanderer  # lazy to avoid import cycle
 
+    cfg = neuro_config
+    wtype = wanderer_type
+    if lobe is not None and not getattr(lobe, "inherit_plugins", True):
+        wtype = lobe.plugin_types
+        cfg = lobe.neuro_config
     w = Wanderer(
         brain,
-        type_name=wanderer_type,
+        type_name=wtype,
         seed=seed,
         loss=loss,
         target_provider=target_provider,
+        neuro_config=cfg,
         mixedprecision=mixedprecision,
     )
     history: List[Dict[str, Any]] = []
@@ -42,7 +51,8 @@ def run_wanderer_training(
     for i in range(num_walks):
         brain._progress_walk = i  # type: ignore[attr-defined]
         start = start_selector(brain) if start_selector is not None else None
-        stats = w.walk(max_steps=max_steps, start=start, lr=lr)
+        stats = w.walk(max_steps=max_steps, start=start, lr=lr, lobe=lobe)
+        stats["plugins"] = [p.__class__.__name__ for p in getattr(w, "_wplugins", []) or []]
         history.append(stats)
         try:
             report("training", f"walk_{i}", {"loss": stats.get("loss", 0.0), "steps": stats.get("steps", 0)}, "wanderer")
@@ -92,6 +102,7 @@ def run_training_with_datapairs(
     callback: Optional[Callable[[int, Dict[str, Any], DataPair], None]] = None,
     gradient_clip: Optional[Dict[str, Any]] = None,
     selfattention: Optional["SelfAttention"] = None,
+    lobe: Optional[Lobe] = None,
     mixedprecision: bool = True,
 ) -> Dict[str, Any]:
     from .marblemain import Wanderer  # lazy import
@@ -156,12 +167,17 @@ def run_training_with_datapairs(
                 pass
 
     # Build one shared Wanderer across pairs for consistency
+    cfg = neuro_config
+    wtype = wanderer_type
+    if lobe is not None and not getattr(lobe, "inherit_plugins", True):
+        wtype = lobe.plugin_types
+        cfg = lobe.neuro_config
     w = Wanderer(
         brain,
-        type_name=wanderer_type,
+        type_name=wtype,
         seed=seed,
         loss=loss,
-        neuro_config=neuro_config,
+        neuro_config=cfg,
         gradient_clip=gradient_clip,
         mixedprecision=mixedprecision,
     )
@@ -177,7 +193,8 @@ def run_training_with_datapairs(
         enc_l, enc_r = dp.encode(codec)
         # Create/choose start neuron
         start = left_to_start(dp.left, brain) if left_to_start is not None else create_start_neuron(brain, enc_l)
-        stats = w.walk(max_steps=steps_per_pair, start=start, lr=lr)
+        stats = w.walk(max_steps=steps_per_pair, start=start, lr=lr, lobe=lobe)
+        stats["plugins"] = [p.__class__.__name__ for p in getattr(w, "_wplugins", []) or []]
         history.append(stats)
         count += 1
         try:
