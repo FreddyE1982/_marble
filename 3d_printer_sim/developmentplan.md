@@ -4,11 +4,11 @@ Step 1: Analyse Marlin Firmware [complete]
     Substep 1.3: Document Marlin's configuration options relevant to simulation [complete]
 
 Step 2: Define Simulation Configuration System
-    Substep 2.1: Create config file structure
-        Subsubstep 2.1.1: Parameters for build volume and bed size
-        Subsubstep 2.1.2: Parameters for maximum print dimensions
-        Subsubstep 2.1.3: Parameters for extruder/hotend count and types
-    Substep 2.2: Implement parser and validation for configuration
+    Substep 2.1: Create config file structure [complete]
+        Subsubstep 2.1.1: Parameters for build volume and bed size [complete]
+        Subsubstep 2.1.2: Parameters for maximum print dimensions [complete]
+        Subsubstep 2.1.3: Parameters for extruder/hotend count and types [complete]
+    Substep 2.2: Implement parser and validation for configuration [complete]
 
 Step 3: Implement Hardware Emulation Layer
     Substep 3.1: Emulate microcontroller architecture compatible with Marlin

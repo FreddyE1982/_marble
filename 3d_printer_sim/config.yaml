@@ -1,0 +1,18 @@
+build_volume:
+  x: 220
+  y: 220
+  z: 250
+bed_size:
+  x: 220
+  y: 220
+max_print_dimensions:
+  x: 200
+  y: 200
+  z: 200
+extruders:
+  - id: 0
+    type: direct
+    hotend: e3d_v6
+  - id: 1
+    type: bowden
+    hotend: volcano
