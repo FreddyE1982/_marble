@@ -550,6 +550,11 @@ New Additive Plugins (this change)
 - Wanderer plugin `autoplugin`: Wraps all other Wanderer and neuroplasticity plugins with learnable gates. Uses `expose_learnable_params` to learn global step/neuron weights and per-plugin bias terms so it can activate or deactivate plugins on specific steps or neurons, prioritizing accuracy, then training speed, model size, and complexity.
 - Wanderer plugin `autolobe`: Splits the brain into two lobes before each walk based on a learnable position threshold (`autolobe_threshold`) along the first coordinate, enabling training to adaptively target different regions of the graph.
 - Wanderer plugin `wayfinder`: Navigation-style planner that builds a lightweight map of visited neurons and applies an A*‑like heuristic search to pick synapses. Learnable weights control edge cost, visit penalties, exploration rate, pruning behaviour and replan interval, keeping traversal efficient while avoiding local optima.
+- Wanderer plugin `boltzmann`: Performs Boltzmann/softmax exploration over synapse weights with a learnable temperature controlling exploration sharpness.
+- Wanderer plugin `pheromone`: Tracks per-synapse pheromone levels with learnable evaporation and deposit rates, steering walks toward frequently reinforced paths.
+- Wanderer plugin `momentum`: Maintains an exponential moving average of previous weights via a learnable coefficient and biases selection by this momentum term.
+- Wanderer plugin `temporaldecay`: Starts with high exploration that exponentially decays over steps according to a learnable rate, transitioning from exploration to exploitation.
+- Wanderer plugin `entropyaware`: Computes the entropy of available synapse weights and forces random exploration while entropy remains below a learnable threshold.
 
 All additions remain fully additive; existing behavior and APIs are preserved. Each plugin/routine logs concise events to `REPORTER` under logical groups (`plugins`, `selfattention`, `training/brain`).
 
