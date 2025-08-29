@@ -538,3 +538,5 @@ Helper scripts `clone_or_update.sh` and `clone_or_update.ps1` automate cloning o
 - A YAML-based configuration system (`3d_printer_sim/config.yaml`) defines build volume, bed size, maximum print dimensions, and extruder/hotend setups. A typed parser (`3d_printer_sim/config.py`) validates these parameters for use in later simulator stages.
 - `3d_printer_sim/microcontroller.py` introduces a minimal microcontroller emulator. It tracks digital and analog pin states via dictionaries and provides read/write helpers, forming the foundation for later hardware emulation compatible with Marlin firmware.
 - `3d_printer_sim/usb.py` implements a `VirtualUSB` class with host and device buffers. A microcontroller can attach to this interface to exchange bytes with a host, enabling a virtual USB link for future Marlin communication.
+- `3d_printer_sim/sdcard.py` offers an in-memory `VirtualSDCard` with mount/unmount support and basic file operations that the microcontroller can expose to firmware.
+- `3d_printer_sim/sensors.py` adds simple analog sensors; `TemperatureSensor` updates a microcontroller's analog pin as its temperature value changes.

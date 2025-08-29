@@ -15,6 +15,15 @@ sys.modules[_spec.name] = _module
 _spec.loader.exec_module(_module)
 VirtualUSB = _module.VirtualUSB
 
+_sd_spec = importlib.util.spec_from_file_location(
+    "sdcard", pathlib.Path(__file__).with_name("sdcard.py")
+)
+_sd_module = importlib.util.module_from_spec(_sd_spec)
+assert _sd_spec.loader is not None
+sys.modules[_sd_spec.name] = _sd_module
+_sd_spec.loader.exec_module(_sd_module)
+VirtualSDCard = _sd_module.VirtualSDCard
+
 
 @dataclass
 class Microcontroller:
@@ -28,6 +37,7 @@ class Microcontroller:
     digital_pins: Dict[int, int] = field(default_factory=dict)
     analog_pins: Dict[int, float] = field(default_factory=dict)
     usb: Optional[VirtualUSB] = None
+    sd_card: Optional[VirtualSDCard] = None
 
     def set_digital(self, pin: int, value: int) -> None:
         if value not in (0, 1):
@@ -60,3 +70,26 @@ class Microcontroller:
         if not self.usb:
             raise RuntimeError("USB not attached")
         return self.usb.read_from_host()
+
+    # SD card helpers
+    def attach_sd_card(self, card: VirtualSDCard) -> None:
+        """Attach a :class:`VirtualSDCard`."""
+        self.sd_card = card
+
+    def detach_sd_card(self) -> None:
+        self.sd_card = None
+
+    def sd_write_file(self, path: str, data: bytes) -> None:
+        if not self.sd_card:
+            raise RuntimeError("SD card not attached")
+        self.sd_card.write_file(path, data)
+
+    def sd_read_file(self, path: str) -> bytes | None:
+        if not self.sd_card:
+            raise RuntimeError("SD card not attached")
+        return self.sd_card.read_file(path)
+
+    def sd_list_files(self) -> list[str]:
+        if not self.sd_card:
+            raise RuntimeError("SD card not attached")
+        return self.sd_card.list_files()
