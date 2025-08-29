@@ -629,7 +629,12 @@ class Wanderer(_DeviceHelper):
                     p.grad.data = p.grad.data / scale
             scaler.update()
         else:
+            if not getattr(loss, "requires_grad", False):
+                torch = self._torch
+                if torch is not None:
+                    loss = torch.tensor(float(loss), device=self._device, requires_grad=True)
             loss.backward()
+            loss = loss.detach()
 
         try:
             gc = getattr(self, "_grad_clip", {}) or {}
@@ -796,24 +801,10 @@ class Wanderer(_DeviceHelper):
 
     def _compute_loss(self, outputs: List[Any], *, override_loss: Optional[Callable[[List[Any]], Any]] = None):
         torch = self._torch  # type: ignore[assignment]
-        losses = []
-        for plugin in getattr(self, "_wplugins", []) or []:
-            try:
-                if hasattr(plugin, "loss"):
-                    losses.append(plugin.loss(self, outputs))  # type: ignore[attr-defined]
-            except Exception:
-                pass
-        if losses:
-            try:
-                acc = None
-                for t in losses:
-                    acc = t if acc is None else (acc + t)
-                return acc if acc is not None else torch.tensor(0.0, device=self._device)
-            except Exception:
-                pass
+        base_loss = None
         if override_loss is not None:
-            return override_loss(outputs)
-        if isinstance(self._loss_spec, str) and self._loss_spec.startswith("nn."):
+            base_loss = override_loss(outputs)
+        elif isinstance(self._loss_spec, str) and self._loss_spec.startswith("nn."):
             if self._loss_module is None:
                 try:
                     nn = getattr(torch, "nn")
@@ -833,7 +824,7 @@ class Wanderer(_DeviceHelper):
                                       dtype=torch.float32, device=self._device)
                 if self._target_provider is not None:
                     tgt = self._target_provider(yt)
-                    if not (hasattr(tgt, "to")):
+                    if not hasattr(tgt, "to"):
                         cls_losses_long = {"CrossEntropyLoss", "NLLLoss", "MultiMarginLoss", "MultiLabelMarginLoss"}
                         if loss_name in cls_losses_long:
                             tgt = torch.tensor(tgt, dtype=torch.long, device=self._device)
@@ -872,9 +863,9 @@ class Wanderer(_DeviceHelper):
                 except Exception:
                     pass
                 terms.append(loss_mod(yt, tgt))
-            return sum(terms) if terms else torch.tensor(0.0, device=self._device)
+            base_loss = sum(terms) if terms else torch.tensor(0.0, device=self._device)
         elif callable(self._loss_spec):
-            return self._loss_spec(outputs)
+            base_loss = self._loss_spec(outputs)
         else:
             terms = []
             for y in outputs:
@@ -885,7 +876,16 @@ class Wanderer(_DeviceHelper):
                     t = torch.tensor([float(v) for v in (y if isinstance(y, (list, tuple)) else [y])],
                                      dtype=torch.float32, device=self._device)
                     terms.append((t.view(-1) ** 2).mean())
-            return sum(terms) if terms else torch.tensor(0.0, device=self._device)
+            base_loss = sum(terms) if terms else torch.tensor(0.0, device=self._device)
+
+        total = base_loss
+        for plugin in getattr(self, "_wplugins", []) or []:
+            try:
+                if hasattr(plugin, "loss"):
+                    total = total + plugin.loss(self, outputs)  # type: ignore[attr-defined]
+            except Exception:
+                pass
+        return total
 
     # --- Learnable parameter management (global to Wanderer) ---
     def ensure_learnable_param(self, name: str, init_value: Any, *, requires_grad: bool = True,

@@ -36,3 +36,5 @@ class EntropyAwarePlugin:
 
 
 __all__ = ["EntropyAwarePlugin"]
+
+PLUGIN_NAME = "entropyaware"

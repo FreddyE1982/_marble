@@ -18,6 +18,8 @@ from ..wanderer import expose_learnable_params
 from ..training import run_training_with_datapairs
 from ..codec import UniversalTensorCodec
 
+PLUGIN_NAME = "synthetictrainer"
+
 
 class SyntheticTrainingPlugin:
     """Generate synthetic samples and train on them during ``on_init``."""
