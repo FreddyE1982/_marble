@@ -2223,6 +2223,13 @@ except Exception:
     pass
 
 try:
+    from .plugins.wanderer_autolobe import AutoLobePlugin
+    register_wanderer_type("autolobe", AutoLobePlugin())
+    __all__ += ["AutoLobePlugin"]
+except Exception:
+    pass
+
+try:
     from .plugins.wanderer_dynamicdimensions import DynamicDimensionsPlugin
     register_wanderer_type("dynamicdimensions", DynamicDimensionsPlugin())
     __all__ += ["DynamicDimensionsPlugin"]
