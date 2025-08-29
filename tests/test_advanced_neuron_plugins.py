@@ -51,6 +51,7 @@ class AdvancedNeuronPluginTests(unittest.TestCase):
             n._plugin_state["wanderer"] = w
             plug = _NEURON_TYPES[name]
             plug.forward(n, input_value=[0.0])
+            print("plugin", name, "learnables", list(w._learnables.keys()))
             for p in params:
                 self.assertIn(p, w._learnables)
 

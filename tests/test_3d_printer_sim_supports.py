@@ -18,8 +18,10 @@ class TestSupportsAndBrims(unittest.TestCase):
     def test_brim_generation(self) -> None:
         sim = PrinterSimulation()
         sim.generate_brim(radius=2, segments=4)
+        print("brim segments:", len(sim.segments))
         self.assertEqual(len(sim.segments), 4)
         for seg in sim.segments:
+            print("brim seg adhesion/removal:", seg.adhesion_strength, seg.removal_force)
             self.assertEqual(seg.kind, "brim")
             self.assertGreater(seg.adhesion_strength, 1.0)
             self.assertLess(seg.removal_force, 1.0)
@@ -31,9 +33,12 @@ class TestSupportsAndBrims(unittest.TestCase):
         sim.set_extrusion_velocity(100)
         sim.update(1.0)
         kinds = [seg.kind for seg in sim.segments]
+        print("segment kinds:", kinds)
         self.assertIn("support", kinds)
         self.assertIn("normal", kinds)
         support_segments = [seg for seg in sim.segments if seg.kind == "support"]
+        for seg in support_segments:
+            print("support adhesion/removal:", seg.adhesion_strength, seg.removal_force)
         self.assertTrue(all(abs(seg.adhesion_strength - 0.5) < 1e-6 for seg in support_segments))
         self.assertTrue(all(abs(seg.removal_force - 0.5) < 1e-6 for seg in support_segments))
 

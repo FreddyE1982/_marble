@@ -19,6 +19,7 @@ parse_simple_yaml = module.parse_simple_yaml
 class TestPrinterConfig(unittest.TestCase):
     def test_load_config(self) -> None:
         cfg = load_config("3d_printer_sim/config.yaml")
+        print("extruders:", len(cfg.extruders), "volume_z:", cfg.build_volume.z)
         self.assertEqual(len(cfg.extruders), 2)
         self.assertEqual(cfg.build_volume.z, 250)
         self.assertIn("PETG", cfg.filament_types)
@@ -39,6 +40,7 @@ class TestPrinterConfig(unittest.TestCase):
             tmp.flush()
             with self.assertRaises(ValueError):
                 load_config(tmp.name)
+        print("missing section raised ValueError as expected")
 
     def test_empty_extruders_list(self) -> None:
         text = (
@@ -53,6 +55,7 @@ class TestPrinterConfig(unittest.TestCase):
             tmp.flush()
             with self.assertRaises(ValueError):
                 load_config(tmp.name)
+        print("empty extruders raised ValueError")
 
     def test_negative_axis_value(self) -> None:
         text = (
@@ -67,15 +70,18 @@ class TestPrinterConfig(unittest.TestCase):
             tmp.flush()
             with self.assertRaises(ValueError):
                 load_config(tmp.name)
+        print("negative axis raised ValueError")
 
     def test_parse_simple_yaml_basic(self) -> None:
         data = parse_simple_yaml("a: 1\nb:\n  - 2\n  - 3\n")
+        print("parsed:", data)
         self.assertEqual(data, {"a": 1, "b": [2, 3]})
 
     def test_example_configs_parse(self) -> None:
         examples = pathlib.Path("3d_printer_sim/examples")
         for path in examples.glob("*.yaml"):
             cfg = load_config(str(path))
+            print(path.name, "extruders", len(cfg.extruders))
             self.assertGreater(len(cfg.extruders), 0)
 
 

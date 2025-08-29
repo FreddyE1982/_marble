@@ -22,6 +22,7 @@ class TestAutoNeuron(unittest.TestCase):
         w.ensure_learnable_param("autoneuron_bias_fail", 10.0)
         w.ensure_learnable_param("autoneuron_bias_base", -10.0)
         res = w.walk(max_steps=1, start=n, lr=0.0)
+        print("walk result:", res)
         self.assertIn("loss", res)
         self.assertEqual(n.type_name, "autoneuron")
 
@@ -48,6 +49,7 @@ class TestAutoNeuron(unittest.TestCase):
         w.ensure_learnable_param("autoneuron_bias_fail2", 10.0)
         w.ensure_learnable_param("autoneuron_bias_base", -10.0)
         res = w.walk(max_steps=1, start=n, lr=0.0)
+        print("walk result:", res, "fail calls:", fail_impl.calls)
         self.assertIn("loss", res)
         self.assertEqual(fail_impl.calls, 0)
 

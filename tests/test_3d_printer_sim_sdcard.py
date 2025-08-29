@@ -27,9 +27,11 @@ class TestSDCard(unittest.TestCase):
         card = VirtualSDCard()
         card.mount()
         card.write_file("test.gcode", b"G1 X10")
+        print("files after write:", card.list_files())
         self.assertEqual(card.read_file("test.gcode"), b"G1 X10")
         self.assertEqual(card.list_files(), ["test.gcode"])
         card.delete_file("test.gcode")
+        print("files after delete:", card.list_files())
         self.assertEqual(card.list_files(), [])
 
     def test_microcontroller_sd_interface(self) -> None:
@@ -38,6 +40,7 @@ class TestSDCard(unittest.TestCase):
         card.mount()
         mc.attach_sd_card(card)
         mc.sd_write_file("a.txt", b"abc")
+        print("mc sd files:", mc.sd_list_files())
         self.assertEqual(mc.sd_read_file("a.txt"), b"abc")
         self.assertEqual(mc.sd_list_files(), ["a.txt"])
 

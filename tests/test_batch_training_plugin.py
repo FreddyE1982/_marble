@@ -27,6 +27,7 @@ class TestBatchTrainingPlugin(unittest.TestCase):
             pred = float(out[0])
         else:
             pred = float(out)
+        print("prediction:", pred)
         self.assertAlmostEqual(pred, 4.0, delta=3.0)
 
 

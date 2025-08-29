@@ -29,6 +29,7 @@ class TestWandererBestPathAndWeights(unittest.TestCase):
         sb.weight = 2.0
         w = self.Wanderer(b, type_name="wanderalongsynapseweights")
         res = w.walk(max_steps=2, start=s, lr=1e-2)
+        print("visited after weights:", getattr(w, "_visited", []))
         # After one step, visited should include the target of sb (bnode)
         self.assertIn(bnode, getattr(w, "_visited", []))
 
@@ -41,9 +42,11 @@ class TestWandererBestPathAndWeights(unittest.TestCase):
         # Stack plugins: bestlosspath runs first, weights chooser last
         w = self.Wanderer(b, type_name="bestlosspath,wanderalongsynapseweights")
         res = w.walk(max_steps=2, start=s, lr=1e-2)
+        print("weights after best path:", sa.weight, sb.weight)
         # best path is via 'a' (lower loss), so sa weight should be boosted above sb
         self.assertGreater(sa.weight, sb.weight)
         # And the visited should include 'a'
+        print("visited after best path:", getattr(w, "_visited", []))
         self.assertIn(a, getattr(w, "_visited", []))
 
 

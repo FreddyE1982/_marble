@@ -20,6 +20,7 @@ class TestNozzleDistance(unittest.TestCase):
         sim.z_motor.position = 0.2
         sim.set_extrusion_velocity(100)
         sim.update(0.1)
+        print("height/width/adhesion:", sim.nozzle_height, sim.extrusion_width, sim.adhesion)
         self.assertAlmostEqual(sim.nozzle_height, 0.2)
         self.assertAlmostEqual(sim.extrusion_width, sim.nozzle_diameter)
         self.assertAlmostEqual(sim.adhesion, 1.0)
@@ -31,6 +32,7 @@ class TestNozzleDistance(unittest.TestCase):
         sim.set_axis_velocities(2, 0, 0)
         sim.set_extrusion_velocity(100)
         sim.update(0.1)
+        print("collision/damage/detached:", sim.collision, sim.surface_damage, sim.part_detached)
         self.assertTrue(sim.collision)
         self.assertGreater(sim.surface_damage, 0)
         self.assertTrue(sim.part_detached)
@@ -42,6 +44,7 @@ class TestNozzleDistance(unittest.TestCase):
         sim.z_motor.position = 0.5
         sim.set_extrusion_velocity(100)
         sim.update(0.1)
+        print("high clearance adhesion:", sim.adhesion)
         self.assertEqual(sim.adhesion, 0.0)
         self.assertEqual(len(sim.visualizer.filament), 1)
         self.assertFalse(sim.segments[0].supported)

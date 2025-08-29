@@ -25,6 +25,7 @@ class TestNewWandererPlugins(unittest.TestCase):
                 b = self.make_brain()
                 w = Wanderer(b, type_name=name, seed=1)
                 w.walk(max_steps=1, lr=0.0)
+                print("plugin", name, "params", list(w._learnables.keys()))
                 self.assertIn(param, w._learnables)
 
 

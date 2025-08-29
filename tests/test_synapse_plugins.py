@@ -30,6 +30,7 @@ class TestAdvancedSynapsePlugins(unittest.TestCase):
         for name, params in plugin_params.items():
             brain = self._build_brain_with_plugin(name)
             w = self._walk_and_collect(brain)
+            print("synapse plugin", name, "learnables", list(w._learnables.keys()))
             for p in params:
                 self.assertIn(p, w._learnables, f"{name} missing {p}")
 

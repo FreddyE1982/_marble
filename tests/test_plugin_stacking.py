@@ -26,6 +26,7 @@ class TestPluginStacking(unittest.TestCase):
         b.connect(idx1, idx2, direction="uni")
         w = Wanderer(b)
         res = b.train(w, num_walks=1, max_steps=5, lr=0.01, type_name="p1,p2", start_selector=lambda brain: start)
+        print("history and current_lr:", res["history"], getattr(w, "current_lr", 0.0))
         self.assertEqual(len(res["history"]), 1)
         self.assertEqual(res["history"][0]["steps"], 1)  # p1 applied
         # current_lr recorded on wanderer after walk (from p2)

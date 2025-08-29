@@ -21,6 +21,7 @@ class TestEarlyStopPlugin(unittest.TestCase):
         w.walk = types.MethodType(constant_walk, w)
         res = brain.train(w, num_walks=10, max_steps=1, lr=0.1, type_name="earlystop")
         report("tests", "earlystop", {"history_len": len(res["history"])}, "plugin")
+        print("history len and early stopped:", len(res["history"]), res.get("early_stopped"))
         self.assertLessEqual(len(res["history"]), 4)
         self.assertTrue(res.get("early_stopped"))
 

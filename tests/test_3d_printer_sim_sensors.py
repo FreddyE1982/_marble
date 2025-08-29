@@ -26,8 +26,10 @@ class TestSensors(unittest.TestCase):
     def test_temperature_sensor_updates_pin(self) -> None:
         mc = Microcontroller()
         sensor = TemperatureSensor(mc=mc, pin=0, value=25.0)
+        print("initial temp:", mc.read_analog(0))
         self.assertAlmostEqual(mc.read_analog(0), 25.0)
         sensor.set_temperature(200.0)
+        print("updated temp:", mc.read_analog(0))
         self.assertAlmostEqual(mc.read_analog(0), 200.0)
 
 

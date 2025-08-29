@@ -31,12 +31,14 @@ class TestThermal(unittest.TestCase):
         bed.set_target_temperature(100)
         bed.update(1.0)
         expected = 25.0 + (100.0 - 25.0) * (1 - math.exp(-0.5))
+        print("heated temp:", sensor.read_temperature())
         self.assertAlmostEqual(sensor.read_temperature(), expected)
         with self.assertRaises(ValueError):
             bed.set_target_temperature(200)
         bed.set_target_temperature(50)
         bed.update(1.0)
         expected_cool = expected + (50.0 - expected) * (1 - math.exp(-0.25))
+        print("cooled temp:", sensor.read_temperature())
         self.assertAlmostEqual(sensor.read_temperature(), expected_cool)
 
 

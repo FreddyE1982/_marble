@@ -17,18 +17,21 @@ class TestVisualization(unittest.TestCase):
     def test_scene_components(self):
         viz = PrinterVisualizer()
         # bed and extruder should be present in the scene
+        print("scene children count:", len(viz.scene.children))
         self.assertIn(viz.bed, viz.scene.children)
         self.assertIn(viz.extruder, viz.scene.children)
 
     def test_position_update(self):
         viz = PrinterVisualizer()
         viz.update_extruder_position(10, 20, 30)
+        print("extruder position:", list(viz.extruder.position))
         self.assertEqual(list(viz.extruder.position), [10, 20, 30])
 
     def test_filament_segment_added(self):
         viz = PrinterVisualizer()
         before = len(viz.scene.children)
         viz.add_filament_segment(0, 0, 0)
+        print("children before/after:", before, len(viz.scene.children))
         self.assertGreater(len(viz.scene.children), before)
 
 

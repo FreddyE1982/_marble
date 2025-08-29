@@ -23,6 +23,7 @@ class TestSimulation(unittest.TestCase):
         sim.set_extrusion_velocity(100)  # 1 mm/s with steps_per_mm=100
         sim.update(1.0)
         # Visualizer should track axis positions
+        print("extruder pos and filament:", list(sim.visualizer.extruder.position), len(sim.visualizer.filament))
         self.assertEqual(list(sim.visualizer.extruder.position), [1, 2, 0.2])
         # A filament segment should have been added due to sufficient adhesion
         self.assertEqual(len(sim.visualizer.filament), 1)
@@ -38,12 +39,14 @@ class TestSimulation(unittest.TestCase):
 
         # First second: jerk limits acceleration
         sim.update(1.0)
+        print("step1 accel/vel/pos:", sim.x_motor.acceleration, sim.x_motor.velocity, sim.x_motor.position)
         self.assertAlmostEqual(sim.x_motor.acceleration, 5)
         self.assertAlmostEqual(sim.x_motor.velocity, 5)
         self.assertAlmostEqual(sim.x_motor.position, 5)
 
         # Second second: acceleration reaches limit
         sim.update(1.0)
+        print("step2 accel/vel/pos:", sim.x_motor.acceleration, sim.x_motor.velocity, sim.x_motor.position)
         self.assertAlmostEqual(sim.x_motor.acceleration, 10)
         self.assertAlmostEqual(sim.x_motor.velocity, 15)
         self.assertAlmostEqual(sim.x_motor.position, 20)
