@@ -396,6 +396,10 @@ class Wanderer(_DeviceHelper):
             current.weight = w_param  # type: ignore[assignment]
             current.bias = b_param  # type: ignore[assignment]
             try:
+                current._plugin_state["wanderer"] = self
+            except Exception:
+                pass
+            try:
                 with (torch.autocast(device_type=amp_device, dtype=amp_dtype) if amp_enabled else contextlib.nullcontext()):
                     out = current.forward(carried_value)
             finally:
@@ -580,6 +584,10 @@ class Wanderer(_DeviceHelper):
 
         try:
             if moved_last and current is not None:
+                try:
+                    current._plugin_state["wanderer"] = self
+                except Exception:
+                    pass
                 out_tail = current.forward(None)
                 outputs.append(out_tail)
         except Exception:

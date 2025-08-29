@@ -22,6 +22,8 @@ Core Components
 - `Neuron` and `Synapse`: Fundamental graph units. Neurons store a tensor-like value and scalar `weight`/`bias` with an `age` counter. Synapses connect neurons with `direction` (uni/bi) and `weight`, and apply scaling on transmitted values. Plugin registries (`register_neuron_type`, `register_synapse_type`) allow custom behaviors (`on_init`, `forward`, `receive`, `transmit`).
   Synapses may also connect directly to other synapses; transmission recursively traverses until a neuron endpoint is reached. When a neuron is removed, its adjacent synapses are bridged to maintain path continuity.
 
+  - `AutoNeuron` plugin: Learns via `expose_learnable_params` to delegate each forward pass to the most promising neuron type. On failures (e.g., wiring errors), it reverts to the previous successful type and retries, preserving gradient flow.
+
 - `Brain`: n-dimensional space that can be either:
   - Grid mode: discrete occupancy over an integer index lattice with world-coordinate bounds. Occupancy can be defined by formulas or Mandelbrot functions (`mandelbrot`, `mandelbrot_nd`). Omitting the `size` parameter enables a fully dynamic grid that expands as neurons are added; capacity becomes unbounded.
   - Sparse mode: only track explicit world coordinates within per-dimension bounds supporting open-ended maxima via `None`.

@@ -369,6 +369,17 @@ except Exception:
     pass
 
 # -----------------------------
+# Neuron Plugin: AutoNeuron
+# -----------------------------
+
+try:
+    from .plugins.autoneuron import AutoNeuronPlugin
+    register_neuron_type("autoneuron", AutoNeuronPlugin())
+    __all__ += ["AutoNeuronPlugin"]
+except Exception:
+    pass
+
+# -----------------------------
 # Learning Paradigm Plugins (Brain-level orchestration) (Brain-level orchestration)
 # -----------------------------
 
