@@ -417,3 +417,15 @@ Benefit: Ensures complete test coverage and stable, predictable code behavior.
 Non-Conflict Statement: This rule complements the existing testing policy without contradicting any prior rule.
 Verification: Running the entire test suite reports zero skipped tests and emits no warnings or runtime errors.
 Rollback Plan: Remove this rule block from AGENTS.md if the testing policy changes.
+
+66) Test Output Analysis Rule
+
+Rule: Execute every test module individually and inspect its printed output for logical consistency.
+Context: Running and validating repository tests.
+Details:
+- All tests must provide concise, informative console output or reporter logs so their behavior can be analyzed.
+- If a test lacks sufficient output, extend the test (not the production code) to emit key metrics or counts.
+- When a test reveals logically inconsistent results, fix the underlying implementation code rather than altering the test expectations.
+Benefit: Ensures tests are both observable and trustworthy, enabling quick detection of subtle logic errors.
+Verification: Each test run prints or reports meaningful data, and successful tests show internally consistent values.
+Rollback Plan: Remove this rule block from AGENTS.md if testing policies change.
