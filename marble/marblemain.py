@@ -651,6 +651,18 @@ try:
 except Exception:
     pass
 
+# Ensure additional Wanderer plugins register their learnable parameters.
+try:  # pragma: no cover - plugin availability may vary
+    from .plugins import (
+        wanderer_boltzmann as _wanderer_boltzmann,
+        wanderer_pheromone as _wanderer_pheromone,
+        wanderer_momentum as _wanderer_momentum,
+        wanderer_temporal_decay as _wanderer_temporal_decay,
+        wanderer_entropy as _wanderer_entropy,
+    )  # noqa: F401
+except Exception:
+    pass
+
 # -----------------------------
 # SelfAttention Routine: Adaptive Grad Clip
 # -----------------------------

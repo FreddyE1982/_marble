@@ -896,9 +896,25 @@ class Wanderer(_DeviceHelper):
             return self._learnables[name]["tensor"]
         torch = self._torch  # type: ignore[assignment]
         try:
-            t = torch.tensor(init_value, dtype=torch.float32, device=self._device, requires_grad=requires_grad)
+            if hasattr(init_value, "detach"):
+                t = init_value.detach().clone().to(
+                    dtype=torch.float32, device=self._device
+                )
+                t.requires_grad_(requires_grad)
+            else:
+                t = torch.tensor(
+                    init_value,
+                    dtype=torch.float32,
+                    device=self._device,
+                    requires_grad=requires_grad,
+                )
         except Exception:
-            t = torch.tensor([float(init_value)], dtype=torch.float32, device=self._device, requires_grad=requires_grad)
+            t = torch.tensor(
+                [float(init_value)],
+                dtype=torch.float32,
+                device=self._device,
+                requires_grad=requires_grad,
+            )
         self._learnables[name] = {"tensor": t, "opt": False, "lr": lr}
         self._plugin_state.setdefault("learnable_params", {})[name] = t
         try:
