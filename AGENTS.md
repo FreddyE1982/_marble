@@ -405,3 +405,6 @@ Hugging Face Datasets Policy (additive)
 59. Motion modules in `3d_printer_sim` must update deterministically via time-step `update(dt)` functions and enforce configured acceleration and jerk limits validated by unit tests.
 60. For work inside `3d_printer_sim`, do not install or rely on `torch`; other dependencies may be installed as required.
 61. Visualization for the printer simulator must leverage a dedicated 3D framework (e.g., Unity, Three.js, or similar) so that every simulated component—including moving axes, print bed, and deposited filament—has a live visual counterpart.
+62. After every change within `3d_printer_sim`, evaluate whether new tasks for visualization or full live 3D rendering are required. If so, update `3d_printer_sim/developmentplan.md` with the necessary steps.
+63. Treat the `3d_printer_sim` directory as a fully distinct project. Repository rules that only concern other parts of the repo do not apply inside this folder unless they logically make sense for both projects.
+64. All steps in `3d_printer_sim/developmentplan.md` must be implemented fully and exactly as written—no mocking, stubs, skeletons, or minimal implementations are ever permitted.
