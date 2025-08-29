@@ -9,10 +9,51 @@ max_print_dimensions:
   x: 200
   y: 200
   z: 200
+filament_types:
+  PLA:
+    hotend_temp:
+      - 190
+      - 220
+    bed_temp:
+      - 0
+      - 60
+  ABS:
+    hotend_temp:
+      - 220
+      - 260
+    bed_temp:
+      - 80
+      - 110
+  PETG:
+    hotend_temp:
+      - 230
+      - 260
+    bed_temp:
+      - 70
+      - 90
+  Nylon:
+    hotend_temp:
+      - 240
+      - 270
+    bed_temp:
+      - 90
+      - 110
+  TPU:
+    hotend_temp:
+      - 210
+      - 230
+    bed_temp:
+      - 0
+      - 60
 extruders:
   - id: 0
     type: direct
     hotend: e3d_v6
+    filament: PLA
   - id: 1
     type: bowden
     hotend: volcano
+    filament: PETG
+heaters:
+  hotend: 200
+  bed: 60

@@ -544,3 +544,4 @@ Helper scripts `clone_or_update.sh` and `clone_or_update.ps1` automate cloning o
 - `3d_printer_sim/stepper.py` introduces a deterministic `StepperMotor` model that advances position over time while enforcing acceleration and jerk limits, forming the foundation of printer-axis kinematics.
 - `3d_printer_sim/extruder.py` couples a stepper motor with filament geometry to track extruded length and deposited volume.
 - `3d_printer_sim/thermal.py` provides `Heater` implementations for hotends and heated beds, updating `TemperatureSensor` readings while respecting configurable heating and cooling rates.
+- `3d_printer_sim/config.py` now defines common filament types (PLA, ABS, PETG, Nylon, TPU) with hotend and bed temperature ranges and default heater targets. Heaters validate targets against these ranges and use an exponential approach for heating and cooling to better mimic real-world physics.

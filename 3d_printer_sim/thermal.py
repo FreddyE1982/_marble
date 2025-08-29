@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import importlib.util
+import math
 import pathlib
 import sys
 
@@ -22,11 +23,16 @@ class Heater:
     """Base class for temperature controlled components."""
 
     sensor: TemperatureSensor
-    heating_rate: float  # degrees per second while heating
-    cooling_rate: float  # degrees per second while cooling
+    heating_rate: float  # coefficient per second while heating
+    cooling_rate: float  # coefficient per second while cooling
+    temp_range: tuple[float, float] | None = None
     target_temperature: float = 25.0
 
     def set_target_temperature(self, temp: float) -> None:
+        if self.temp_range:
+            lo, hi = self.temp_range
+            if temp < lo or temp > hi:
+                raise ValueError(f"Target temperature {temp} outside allowed range {self.temp_range}")
         self.target_temperature = float(temp)
 
     def update(self, dt: float) -> None:
@@ -35,14 +41,13 @@ class Heater:
         if dt <= 0:
             raise ValueError("dt must be positive")
         current = self.sensor.read_temperature()
-        if current < self.target_temperature:
-            current += self.heating_rate * dt
-            if current > self.target_temperature:
-                current = self.target_temperature
-        elif current > self.target_temperature:
-            current -= self.cooling_rate * dt
-            if current < self.target_temperature:
-                current = self.target_temperature
+        target = self.target_temperature
+        if current < target:
+            k = self.heating_rate
+        else:
+            k = self.cooling_rate
+        # Exponential approach to target temperature
+        current += (target - current) * (1 - math.exp(-k * dt))
         self.sensor.set_temperature(current)
 
 
