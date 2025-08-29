@@ -13,8 +13,8 @@ Step 2: Define Simulation Configuration System
 Step 3: Implement Hardware Emulation Layer
     Substep 3.1: Emulate microcontroller architecture compatible with Marlin [complete]
     Substep 3.2: Provide virtual USB interface [complete]
-    Substep 3.3: Provide virtual SD card storage
-    Substep 3.4: Simulate temperature and other sensors
+    Substep 3.3: Provide virtual SD card storage [complete]
+    Substep 3.4: Simulate temperature and other sensors [complete]
     Substep 3.5: Map Marlin I/O pins to simulated components
 
 Step 4: Develop Motion and Physics Simulation
