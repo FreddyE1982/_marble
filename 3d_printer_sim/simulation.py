@@ -56,6 +56,9 @@ class FilamentSegment:
     supported: bool
     solid: bool
     initial_radius: float
+    kind: str
+    adhesion_strength: float
+    removal_force: float
 
 
 @dataclass(init=False)
@@ -124,6 +127,7 @@ class PrinterSimulation:
         self.ambient_temperature = float(ambient_temperature)
         self.fan_speed = float(fan_speed)
         self.segments = []
+        self.auto_support = False
         self.base_cooling_rate = 0.1
         self.solidification_temp = 80.0
 
@@ -139,6 +143,65 @@ class PrinterSimulation:
         """Set filament feed velocity for the extruder."""
 
         self.extruder.set_target_velocity(velocity)
+
+    def enable_auto_support(self, enabled: bool = True) -> None:
+        """Enable or disable automatic support generation."""
+
+        self.auto_support = bool(enabled)
+
+    def _generate_support(self, x: float, y: float, height: float) -> None:
+        """Create vertical support segments from the bed up to ``height``."""
+
+        h = 0.0
+        radius = self.nozzle_diameter / 4
+        while h < height:
+            mesh = self.visualizer.add_support_segment(
+                x, y, h, radius=radius, height=self.layer_height
+            )
+            self.segments.append(
+                FilamentSegment(
+                    mesh,
+                    x,
+                    y,
+                    h,
+                    radius,
+                    self.extruder.melt_temperature,
+                    True,
+                    True,
+                    radius,
+                    "support",
+                    0.5,
+                    0.5,
+                )
+            )
+            h += self.layer_height
+
+    def generate_brim(self, radius: float = 5.0, segments: int = 20) -> None:
+        """Create a simple circular brim on the build plate."""
+
+        for i in range(segments):
+            angle = 2 * math.pi * i / segments
+            x = radius * math.cos(angle)
+            y = radius * math.sin(angle)
+            mesh = self.visualizer.add_brim_segment(
+                x, y, 0.0, radius=self.nozzle_diameter / 2, height=self.layer_height
+            )
+            self.segments.append(
+                FilamentSegment(
+                    mesh,
+                    x,
+                    y,
+                    0.0,
+                    self.nozzle_diameter / 2,
+                    self.extruder.melt_temperature,
+                    True,
+                    True,
+                    self.nozzle_diameter / 2,
+                    "brim",
+                    1.5,
+                    0.3,
+                )
+            )
 
     # ---------------------------------------------------------------- update
     def update(self, dt: float) -> None:
@@ -212,10 +275,13 @@ class PrinterSimulation:
 
         if self.extruder.extruded_length > self._last_extruded:
             deposit_z = max(z, 0.0)
+            supported = self.adhesion > 0.5 and not self.collision and not self.part_detached
+            if self.auto_support and not supported and deposit_z > 0.0:
+                self._generate_support(x, y, deposit_z)
+                supported = True
             mesh = self.visualizer.add_filament_segment(
                 x, y, deposit_z, radius=self.extrusion_width / 2
             )
-            supported = self.adhesion > 0.5 and not self.collision and not self.part_detached
             self.segments.append(
                 FilamentSegment(
                     mesh,
@@ -227,6 +293,9 @@ class PrinterSimulation:
                     supported,
                     False,
                     self.extrusion_width / 2,
+                    "normal",
+                    self.adhesion,
+                    self.adhesion * 5,
                 )
             )
             self._last_extruded = self.extruder.extruded_length

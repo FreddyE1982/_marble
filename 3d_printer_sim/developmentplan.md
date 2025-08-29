@@ -76,10 +76,12 @@ Step 9: Advanced Physics and Failure Modes
         Subsubstep 9.3.5: Depict filament squish profiles based on nozzle height and bed tilt [complete]
         Subsubstep 9.3.6: Simulate crystallization and shrinkage as filament transitions from molten to solid [complete]
     Substep 9.4: Simulate supports, brims, and other adhesion aids with realistic physics
-        Subsubstep 9.4.1: Generate supports and brims based on print geometry
-        Subsubstep 9.4.2: Apply distinct adhesion and removal properties to support structures
-        Subsubstep 9.4.3: Estimate realistic removal forces and resulting surface scars
-        Subsubstep 9.4.4: Adjust support failure probability based on overhang angle and cooling efficiency
+        Group 9.4.A: Support and brim generation with adhesion tuning [complete]
+            Subsubstep 9.4.1: Generate supports and brims based on print geometry [complete]
+            Subsubstep 9.4.2: Apply distinct adhesion and removal properties to support structures [complete]
+        Group 9.4.B: Removal forces and failure probabilities
+            Subsubstep 9.4.3: Estimate realistic removal forces and resulting surface scars
+            Subsubstep 9.4.4: Adjust support failure probability based on overhang angle and cooling efficiency
     Substep 9.5: Model print errors such as filament not sticking and spaghetti failures
         Subsubstep 9.5.1: Detect scenarios with insufficient bed or layer adhesion
         Subsubstep 9.5.2: Produce tangled filament paths ("spaghetti") when extrusion continues without adhesion
