@@ -23,6 +23,7 @@ Core Components
   Synapses may also connect directly to other synapses; transmission recursively traverses until a neuron endpoint is reached. When a neuron is removed, its adjacent synapses are bridged to maintain path continuity.
 
   - `AutoNeuron` plugin: Learns via `expose_learnable_params` to delegate each forward pass to the most promising neuron type. On failures (e.g., wiring errors), it reverts to the previous successful type and retries, preserving gradient flow. Can be instantiated with `disabled_types=[...]` to skip specific neuron plugins entirely.
+  - `QuantumType` plugin: Maintains multiple weight/bias/position states in superposition and blends them via a learnable wave function (logits exposed through `expose_learnable_params`). The forward pass computes the probability-weighted expectation, yielding stable gradients and deterministic behaviour while still expressing quantum-like branching.
 
 - `Brain`: n-dimensional space that can be either:
   - Grid mode: discrete occupancy over an integer index lattice with world-coordinate bounds. Occupancy can be defined by formulas or Mandelbrot functions (`mandelbrot`, `mandelbrot_nd`). Omitting the `size` parameter enables a fully dynamic grid that expands as neurons are added; capacity becomes unbounded.
