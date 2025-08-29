@@ -2,6 +2,10 @@ from __future__ import annotations
 
 from typing import Any, List
 
+# Explicit registration name so auto-discovery exposes this plugin under
+# "alternatepathscreator", matching the name used in tests and code.
+PLUGIN_NAME = "alternatepathscreator"
+
 from ..reporter import report
 
 
