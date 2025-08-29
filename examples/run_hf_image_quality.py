@@ -25,6 +25,7 @@ from marble.marblemain import (
 )
 from marble.plugins.selfattention_adaptive_grad_clip import AdaptiveGradClipRoutine
 from marble.plugins.selfattention_findbestneurontype import FindBestNeuronTypeRoutine
+from marble.plugins.selfattention_noise_profiler import ContextAwareNoiseRoutine
 
 
 def _img_to_bytes(img) -> bytes:
@@ -104,6 +105,7 @@ def main(epochs: int = 1) -> None:
             QualityAwareRoutine(window=8),
             AdaptiveGradClipRoutine(threshold_ratio=1.3, max_norm=1.0),
             FindBestNeuronTypeRoutine(),
+            ContextAwareNoiseRoutine(),
         ]
     )
     wplugins = [
