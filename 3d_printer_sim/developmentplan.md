@@ -70,7 +70,7 @@ Step 9: Advanced Physics and Failure Modes
         Subsubstep 9.2.6: Model part displacement or detachment when nozzle contact exerts excessive force [complete]
     Substep 9.3: Implement realistic molten filament behavior including adherence, stickiness, cooling, and layer bonding
         Subsubstep 9.3.1: Model temperature-dependent viscosity and flow characteristics [complete]
-        Subsubstep 9.3.2: Simulate adhesion to the bed and existing layers
+        Subsubstep 9.3.2: Simulate adhesion to the bed and existing layers [complete]
         Subsubstep 9.3.3: Track cooling rates influenced by ambient conditions and fan airflow
         Subsubstep 9.3.4: Represent stringing or drooping when filament lacks support
         Subsubstep 9.3.5: Depict filament squish profiles based on nozzle height and bed tilt
