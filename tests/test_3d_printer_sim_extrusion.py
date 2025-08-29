@@ -16,9 +16,13 @@ def load_module(name: str, filename: str):
 
 stepper_mod = load_module("stepper", "3d_printer_sim/stepper.py")
 extruder_mod = load_module("extruder", "3d_printer_sim/extruder.py")
+mc_mod = load_module("microcontroller", "3d_printer_sim/microcontroller.py")
+sensors_mod = load_module("sensors", "3d_printer_sim/sensors.py")
 
 StepperMotor = stepper_mod.StepperMotor
 Extruder = extruder_mod.Extruder
+Microcontroller = mc_mod.Microcontroller
+TemperatureSensor = sensors_mod.TemperatureSensor
 
 
 class TestExtruder(unittest.TestCase):
@@ -30,6 +34,28 @@ class TestExtruder(unittest.TestCase):
         self.assertAlmostEqual(extruder.extruded_length, 1.0)
         expected_volume = math.pi * (1.75 / 2) ** 2 * 1.0
         self.assertAlmostEqual(extruder.deposited_volume, expected_volume)
+
+    def test_temperature_dependent_flow(self) -> None:
+        mc = Microcontroller()
+        sensor = TemperatureSensor(mc, pin=0, value=180)
+        motor = StepperMotor(max_acceleration=1000, max_jerk=1000)
+        extruder = Extruder(
+            motor, steps_per_mm=100, filament_diameter=1.75, temperature_sensor=sensor
+        )
+        extruder.set_target_velocity(100)
+        extruder.update(1.0)
+        low_eff = extruder.last_flow_efficiency
+        low_vol = extruder.deposited_volume
+
+        extruder.reset()
+        sensor.set_temperature(240)
+        extruder.set_target_velocity(100)
+        extruder.update(1.0)
+        high_eff = extruder.last_flow_efficiency
+        high_vol = extruder.deposited_volume
+
+        self.assertGreater(high_eff, low_eff)
+        self.assertGreater(high_vol, low_vol)
 
 
 if __name__ == "__main__":
