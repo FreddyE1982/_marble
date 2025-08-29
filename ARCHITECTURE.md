@@ -34,6 +34,11 @@ Core Components
   - `PiecewiseLinear` plugin: Applies two linear segments split at a learnable breakpoint; both slopes and intercepts are registered via `expose_learnable_params`.
   - `Sigmoid` plugin: Implements `scale / (1 + exp(-k*(x - x0))) + bias` with scale, slope, midpoint and bias learnable via `expose_learnable_params`.
   - `Wavelet` plugin: Uses a Morlet-style wavelet `scale * exp(-0.5*((x-shift)/sigma)^2) * cos(freq*(x-shift)) + bias`; all parameters are exposed via `expose_learnable_params`.
+  - `Swish` plugin: Computes `x * sigmoid(beta*x)` with a learnable `swish_beta` controlling activation sharpness.
+  - `Mish` plugin: Applies `x * tanh(softplus(beta*x))` exposing the `mish_beta` parameter for curvature control.
+  - `GELU` plugin: Evaluates `scale * 0.5 * x * (1 + erf(x/\sqrt{2}))` with learnable scaling `gelu_scale`.
+  - `SoftPlus` plugin: Uses `(1/beta)*log(1+exp(beta*x))` with learnable `splus_beta` and a saturation `splus_threshold`.
+  - `LeakyExp` plugin: Behaves linearly for positives and `alpha*(exp(beta*x)-1)` for negatives, learning `leak_alpha` and `leak_beta`.
 
 - `Brain`: n-dimensional space that can be either:
   - Grid mode: discrete occupancy over an integer index lattice with world-coordinate bounds. Occupancy can be defined by formulas or Mandelbrot functions (`mandelbrot`, `mandelbrot_nd`). Omitting the `size` parameter enables a fully dynamic grid that expands as neurons are added; capacity becomes unbounded.

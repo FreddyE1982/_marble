@@ -407,6 +407,11 @@ try:
     from .plugins.piecewise_linear import PiecewiseLinearNeuronPlugin
     from .plugins.sigmoid import SigmoidNeuronPlugin
     from .plugins.wavelet import WaveletNeuronPlugin
+    from .plugins.swish import SwishNeuronPlugin
+    from .plugins.mish import MishNeuronPlugin
+    from .plugins.gelu import GELUNeuronPlugin
+    from .plugins.softplus import SoftPlusNeuronPlugin
+    from .plugins.leaky_exp import LeakyExpNeuronPlugin
     register_neuron_type("sinewave", SineWaveNeuronPlugin())
     register_neuron_type("gaussian", GaussianNeuronPlugin())
     register_neuron_type("polynomial", PolynomialNeuronPlugin())
@@ -417,6 +422,11 @@ try:
     register_neuron_type("piecewise_linear", PiecewiseLinearNeuronPlugin())
     register_neuron_type("sigmoid", SigmoidNeuronPlugin())
     register_neuron_type("wavelet", WaveletNeuronPlugin())
+    register_neuron_type("swish", SwishNeuronPlugin())
+    register_neuron_type("mish", MishNeuronPlugin())
+    register_neuron_type("gelu", GELUNeuronPlugin())
+    register_neuron_type("softplus", SoftPlusNeuronPlugin())
+    register_neuron_type("leakyexp", LeakyExpNeuronPlugin())
     __all__ += [
         "SineWaveNeuronPlugin",
         "GaussianNeuronPlugin",
@@ -428,6 +438,11 @@ try:
         "PiecewiseLinearNeuronPlugin",
         "SigmoidNeuronPlugin",
         "WaveletNeuronPlugin",
+        "SwishNeuronPlugin",
+        "MishNeuronPlugin",
+        "GELUNeuronPlugin",
+        "SoftPlusNeuronPlugin",
+        "LeakyExpNeuronPlugin",
     ]
 except Exception:
     pass
