@@ -536,3 +536,4 @@ Helper scripts `clone_or_update.sh` and `clone_or_update.ps1` automate cloning o
 - The plan targets full compatibility with unmodified Marlin firmware, including virtual USB/SD interfaces, configurable build volumes, and complete sensor and physics emulation.
 - Initial Marlin firmware study is recorded in `3d_printer_sim/marlin_analysis.md`, outlining HAL structure, required interfaces, and key configuration parameters.
 - A YAML-based configuration system (`3d_printer_sim/config.yaml`) defines build volume, bed size, maximum print dimensions, and extruder/hotend setups. A typed parser (`3d_printer_sim/config.py`) validates these parameters for use in later simulator stages.
+- `3d_printer_sim/microcontroller.py` introduces a minimal microcontroller emulator. It tracks digital and analog pin states via dictionaries and provides read/write helpers, forming the foundation for later hardware emulation compatible with Marlin firmware.
