@@ -534,3 +534,4 @@ Helper scripts `clone_or_update.sh` and `clone_or_update.ps1` automate cloning o
 
 - Directory `3d_printer_sim` holds a development plan for a future 3D printer simulator.
 - The plan targets full compatibility with unmodified Marlin firmware, including virtual USB/SD interfaces, configurable build volumes, and complete sensor and physics emulation.
+ - Initial Marlin firmware study is recorded in `3d_printer_sim/marlin_analysis.md`, outlining HAL structure, required interfaces, and key configuration parameters.
