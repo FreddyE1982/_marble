@@ -2343,11 +2343,24 @@ def run_training_with_datapairs(
         nonlocal count
         enc_left_list: List[Any] = []
         enc_right_list: List[Any] = []
-        for dp in items:
-            el, er = dp.encode(codec)
-            enc_left_list.append(el)
-            enc_right_list.append(er)
         torch = w._torch  # type: ignore[attr-defined]
+        for dp in items:
+            l_raw, r_raw = dp.left, dp.right
+            l_simple = (isinstance(l_raw, (int, float)) or (isinstance(l_raw, (list, tuple)) and len(l_raw) == 1 and isinstance(l_raw[0], (int, float))))
+            r_simple = (isinstance(r_raw, (int, float)) or (isinstance(r_raw, (list, tuple)) and len(r_raw) == 1 and isinstance(r_raw[0], (int, float))))
+            if l_simple and r_simple:
+                l_val = float(l_raw[0] if isinstance(l_raw, (list, tuple)) else l_raw)
+                r_val = float(r_raw[0] if isinstance(r_raw, (list, tuple)) else r_raw)
+                if torch is not None:
+                    enc_left_list.append(torch.tensor([l_val], dtype=torch.float32, device=w._device))
+                    enc_right_list.append(torch.tensor([r_val], dtype=torch.float32, device=w._device))
+                else:
+                    enc_left_list.append([l_val])
+                    enc_right_list.append([r_val])
+            else:
+                el, er = dp.encode(codec)
+                enc_left_list.append(el)
+                enc_right_list.append(er)
         if torch is not None:
             enc_left = torch.stack([torch.tensor(x, device=w._device, dtype=torch.float32) if not hasattr(x, "shape") else x.float() for x in enc_left_list])
             enc_right = torch.stack([torch.tensor(x, device=w._device, dtype=torch.float32) if not hasattr(x, "shape") else x.float() for x in enc_right_list])
@@ -2387,6 +2400,8 @@ def run_training_with_datapairs(
             overrides.update(ovr)
         ms = int(overrides.get("max_steps", steps_per_pair))
         lr_i = float(overrides.get("lr", lr))
+        if batch_sz > 1:
+            lr_i /= batch_sz
         _current_target["val"] = enc_right
         stats = w.walk(max_steps=ms, start=start, lr=lr_i, lobe=lobe)
         stats["plugins"] = [p.__class__.__name__ for p in getattr(w, "_wplugins", []) or []]

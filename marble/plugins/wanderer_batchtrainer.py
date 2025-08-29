@@ -18,15 +18,9 @@ class BatchTrainingPlugin:
         setattr(wanderer, "_batch_size", bs)
 
     def loss(self, wanderer: "Wanderer", outputs: list[Any]):  # noqa: D401
+        """No additional loss; base Wanderer loss already handles batches."""
         torch = getattr(wanderer, "_torch", None)
-        if torch is None or not outputs:
-            return 0.0 if torch is None else torch.tensor(0.0, device=getattr(wanderer, "_device", "cpu"))
-        yt = outputs[-1].float()
-        tgt = wanderer._target_provider(outputs[-1])  # type: ignore[attr-defined]
-        if not hasattr(tgt, "float"):
-            tgt = torch.tensor(tgt, dtype=torch.float32, device=getattr(wanderer, "_device", "cpu"))
-        tgt = tgt.view_as(yt)
-        return torch.nn.functional.mse_loss(yt, tgt)
+        return 0.0 if torch is None else torch.tensor(0.0, device=getattr(wanderer, "_device", "cpu"))
 
 
 __all__ = ["BatchTrainingPlugin"]

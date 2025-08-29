@@ -60,7 +60,7 @@ Core Components
     - `AutoPlugin` meta-plugin learns to enable or disable other Wanderer/neuroplasticity plugins per step and accepts `disabled_plugins=[...]` to completely remove certain plugins from the stack.
   - Gradient clipping: configurable per `Wanderer` via `gradient_clip` dict (`method`: `norm` or `value`, with `max_norm`/`norm_type` or `clip_value`). Applied after `loss.backward()` and before parameter updates.
   - Progress reporting: `Wanderer.walk` now emits a `tqdm` progress bar (or `tqdm.notebook` in IPython) updated each step with epoch/walk counts, neuron and synapse totals, brain size, step speed, path count, and loss metrics. `tqdm` is an explicit dependency.
-  - Mixed precision: `MixedPrecisionPlugin` uses `torch.amp.GradScaler` with automatic CUDA detection, avoiding warnings when GPUs are absent.
+  - Mixed precision: `MixedPrecisionPlugin` now activates only on CUDA-enabled devices. It uses `torch.amp.GradScaler` when GPUs are available and is a no-op on CPU to avoid precision loss.
 
 - Training Helpers: High-level flows to run Wanderer training:
   - `run_wanderer_training`: single-wanderer multi-walk loop. Accepts an optional `lobe` so only a subset of the Brain is traversed, with plugin stacks inherited or overridden per lobe.
