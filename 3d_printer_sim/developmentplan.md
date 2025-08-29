@@ -57,40 +57,50 @@ Step 9: Advanced Physics and Failure Modes
         Subsubstep 9.2.2: Alter extrusion width and adhesion based on clearance
         Subsubstep 9.2.3: Simulate nozzle dragging, scratching, or collisions when clearance is too low
         Subsubstep 9.2.4: Reflect layer height errors caused by incorrect leveling
+        Subsubstep 9.2.5: Capture surface deformation and delamination when the nozzle scrapes deposited material
     Substep 9.3: Implement realistic molten filament behavior including adherence, stickiness, cooling, and layer bonding
         Subsubstep 9.3.1: Model temperature-dependent viscosity and flow characteristics
         Subsubstep 9.3.2: Simulate adhesion to the bed and existing layers
         Subsubstep 9.3.3: Track cooling rates influenced by ambient conditions and fan airflow
         Subsubstep 9.3.4: Represent stringing or drooping when filament lacks support
+        Subsubstep 9.3.5: Depict filament squish profiles based on nozzle height and bed tilt
     Substep 9.4: Simulate supports, brims, and other adhesion aids with realistic physics
         Subsubstep 9.4.1: Generate supports and brims based on print geometry
         Subsubstep 9.4.2: Apply distinct adhesion and removal properties to support structures
+        Subsubstep 9.4.3: Estimate realistic removal forces and resulting surface scars
     Substep 9.5: Model print errors such as filament not sticking and spaghetti failures
         Subsubstep 9.5.1: Detect scenarios with insufficient bed or layer adhesion
         Subsubstep 9.5.2: Produce tangled filament paths when extrusion continues without adhesion
+        Subsubstep 9.5.3: Simulate layer collapse or shifting due to partial adhesion loss
     Substep 9.6: Simulate fan influences, including print cooling fan, on thermal gradients and print quality
         Subsubstep 9.6.1: Configure multiple fans with variable speeds and airflow directions
         Subsubstep 9.6.2: Modify cooling rates and material properties according to fan output
         Subsubstep 9.6.3: Evaluate effects on overhangs, bridges, and general surface quality
+        Subsubstep 9.6.4: Account for fan-induced vibrations influencing surface finish
     Substep 9.7: Provide realistic nozzle mechanics including clog states and diameter variations
         Subsubstep 9.7.1: Allow configuration of nozzle clog severity from partial to full
         Subsubstep 9.7.2: Modify extrusion flow and pressure based on clog conditions
         Subsubstep 9.7.3: Permit dynamic nozzle diameter changes to simulate wear or variation
+        Subsubstep 9.7.4: Model residue build-up on the nozzle and its interaction with printed layers
     Substep 9.8: Model filament issues such as breakage and varying diameter, all configurable
         Subsubstep 9.8.1: Represent filament diameter variability and its effect on flow rate
         Subsubstep 9.8.2: Simulate filament break or run-out conditions during printing
         Subsubstep 9.8.3: Provide configuration hooks for material-specific behaviors
+        Subsubstep 9.8.4: Allow configuration of filament moisture and its impact on extrusion quality
     Substep 9.9: Simulate heating dynamics with speed, temperature imbalances, and transient changes
         Subsubstep 9.9.1: Model ramp-up and cool-down times for hotend and bed
         Subsubstep 9.9.2: Account for spatial temperature gradients across bed and nozzle
         Subsubstep 9.9.3: Include thermal inertia and feedback control loops
+        Subsubstep 9.9.4: Simulate sensor inaccuracies leading to temperature oscillations
     Substep 9.10: Implement realistic leveling physics and Z0 setting effects
         Subsubstep 9.10.1: Allow configurable leveling errors and compensation mechanisms
         Subsubstep 9.10.2: Simulate Z0 calibration routines and offset adjustments
         Subsubstep 9.10.3: Reflect resulting first-layer thickness variations
+        Subsubstep 9.10.4: Track long-term bed drift requiring periodic recalibration
     Substep 9.11: Ensure all factors influencing print quality are represented in the simulation
         Subsubstep 9.11.1: Integrate interactions between thermal, mechanical, and material effects
         Subsubstep 9.11.2: Provide metrics for resulting print quality defects
+        Subsubstep 9.11.3: Offer toggles to isolate individual factors for analysis
 
 Step 10: Comprehensive Marlin Configuration Coverage
     Substep 10.1: Parse Marlin Configuration.h and Configuration_adv.h to enumerate all configuration items
@@ -1244,3 +1254,11 @@ Step 10: Comprehensive Marlin Configuration Coverage
         Subsubstep 10.2.1147: MMU2_CAN_LOAD_INCREMENT_SEQUENCE
         Subsubstep 10.2.1148: MMU_LOADING_ATTEMPTS_NR
         Subsubstep 10.2.1149: SERVICE_WARNING_BUZZES
+    Substep 10.3: Audit for any remaining configuration options not yet listed and append corresponding Subsubstep 10.2 entries
+        Subsubstep 10.3.1: Cross-reference Marlin documentation to ensure no configuration item is omitted
+        Subsubstep 10.3.2: For newly found items, design necessary mechanics or physics simulations
+
+Step 11: Code Isolation and Dependency Audit
+    Substep 11.1: Confirm all modules rely only on Python's standard library or files within 3d_printer_sim
+    Substep 11.2: Remove or refactor any code importing modules outside this directory
+    Substep 11.3: Add tests verifying absence of external dependencies
