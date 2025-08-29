@@ -69,6 +69,8 @@ class PrinterSimulation:
     surface_damage: float
     part_detached: bool
     layer_height_error: float
+    bed_temperature: float
+    optimal_bed_temp: float
 
     def __init__(self, bed_tilt_x: float = 0.0, bed_tilt_y: float = 0.0) -> None:
         self.bed_tilt_x = float(bed_tilt_x)
@@ -92,6 +94,8 @@ class PrinterSimulation:
         self.surface_damage = 0.0
         self.part_detached = False
         self.layer_height_error = 0.0
+        self.bed_temperature = 60.0
+        self.optimal_bed_temp = 60.0
 
     # -------------------------------------------------------------- controls
     def set_axis_velocities(self, vx: float, vy: float, vz: float) -> None:
@@ -127,23 +131,36 @@ class PrinterSimulation:
             self.surface_damage += -self.nozzle_height
             if abs(self.x_motor.velocity) + abs(self.y_motor.velocity) > 1:
                 self.part_detached = True
-            self.adhesion = 0.0
+            base_adh = 0.0
             width = self.nozzle_diameter
         else:
             self.collision = False
-            if self.nozzle_height < self.layer_height:
-                squish = (self.layer_height - self.nozzle_height) / self.layer_height
-                width = self.nozzle_diameter * (1 + squish)
-                self.adhesion = 1.0
+            layer_z = round(self.nozzle_height / self.layer_height) * self.layer_height
+            diff = self.nozzle_height - layer_z
+            if abs(diff) >= self.layer_height * 0.5:
+                base_adh = 0.0
+            else:
+                base_adh = 1 - abs(diff) / (self.layer_height * 0.5)
+            if len(self.visualizer.filament) == 0:
+                if self.nozzle_height < self.layer_height:
+                    squish = (self.layer_height - self.nozzle_height) / self.layer_height
+                    width = self.nozzle_diameter * (1 + squish)
+                else:
+                    width = self.nozzle_diameter
+                temp_factor = max(
+                    0.0,
+                    1.0
+                    - abs(self.bed_temperature - self.optimal_bed_temp)
+                    / self.optimal_bed_temp,
+                )
+                base_adh *= temp_factor
             else:
                 width = self.nozzle_diameter
-                if self.nozzle_height > self.layer_height * 1.5:
-                    self.adhesion = 0.0
-                else:
-                    self.adhesion = 1 - (
-                        (self.nozzle_height - self.layer_height)
-                        / (self.layer_height * 0.5)
-                    )
+
+        flow = self.extruder.last_flow_efficiency
+        self.adhesion = base_adh * flow
+        if self.adhesion < 1e-12:
+            self.adhesion = 0.0
         self.extrusion_width = width
 
         self.visualizer.update_extruder_position(x, y, z)
