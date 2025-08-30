@@ -11,7 +11,8 @@ and retries the step so training can continue without breaking gradients.
 """
 
 import math
-from typing import Any, List, Optional, Sequence
+import time
+from typing import Any, Dict, List, Optional, Sequence
 
 from ..wanderer import expose_learnable_params
 from ..graph import _NEURON_TYPES
@@ -28,9 +29,14 @@ class AutoNeuronPlugin:
         preventing accidental delegation to undesired plugins.
     """
 
-    def __init__(self, disabled_types: Optional[Sequence[str]] = None) -> None:
+    def __init__(
+        self, disabled_types: Optional[Sequence[str]] = None, log_path: Optional[str] = None
+    ) -> None:
         self._current_neuron_id = 0
         self._disabled = set(disabled_types or [])
+        self._log_path = log_path
+        self._log_fp = open(log_path, "w") if log_path else None
+        self._log_state: Dict[int, Dict[str, Any]] = {}
 
     # ---- Selection -----------------------------------------------------
     def _candidate_types(self) -> List[Optional[str]]:
@@ -80,6 +86,69 @@ class AutoNeuronPlugin:
             return names[idx]
         except Exception:
             return names[0]
+
+    def _write_log(
+        self,
+        action: str,
+        name: str,
+        last_time: float,
+        last_steps: int,
+        total_steps: int,
+    ) -> None:
+        if self._log_fp is None:
+            return
+        self._log_fp.write(
+            f"{action},neuron,{name},{last_time:.3f},{last_steps},{total_steps}\n"
+        )
+        self._log_fp.flush()
+
+    def _log_transition(
+        self,
+        wanderer: "Wanderer",
+        neuron_id: int,
+        new_name: str,
+    ) -> None:
+        if self._log_fp is None:
+            return
+        state = self._log_state.setdefault(
+            neuron_id,
+            {
+                "current": None,
+                "active_since_step": 0,
+                "active_since_time": 0.0,
+                "last_active_steps": 0,
+                "last_active_time": 0.0,
+                "total_active_steps": 0,
+            },
+        )
+        step = getattr(wanderer, "_walk_step_count", 0)
+        now = time.time()
+        current = state["current"]
+        if current == new_name:
+            return
+        if current is not None:
+            last_steps = step - state["active_since_step"]
+            last_time = now - state["active_since_time"]
+            state["last_active_steps"] = last_steps
+            state["last_active_time"] = last_time
+            state["total_active_steps"] += last_steps
+            self._write_log(
+                "deactivated",
+                current,
+                last_time,
+                last_steps,
+                state["total_active_steps"],
+            )
+        self._write_log(
+            "activated",
+            new_name,
+            state["last_active_time"],
+            state["last_active_steps"],
+            state["total_active_steps"],
+        )
+        state["current"] = new_name
+        state["active_since_step"] = step
+        state["active_since_time"] = now
 
     @expose_learnable_params
     def _attention_score(
@@ -150,6 +219,7 @@ class AutoNeuronPlugin:
         if wanderer is not None:
             self._current_neuron_id = id(neuron)
             chosen = self._select_type(wanderer, neuron)
+            self._log_transition(wanderer, id(neuron), chosen or "base")
         plugin = _NEURON_TYPES.get(chosen) if chosen else None
         try:
             neuron.type_name = chosen
@@ -170,6 +240,30 @@ class AutoNeuronPlugin:
             return out
         finally:
             neuron.type_name = "autoneuron"
+
+    def finalize_logs(self, wanderer: "Wanderer") -> None:
+        if self._log_fp is None:
+            return
+        step = getattr(wanderer, "_walk_step_count", 0)
+        now = time.time()
+        for state in self._log_state.values():
+            current = state.get("current")
+            if current is not None:
+                last_steps = step - state["active_since_step"]
+                last_time = now - state["active_since_time"]
+                state["last_active_steps"] = last_steps
+                state["last_active_time"] = last_time
+                state["total_active_steps"] += last_steps
+                self._write_log(
+                    "deactivated",
+                    current,
+                    last_time,
+                    last_steps,
+                    state["total_active_steps"],
+                )
+                state["current"] = None
+        self._log_fp.close()
+        self._log_fp = None
 
     def receive(self, neuron: "Neuron", value):
         prev = neuron._plugin_state.get("prev_type")
