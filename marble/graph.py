@@ -169,6 +169,7 @@ class Synapse(_DeviceHelper):
         age: int = 0,
         type_name: Optional[str] = None,
         weight: float = 1.0,
+        bias: float = 0.0,
     ) -> None:
         super().__init__()
         if direction not in ("uni", "bi"):
@@ -180,6 +181,7 @@ class Synapse(_DeviceHelper):
         self.type_name: Optional[str] = type_name
         self._plugin_state: Dict[str, Any] = {}
         self.weight: float = float(weight)
+        self.bias: float = float(bias)
 
         self.incoming_synapses: List["Synapse"] = []
         self.outgoing_synapses: List["Synapse"] = []
@@ -206,7 +208,7 @@ class Synapse(_DeviceHelper):
         if plugin is not None and hasattr(plugin, "on_init"):
             plugin.on_init(self)  # type: ignore[attr-defined]
         try:
-            report("synapse", "create", {"direction": self.direction, "age": self.age, "weight": self.weight, "type": self.type_name}, "events")
+            report("synapse", "create", {"direction": self.direction, "age": self.age, "weight": self.weight, "bias": self.bias, "type": self.type_name}, "events")
         except Exception:
             pass
 
@@ -220,10 +222,10 @@ class Synapse(_DeviceHelper):
 
         val = self._ensure_tensor(value)
         if self._torch is not None and self._is_torch_tensor(val):
-            val = val * float(self.weight)
+            val = val * float(self.weight) + float(self.bias)
         else:
             vl = val if isinstance(val, list) else list(val)  # type: ignore[arg-type]
-            val = [float(self.weight) * float(v) for v in vl]
+            val = [float(self.weight) * float(v) + float(self.bias) for v in vl]
 
         if direction == "forward":
             if self.direction not in ("uni", "bi"):
@@ -244,7 +246,7 @@ class Synapse(_DeviceHelper):
                 dest.receive(val)
                 out_neuron = dest
         try:
-            report("synapse", "transmit", {"dir": direction, "weight": float(self.weight)}, "events")
+            report("synapse", "transmit", {"dir": direction, "weight": float(self.weight), "bias": float(self.bias)}, "events")
         except Exception:
             pass
         return out_neuron

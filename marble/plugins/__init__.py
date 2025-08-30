@@ -18,6 +18,7 @@ from ..graph import register_neuron_type, register_synapse_type
 from ..wanderer import register_wanderer_type, register_neuroplasticity_type
 from ..selfattention import register_selfattention_type
 from ..marblemain import register_brain_train_type
+from ..buildingblock import register_buildingblock_type
 
 
 def _find_plugin_class(module: Any) -> Optional[Type[Any]]:
@@ -55,6 +56,9 @@ for mod in pkgutil.iter_modules(__path__):
     elif name.startswith("brain_train_"):
         base = name[len("brain_train_") :]
         register_brain_train_type(plugin_name or base, cls())
+    elif name.startswith("buildingblock_"):
+        base = name[len("buildingblock_") :]
+        register_buildingblock_type(plugin_name or base, cls())
     else:
         # Default to neuron plugin registration
         register_neuron_type(plugin_name or name, cls())

@@ -146,6 +146,7 @@ Convenience APIs
 - Helpers: `make_default_codec` creates a default `UniversalTensorCodec` and logs under `codec/helpers`.
 - Data: `DataPair`, `make_datapair`, `encode_datapair`, `decode_datapair`.
 - Graph: `Neuron`, `Synapse`, `register_neuron_type`, `register_synapse_type`.
+- Building Blocks: `register_buildingblock_type`, `get_buildingblock_type`, `BuildingBlock`.
 - Space: `Brain` with grid/sparse modes; `Brain.train` for walk orchestration.
 - Wandering: `Wanderer`, `register_wanderer_type`, `register_neuroplasticity_type`.
   - SelfAttention: `SelfAttention` class plus `register_selfattention_type` and `attach_selfattention`. Routines (plugins) receive a read-only Reporter view and can propose setting updates via `set_param`, applied at the next step. `get_param` allows reading Wanderer public settings. The Wanderer applies queued updates at the start of the next step and logs what was applied.
