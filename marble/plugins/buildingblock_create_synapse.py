@@ -5,9 +5,11 @@ from __future__ import annotations
 from typing import Sequence
 
 from ..buildingblock import BuildingBlock
+from ..wanderer import expose_learnable_params
 
 
 class CreateSynapsePlugin(BuildingBlock):
+    @expose_learnable_params
     def apply(
         self,
         brain,
@@ -19,7 +21,19 @@ class CreateSynapsePlugin(BuildingBlock):
         bias: float = 0.0,
         type_name: str | None = None,
     ):
-        return brain.connect(src_index, dst_index, direction=direction, weight=weight, bias=bias, type_name=type_name)
+        src = self._to_index(brain, src_index)
+        dst = self._to_index(brain, dst_index)
+        try:
+            return brain.connect(
+                src,
+                dst,
+                direction=direction,
+                weight=self._to_float(weight),
+                bias=self._to_float(bias),
+                type_name=type_name,
+            )
+        except Exception:
+            return None
 
 
 __all__ = ["CreateSynapsePlugin"]

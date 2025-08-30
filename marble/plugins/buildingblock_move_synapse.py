@@ -6,6 +6,7 @@ from typing import Sequence
 
 from ..buildingblock import BuildingBlock
 from ..graph import Neuron, Synapse
+from ..wanderer import expose_learnable_params
 
 
 class MoveSynapsePlugin(BuildingBlock):
@@ -53,11 +54,14 @@ class MoveSynapsePlugin(BuildingBlock):
                 except Exception:
                     pass
 
+    @expose_learnable_params
     def apply(self, brain, synapse: Synapse, new_source_index: Sequence[int], new_target_index: Sequence[int]):
-        new_src = brain.get_neuron(new_source_index)
-        new_dst = brain.get_neuron(new_target_index)
+        if synapse not in getattr(brain, "synapses", []):
+            return None
+        new_src = brain.get_neuron(self._to_index(brain, new_source_index))
+        new_dst = brain.get_neuron(self._to_index(brain, new_target_index))
         if new_src is None or new_dst is None:
-            raise ValueError("New source and target neurons must exist")
+            return None
         self._detach(synapse)
         synapse.source = new_src
         synapse.target = new_dst
