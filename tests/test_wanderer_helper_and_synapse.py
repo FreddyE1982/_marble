@@ -30,7 +30,12 @@ class TestWandererHelperAndSynapse(unittest.TestCase):
         b.add_neuron((1.0, 0.0), tensor=[1.0], weight=1.0, bias=0.0)
         b.connect((0.0, 0.0), (1.0, 0.0), direction="bi")
 
+        pre_brain_id = id(b)
+        pre_graph_id = id(b.neurons)
+
         result = self.run_wanderer_training(b, num_walks=3, max_steps=3, lr=1e-2, seed=42, loss="nn.MSELoss")
+        self.assertEqual(id(b), pre_brain_id)
+        self.assertEqual(id(b.neurons), pre_graph_id)
         print("run_wanderer_training final_loss:", result.get("final_loss"))
         print("run_wanderer_training steps in first walk:", len(result["history"][0]["step_metrics"]))
         self.assertIn("history", result)
