@@ -5,6 +5,9 @@ import math
 import random
 import time
 import threading
+from threading import RLock
+
+RLockType = type(RLock())
 from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Tuple, Union
 
 from .codec import UniversalTensorCodec, TensorLike
@@ -73,8 +76,8 @@ def run_wanderer_training(
         return out
 
     lock = getattr(brain, "_train_lock", None)
-    if lock is None:
-        lock = threading.Lock()
+    if not isinstance(lock, RLockType):
+        lock = RLock()
         setattr(brain, "_train_lock", lock)
     with lock:
         return _inner()
@@ -225,8 +228,8 @@ def run_training_with_datapairs(
         return out
 
     lock = getattr(brain, "_train_lock", None)
-    if lock is None:
-        lock = threading.Lock()
+    if not isinstance(lock, RLockType):
+        lock = RLock()
         setattr(brain, "_train_lock", lock)
     with lock:
         return _inner()
@@ -247,49 +250,57 @@ def run_wanderer_epochs_with_datapairs(
     callback: Optional[Callable[[int, int, Dict[str, Any], DataPair], None]] = None,
     mixedprecision: bool = True,
 ) -> Dict[str, Any]:
-    dataset: List[DataPair] = []
-    for item in datapairs:
-        if isinstance(item, DataPair):
-            dataset.append(item)
-        elif isinstance(item, tuple) and len(item) == 2:
-            dataset.append(DataPair(item[0], item[1]))
-        else:
-            dataset.append(DataPair(item, None))  # type: ignore[arg-type]
+    def _inner() -> Dict[str, Any]:
+        dataset: List[DataPair] = []
+        for item in datapairs:
+            if isinstance(item, DataPair):
+                dataset.append(item)
+            elif isinstance(item, tuple) and len(item) == 2:
+                dataset.append(DataPair(item[0], item[1]))
+            else:
+                dataset.append(DataPair(item, None))  # type: ignore[arg-type]
 
-    prev_final = None
-    epochs: List[Dict[str, Any]] = []
-    brain._progress_total_epochs = num_epochs  # type: ignore[attr-defined]
-    for e in range(num_epochs):
-        brain._progress_epoch = e  # type: ignore[attr-defined]
-        brain._progress_total_walks = len(dataset)  # type: ignore[attr-defined]
-        res = run_training_with_datapairs(
-            brain,
-            dataset,
-            codec,
-            steps_per_pair=steps_per_pair,
-            lr=lr,
-            wanderer_type=wanderer_type,
-            seed=seed,
-            loss=loss,
-            left_to_start=left_to_start,
-            callback=(lambda i, stats, dp: callback(e, i, stats, dp)) if callback is not None else None,
-            mixedprecision=mixedprecision,
-        )
-        final_loss = res.get("final_loss", 0.0)
-        delta = None if prev_final is None else (final_loss - prev_final)
-        prev_final = final_loss
-        entry = {"history": res.get("history", []), "final_loss": final_loss, "delta_vs_prev": delta}
-        epochs.append(entry)
+        prev_final = None
+        epochs: List[Dict[str, Any]] = []
+        brain._progress_total_epochs = num_epochs  # type: ignore[attr-defined]
+        for e in range(num_epochs):
+            brain._progress_epoch = e  # type: ignore[attr-defined]
+            brain._progress_total_walks = len(dataset)  # type: ignore[attr-defined]
+            res = run_training_with_datapairs(
+                brain,
+                dataset,
+                codec,
+                steps_per_pair=steps_per_pair,
+                lr=lr,
+                wanderer_type=wanderer_type,
+                seed=seed,
+                loss=loss,
+                left_to_start=left_to_start,
+                callback=(lambda i, stats, dp: callback(e, i, stats, dp)) if callback is not None else None,
+                mixedprecision=mixedprecision,
+            )
+            final_loss = res.get("final_loss", 0.0)
+            delta = None if prev_final is None else (final_loss - prev_final)
+            prev_final = final_loss
+            entry = {"history": res.get("history", []), "final_loss": final_loss, "delta_vs_prev": delta}
+            epochs.append(entry)
+            try:
+                report("training", f"epoch_{e}", {"final_loss": final_loss, "delta": delta}, "epochs")
+            except Exception:
+                pass
+        out = {"epochs": epochs, "final_loss": prev_final if prev_final is not None else 0.0}
         try:
-            report("training", f"epoch_{e}", {"final_loss": final_loss, "delta": delta}, "epochs")
+            report("training", "epochs_summary", {"num_epochs": num_epochs, "final_loss": out["final_loss"]}, "epochs")
         except Exception:
             pass
-    out = {"epochs": epochs, "final_loss": prev_final if prev_final is not None else 0.0}
-    try:
-        report("training", "epochs_summary", {"num_epochs": num_epochs, "final_loss": out["final_loss"]}, "epochs")
-    except Exception:
-        pass
-    return out
+        return out
+
+    lock = getattr(brain, "_train_lock", None)
+    if not isinstance(lock, RLockType):
+        lock = RLock()
+        setattr(brain, "_train_lock", lock)
+    with lock:
+        return _inner()
 
 
 def run_wanderers_parallel(
@@ -336,8 +347,8 @@ def run_wanderers_parallel(
     results: List[Dict[str, Any]] = []
     if mode == "thread":
         lock = getattr(brain, "_train_lock", None)
-        if lock is None:
-            lock = threading.Lock()
+        if not isinstance(lock, RLockType):
+            lock = RLock()
             setattr(brain, "_train_lock", lock)
 
         def worker(idx: int) -> None:
