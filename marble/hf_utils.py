@@ -156,7 +156,18 @@ def load_hf_streaming_dataset(
     if ds_mod is None:
         raise RuntimeError("datasets is not installed. Please install 'datasets'.")
     used_codec = codec if codec is not None else make_default_codec()
-    ds = ds_mod.load_dataset(path, name=name, split=split, streaming=streaming, trust_remote_code=trust_remote_code, **kwargs)
+    import inspect
+
+    ds_kwargs: Dict[str, Any] = {
+        "path": path,
+        "name": name,
+        "split": split,
+        "streaming": streaming,
+        **kwargs,
+    }
+    if "trust_remote_code" in inspect.signature(ds_mod.load_dataset).parameters:
+        ds_kwargs["trust_remote_code"] = trust_remote_code
+    ds = ds_mod.load_dataset(**ds_kwargs)
     try:
         report("huggingface", "load_dataset", {"path": path, "name": name, "split": split, "streaming": bool(streaming)}, "dataset")
     except Exception:
