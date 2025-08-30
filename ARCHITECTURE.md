@@ -578,6 +578,7 @@ New Additive Plugins (this change)
 - Wanderer plugin `momentum`: Maintains an exponential moving average of previous weights via a learnable coefficient and biases selection by this momentum term.
 - Wanderer plugin `temporaldecay`: Starts with high exploration that exponentially decays over steps according to a learnable rate, transitioning from exploration to exploitation.
 - Wanderer plugin `entropyaware`: Computes the entropy of available synapse weights and forces random exploration while entropy remains below a learnable threshold.
+- Ultra wanderer plugins `dimensionalshift`, `timewarp`, `echochaser`, `shadowclone` and `curvaturedrive`: each exposes a unique learnable parameter to bias navigation toward high-dimensional neurons, repeat prior steps, reinforce frequently used paths, flip traversal direction, or smooth curvature of walks.
 
 All additions remain fully additive; existing behavior and APIs are preserved. Each plugin/routine logs concise events to `REPORTER` under logical groups (`plugins`, `selfattention`, `training/brain`).
 
