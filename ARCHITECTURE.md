@@ -73,6 +73,7 @@ Core Components
   - `quick_train_on_pairs`: builds a minimal 2D `Brain` with configurable `grid_size`, creates a default codec if not provided, and calls `run_training_with_datapairs` with the supplied hyperparameters (`steps_per_pair`, `lr`, `seed`, `wanderer_type`, `train_type`, `neuro_config`, `gradient_clip`, optional `selfattention`). Logs summary under `training/quick`.
   - `run_wanderers_parallel`: orchestrates multiple datasets with thread-based concurrency (process mode intentionally unimplemented).
   - `run_wine_hello_world`: convenience that loads scikit-learn’s Wine dataset, runs training with neuroplasticity active, and writes per-step wanderer logs to a JSONL file.
+  - All helpers reuse the original `Brain` and `Graph` instances; a per-brain `threading.Lock` (`brain._train_lock`) ensures that concurrent training calls serialize instead of copying the structures.
 
 - Reporter: Global `REPORTER` instance to record structured data. Convenience functions `report`, `report_group`, `report_dir`, and `clear_report_group` provide ergonomic logging, querying, and cleanup. Tests and core flows record key metrics and events for auditability.
   - Per-step logs: `Wanderer.walk` records detailed step metrics under group `wanderer_steps/logs` including:

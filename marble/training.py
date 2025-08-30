@@ -4,6 +4,7 @@ import hashlib
 import math
 import random
 import time
+import threading
 from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Tuple, Union
 
 from .codec import UniversalTensorCodec, TensorLike
@@ -29,47 +30,54 @@ def run_wanderer_training(
     mixedprecision: bool = True,
 ) -> Dict[str, Any]:
     from .marblemain import Wanderer  # lazy to avoid import cycle
-
-    cfg = neuro_config
-    wtype = wanderer_type
-    if lobe is not None and not getattr(lobe, "inherit_plugins", True):
-        wtype = lobe.plugin_types
-        cfg = lobe.neuro_config
-    w = Wanderer(
-        brain,
-        type_name=wtype,
-        seed=seed,
-        loss=loss,
-        target_provider=target_provider,
-        neuro_config=cfg,
-        mixedprecision=mixedprecision,
-    )
-    history: List[Dict[str, Any]] = []
-    brain._progress_total_epochs = 1  # type: ignore[attr-defined]
-    brain._progress_epoch = 0  # type: ignore[attr-defined]
-    brain._progress_total_walks = num_walks  # type: ignore[attr-defined]
-    for i in range(num_walks):
-        brain._progress_walk = i  # type: ignore[attr-defined]
-        start = start_selector(brain) if start_selector is not None else None
-        stats = w.walk(max_steps=max_steps, start=start, lr=lr, lobe=lobe)
-        stats["plugins"] = [p.__class__.__name__ for p in getattr(w, "_wplugins", []) or []]
-        history.append(stats)
-        try:
-            report("training", f"walk_{i}", {"loss": stats.get("loss", 0.0), "steps": stats.get("steps", 0)}, "wanderer")
-        except Exception:
-            pass
-        if callback is not None:
+    def _inner() -> Dict[str, Any]:
+        cfg = neuro_config
+        wtype = wanderer_type
+        if lobe is not None and not getattr(lobe, "inherit_plugins", True):
+            wtype = lobe.plugin_types
+            cfg = lobe.neuro_config
+        w = Wanderer(
+            brain,
+            type_name=wtype,
+            seed=seed,
+            loss=loss,
+            target_provider=target_provider,
+            neuro_config=cfg,
+            mixedprecision=mixedprecision,
+        )
+        history: List[Dict[str, Any]] = []
+        brain._progress_total_epochs = 1  # type: ignore[attr-defined]
+        brain._progress_epoch = 0  # type: ignore[attr-defined]
+        brain._progress_total_walks = num_walks  # type: ignore[attr-defined]
+        for i in range(num_walks):
+            brain._progress_walk = i  # type: ignore[attr-defined]
+            start = start_selector(brain) if start_selector is not None else None
+            stats = w.walk(max_steps=max_steps, start=start, lr=lr, lobe=lobe)
+            stats["plugins"] = [p.__class__.__name__ for p in getattr(w, "_wplugins", []) or []]
+            history.append(stats)
             try:
-                callback(i, stats)
+                report("training", f"walk_{i}", {"loss": stats.get("loss", 0.0), "steps": stats.get("steps", 0)}, "wanderer")
             except Exception:
                 pass
-    final_loss = history[-1]["loss"] if history else 0.0
-    out = {"history": history, "final_loss": final_loss}
-    try:
-        report("training", "summary", {"num_walks": num_walks, "final_loss": final_loss}, "wanderer")
-    except Exception:
-        pass
-    return out
+            if callback is not None:
+                try:
+                    callback(i, stats)
+                except Exception:
+                    pass
+        final_loss = history[-1]["loss"] if history else 0.0
+        out = {"history": history, "final_loss": final_loss}
+        try:
+            report("training", "summary", {"num_walks": num_walks, "final_loss": final_loss}, "wanderer")
+        except Exception:
+            pass
+        return out
+
+    lock = getattr(brain, "_train_lock", None)
+    if lock is None:
+        lock = threading.Lock()
+        setattr(brain, "_train_lock", lock)
+    with lock:
+        return _inner()
 
 
 def create_start_neuron(brain: "Brain", encoded_input: Union[TensorLike, Sequence[float], float, int]) -> "Neuron":
@@ -78,7 +86,10 @@ def create_start_neuron(brain: "Brain", encoded_input: Union[TensorLike, Sequenc
         idx = avail[0] if avail else (0,) * int(getattr(brain, "n", 1))
     except Exception:
         idx = (0,)
-    n = brain.add_neuron(idx, tensor=0.0)
+    if idx in getattr(brain, "neurons", {}):
+        n = brain.neurons[idx]
+    else:
+        n = brain.add_neuron(idx, tensor=0.0)
     n.receive(encoded_input)
     try:
         report("training", "create_start_neuron", {"position": getattr(n, "position", None)}, "datapair")
@@ -106,114 +117,119 @@ def run_training_with_datapairs(
     mixedprecision: bool = True,
 ) -> Dict[str, Any]:
     from .marblemain import Wanderer  # lazy import
+    def _inner() -> Dict[str, Any]:
+        history: List[Dict[str, Any]] = []
+        count = 0
+        try:
+            brain._progress_total_walks = len(datapairs)  # type: ignore[attr-defined]
+        except Exception:
+            brain._progress_total_walks = 0  # type: ignore[attr-defined]
 
-    history: List[Dict[str, Any]] = []
-    count = 0
-    try:
-        brain._progress_total_walks = len(datapairs)  # type: ignore[attr-defined]
-    except Exception:
-        brain._progress_total_walks = 0  # type: ignore[attr-defined]
-
-    def _normalize_pair(p: Union[DataPair, Tuple[Any, Any], Tuple[Union[TensorLike, Sequence[int]], Union[TensorLike, Sequence[int]]]]) -> DataPair:
-        if isinstance(p, DataPair):
-            return p
-        if isinstance(p, tuple) and len(p) == 2:
-            a, b = p
-            try:
-                need_decode = False
-                for side in (a, b):
-                    if isinstance(side, (list, tuple)) and (len(side) == 0 or isinstance(side[0], int)):
-                        need_decode = True
-                    elif hasattr(side, "dtype") and hasattr(side, "numel"):
-                        need_decode = True
-                if need_decode:
-                    dp = DataPair.decode((a, b), codec)
-                else:
-                    dp = DataPair(a, b)
-                return dp
-            except Exception:
-                return DataPair(a, b)
-        return DataPair(p, None)  # type: ignore[arg-type]
-
-    def _dataset_sig(iterable) -> str:
-        h = hashlib.sha256()
-        max_items = 64
-        for idx, it in enumerate(iterable):
-            if idx >= max_items:
-                break
-            dp = _normalize_pair(it)
-            enc_l, enc_r = dp.encode(codec)
-            def chunk(x):
+        def _normalize_pair(p: Union[DataPair, Tuple[Any, Any], Tuple[Union[TensorLike, Sequence[int]], Union[TensorLike, Sequence[int]]]]) -> DataPair:
+            if isinstance(p, DataPair):
+                return p
+            if isinstance(p, tuple) and len(p) == 2:
+                a, b = p
                 try:
-                    if hasattr(x, "tolist"):
-                        return bytes(int(v) & 0xFF for v in x.view(-1).tolist()[:32])
-                    return bytes(int(v) & 0xFF for v in list(x)[:32])
+                    need_decode = False
+                    for side in (a, b):
+                        if isinstance(side, (list, tuple)) and (len(side) == 0 or isinstance(side[0], int)):
+                            need_decode = True
+                        elif hasattr(side, "dtype") and hasattr(side, "numel"):
+                            need_decode = True
+                    if need_decode:
+                        dp = DataPair.decode((a, b), codec)
+                    else:
+                        dp = DataPair(a, b)
+                    return dp
                 except Exception:
-                    return b""
-            h.update(chunk(enc_l)); h.update(chunk(enc_r))
-        return h.hexdigest()
+                    return DataPair(a, b)
+            return DataPair(p, None)  # type: ignore[arg-type]
 
-    if getattr(brain, "_dataset_signature", None) is None:
-        try:
-            brain._dataset_signature = _dataset_sig(datapairs)
-        except Exception:
-            brain._dataset_signature = None
-    else:
-        if not getattr(brain, "allow_dissimilar_datasets_in_wanderers", False):
+        def _dataset_sig(iterable) -> str:
+            h = hashlib.sha256()
+            max_items = 64
+            for idx, it in enumerate(iterable):
+                if idx >= max_items:
+                    break
+                dp = _normalize_pair(it)
+                enc_l, enc_r = dp.encode(codec)
+                def chunk(x):
+                    try:
+                        if hasattr(x, "tolist"):
+                            return bytes(int(v) & 0xFF for v in x.view(-1).tolist()[:32])
+                        return bytes(int(v) & 0xFF for v in list(x)[:32])
+                    except Exception:
+                        return b""
+                h.update(chunk(enc_l)); h.update(chunk(enc_r))
+            return h.hexdigest()
+
+        if getattr(brain, "_dataset_signature", None) is None:
             try:
-                if brain._dataset_signature != _dataset_sig(datapairs):
-                    raise ValueError("Dataset signature differs from the first-run signature for this Brain")
+                brain._dataset_signature = _dataset_sig(datapairs)
+            except Exception:
+                brain._dataset_signature = None
+        else:
+            if not getattr(brain, "allow_dissimilar_datasets_in_wanderers", False):
+                try:
+                    if brain._dataset_signature != _dataset_sig(datapairs):
+                        raise ValueError("Dataset signature differs from the first-run signature for this Brain")
+                except Exception:
+                    pass
+
+        cfg = neuro_config
+        wtype = wanderer_type
+        if lobe is not None and not getattr(lobe, "inherit_plugins", True):
+            wtype = lobe.plugin_types
+            cfg = lobe.neuro_config
+        w = Wanderer(
+            brain,
+            type_name=wtype,
+            seed=seed,
+            loss=loss,
+            neuro_config=cfg,
+            gradient_clip=gradient_clip,
+            mixedprecision=mixedprecision,
+        )
+        if selfattention is not None:
+            try:
+                selfattention.attach_to_wanderer(w)
             except Exception:
                 pass
 
-    # Build one shared Wanderer across pairs for consistency
-    cfg = neuro_config
-    wtype = wanderer_type
-    if lobe is not None and not getattr(lobe, "inherit_plugins", True):
-        wtype = lobe.plugin_types
-        cfg = lobe.neuro_config
-    w = Wanderer(
-        brain,
-        type_name=wtype,
-        seed=seed,
-        loss=loss,
-        neuro_config=cfg,
-        gradient_clip=gradient_clip,
-        mixedprecision=mixedprecision,
-    )
-    if selfattention is not None:
-        try:
-            selfattention.attach_to_wanderer(w)
-        except Exception:
-            pass
-
-    for item in datapairs:
-        brain._progress_walk = count  # type: ignore[attr-defined]
-        dp = _normalize_pair(item)
-        enc_l, enc_r = dp.encode(codec)
-        # Create/choose start neuron
-        start = left_to_start(dp.left, brain) if left_to_start is not None else create_start_neuron(brain, enc_l)
-        stats = w.walk(max_steps=steps_per_pair, start=start, lr=lr, lobe=lobe)
-        stats["plugins"] = [p.__class__.__name__ for p in getattr(w, "_wplugins", []) or []]
-        history.append(stats)
-        count += 1
-        try:
-            report("training", f"pair_{count}", {"loss": stats.get("loss", 0.0), "steps": stats.get("steps", 0)}, "datapair")
-        except Exception:
-            pass
-        if callback is not None:
+        for item in datapairs:
+            brain._progress_walk = count  # type: ignore[attr-defined]
+            dp = _normalize_pair(item)
+            enc_l, enc_r = dp.encode(codec)
+            start = left_to_start(dp.left, brain) if left_to_start is not None else create_start_neuron(brain, enc_l)
+            stats = w.walk(max_steps=steps_per_pair, start=start, lr=lr, lobe=lobe)
+            stats["plugins"] = [p.__class__.__name__ for p in getattr(w, "_wplugins", []) or []]
+            history.append(stats)
+            count += 1
             try:
-                callback(count - 1, stats, dp)
+                report("training", f"pair_{count}", {"loss": stats.get("loss", 0.0), "steps": stats.get("steps", 0)}, "datapair")
             except Exception:
                 pass
+            if callback is not None:
+                try:
+                    callback(count - 1, stats, dp)
+                except Exception:
+                    pass
 
-    final_loss = history[-1]["loss"] if history else 0.0
-    out = {"history": history, "final_loss": final_loss, "count": count}
-    try:
-        report("training", "datapair_summary", {"count": count, "final_loss": final_loss}, "datapair")
-    except Exception:
-        pass
-    return out
+        final_loss = history[-1]["loss"] if history else 0.0
+        out = {"history": history, "final_loss": final_loss, "count": count}
+        try:
+            report("training", "datapair_summary", {"count": count, "final_loss": final_loss}, "datapair")
+        except Exception:
+            pass
+        return out
+
+    lock = getattr(brain, "_train_lock", None)
+    if lock is None:
+        lock = threading.Lock()
+        setattr(brain, "_train_lock", lock)
+    with lock:
+        return _inner()
 
 
 def run_wanderer_epochs_with_datapairs(
@@ -318,11 +334,11 @@ def run_wanderers_parallel(
             raise ValueError("All datasets must have similar signatures unless brain.allow_dissimilar_datasets_in_wanderers=True")
 
     results: List[Dict[str, Any]] = []
-    # Thread mode only; process intentionally not implemented
     if mode == "thread":
-        import threading
-
-        lock = threading.Lock()
+        lock = getattr(brain, "_train_lock", None)
+        if lock is None:
+            lock = threading.Lock()
+            setattr(brain, "_train_lock", lock)
 
         def worker(idx: int) -> None:
             seed = seeds[idx] if seeds is not None and idx < len(seeds) else None

@@ -928,6 +928,9 @@ class Brain:
         # Named lobes (subgraphs of neurons and synapses)
         self.lobes: Dict[str, Lobe] = {}
 
+        # Lock to guard training operations and ensure thread safety
+        self._train_lock = threading.Lock()
+
     # --- Public API ---
     def is_inside(self, index: Sequence[int]) -> bool:
         if self.mode == "grid":
@@ -2771,6 +2774,23 @@ def quick_train_on_pairs(
     return res
 
 __all__ += ["make_default_codec", "quick_train_on_pairs"]
+
+# Re-import training helpers to ensure lock-based implementations are used
+from .training import (
+    run_training_with_datapairs,
+    run_wanderer_epochs_with_datapairs,
+    run_wanderers_parallel,
+    make_default_codec,
+    quick_train_on_pairs,
+)
+
+__all__ += [
+    "run_training_with_datapairs",
+    "run_wanderer_epochs_with_datapairs",
+    "run_wanderers_parallel",
+    "make_default_codec",
+    "quick_train_on_pairs",
+]
 # GUI: PyQt6 Modern App (lazy-import)
 # -----------------------------
 

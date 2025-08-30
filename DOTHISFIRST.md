@@ -114,6 +114,5 @@ The following test modules still need to be run and outputs analyzed:
 - tests/test_wanderer.py
 - tests/test_wanderer_alternate_paths_creator.py
 - tests/test_wanderer_bestpath_weights.py
-- tests/test_wanderer_helper_and_synapse.py
 - tests/test_wanderer_walk_summary.py
 - tests/test_wanderer_wayfinder_plugin.py

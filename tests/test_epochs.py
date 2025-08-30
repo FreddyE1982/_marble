@@ -17,6 +17,10 @@ class TestEpochs(unittest.TestCase):
             self.make_dp({"label": 1}, 1.0),
         ]
         from marble.marblemain import run_wanderer_epochs_with_datapairs
+
+        pre_brain_id = id(b)
+        pre_graph_id = id(b.neurons)
+
         result = run_wanderer_epochs_with_datapairs(
             b,
             pairs,
@@ -26,6 +30,8 @@ class TestEpochs(unittest.TestCase):
             lr=1e-2,
             loss="nn.MSELoss",
         )
+        self.assertEqual(id(b), pre_brain_id)
+        self.assertEqual(id(b.neurons), pre_graph_id)
         print("epochs final_loss:", result["final_loss"])
         self.assertIn("epochs", result)
         self.assertEqual(len(result["epochs"]), 2)
