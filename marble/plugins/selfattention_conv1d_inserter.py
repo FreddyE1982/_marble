@@ -105,10 +105,15 @@ class Conv1DRandomInsertionRoutine:
             dstn = brain.get_neuron(dst)
             if dstn is None:
                 return None
-            conv = brain.add_neuron(self._random_free_index(brain), tensor=[0.0], type_name="conv1d")
-            from ..marblemain import wire_param_synapses
+            conv_idx = self._random_free_index(brain)
+            conv = brain.add_neuron(conv_idx, tensor=[0.0])
+            from ..marblemain import wire_param_synapses, _NEURON_TYPES
             wire_param_synapses(brain, conv, ps)
             brain.connect(getattr(conv, "position"), dst, direction="uni")
+            conv.type_name = "conv1d"
+            plugin = _NEURON_TYPES.get("conv1d")
+            if plugin is not None and hasattr(plugin, "on_init"):
+                plugin.on_init(conv)  # type: ignore[attr-defined]
         except Exception:
             return None
         # No param updates here; leave evaluation/rollback policy to future extensions
