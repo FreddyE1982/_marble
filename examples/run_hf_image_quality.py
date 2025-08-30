@@ -5,6 +5,8 @@ This script demonstrates how to:
 - Derive quality quotients from human preference and alignment scores
 - Train a small Brain with stacked Wanderer plugins and neuroplasticity
 - Employ a custom SelfAttention routine combined with adaptive grad clipping
+- Gate Wanderer/neuroplasticity plugins via ``autoplugin`` and let neurons
+  switch types dynamically through ``autoneuron``
 
 Usage:
     py -3 examples/run_hf_image_quality.py
@@ -12,7 +14,6 @@ Usage:
 
 from __future__ import annotations
 
-import io
 from typing import Iterator
 
 from marble.marblemain import (
@@ -23,18 +24,10 @@ from marble.marblemain import (
     load_hf_streaming_dataset,
     SelfAttention,
 )
+import marble.plugins  # ensure plugin discovery
 from marble.plugins.selfattention_adaptive_grad_clip import AdaptiveGradClipRoutine
 from marble.plugins.selfattention_findbestneurontype import FindBestNeuronTypeRoutine
 from marble.plugins.selfattention_noise_profiler import ContextAwareNoiseRoutine
-
-
-def _img_to_bytes(img) -> bytes:
-    buf = io.BytesIO()
-    try:
-        img.save(buf, format="PNG")
-    except Exception:
-        return b""
-    return buf.getvalue()
 
 
 class QualityAwareRoutine:
@@ -68,8 +61,8 @@ class QualityAwareRoutine:
 def _sample_pairs(ds) -> Iterator:
     for ex in ds:
         prompt = ex.get_raw("prompt")
-        img1 = _img_to_bytes(ex.get_raw("image1"))
-        img2 = _img_to_bytes(ex.get_raw("image2"))
+        img1 = ex.get_raw("image1")
+        img2 = ex.get_raw("image2")
         pref1 = float(ex.get_raw("weighted_results_image1_preference"))
         pref2 = float(ex.get_raw("weighted_results_image2_preference"))
         al1 = float(ex.get_raw("weighted_results_image1_alignment"))
@@ -121,6 +114,7 @@ def main(epochs: int = 1) -> None:
         "distillation",
         "wanderalongsynapseweights",
         "dynamicdimensions",
+        "autoplugin",
     ]
     neuro_cfg = {
         "grow_on_step_when_stuck": True,
@@ -134,6 +128,19 @@ def main(epochs: int = 1) -> None:
         "l2_lambda": 1e-4,
         "batch_size": 5,
     }
+    def _start_neuron(left, br):
+        enc = codec.encode(left)
+        try:
+            idx = br.available_indices()[0]
+        except Exception:
+            idx = (0,) * int(getattr(br, "n", 1))
+        if idx in getattr(br, "neurons", {}):
+            n = br.neurons[idx]
+        else:
+            n = br.add_neuron(idx, tensor=0.0, type_name="autoneuron")
+        n.receive(enc)
+        return n
+
     for _ in range(int(epochs)):
         pairs = _sample_pairs(ds)
         run_training_with_datapairs(
@@ -148,6 +155,7 @@ def main(epochs: int = 1) -> None:
             selfattention=sa,
             streaming=True,
             batch_size=5,
+            left_to_start=_start_neuron,
         )
     print("streamed quality training complete")
 
