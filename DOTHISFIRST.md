@@ -72,3 +72,48 @@ enforced strictly through `Lock` primitives.
    and after training steps to detect accidental copies.
 4. Document the lock-only policy and immutability guarantees in
    `ARCHITECTURE.md` and update tutorials if necessary.
+
+# Pending tests
+
+The following test modules still need to be run and outputs analyzed:
+- tests/test_datapair.py
+- tests/test_earlystop_plugin.py
+- tests/test_epochs.py
+- tests/test_findbestneurontype_fallback.py
+- tests/test_graph.py
+- tests/test_latent_and_synthetic_plugins.py
+- tests/test_learnable_params.py
+- tests/test_learning_paradigm.py
+- tests/test_learning_paradigm_helpers.py
+- tests/test_learning_paradigm_stacking.py
+- tests/test_learning_paradigm_toggle_and_growth.py
+- tests/test_lobe_training.py
+- tests/test_maxpool_improvement.py
+- tests/test_neuroplasticity.py
+- tests/test_new_neuron_plugins.py
+- tests/test_new_paradigms_and_plugins.py
+- tests/test_new_wanderer_plugins.py
+- tests/test_parallel.py
+- tests/test_plugin_stacking.py
+- tests/test_quantumtype_plugin.py
+- tests/test_reporter.py
+- tests/test_reporter_clear.py
+- tests/test_reporter_subgroups.py
+- tests/test_selfattention_conv1d.py
+- tests/test_super_advanced_neuron_plugins.py
+- tests/test_synapse_plugins.py
+- tests/test_training_with_datapairs.py
+- tests/test_triple_contrast_plugin.py
+- tests/test_ultra_brain_train_plugins.py
+- tests/test_ultra_neuron_plugins.py
+- tests/test_ultra_neuroplasticity_plugins.py
+- tests/test_ultra_selfattention_plugins.py
+- tests/test_ultra_synapse_plugins.py
+- tests/test_ultra_wanderer_plugins.py
+- tests/test_unfold_fold_unpool_improvement.py
+- tests/test_wanderer.py
+- tests/test_wanderer_alternate_paths_creator.py
+- tests/test_wanderer_bestpath_weights.py
+- tests/test_wanderer_helper_and_synapse.py
+- tests/test_wanderer_walk_summary.py
+- tests/test_wanderer_wayfinder_plugin.py
