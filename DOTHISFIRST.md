@@ -35,6 +35,26 @@ in current ML literature.
 All listed test modules have been executed and their outputs analyzed for
 logical consistency.
 
+# Add ultra plugin suites
+
+## Goal
+Introduce another wave of five ultra‑experimental plugins for every existing
+plugin type. Each plugin must surface all learnable parameters through
+`expose_learnable_params` and pursue emergent behaviour far beyond current
+literature.
+
+## Steps
+1. Implement ultra neuron plugin suite. [complete]
+2. Implement ultra synapse plugin suite. [complete]
+3. Implement ultra wanderer plugin suite.
+4. Implement ultra brain_train plugin suite.
+5. Implement ultra selfattention plugin suite.
+6. Implement ultra neuroplasticity plugin suite.
+
+## Pending tests
+Run dedicated tests for each ultra plugin suite to confirm registration and
+learnable parameter exposure.
+
 # Lock-based thread safety and immutable training
 
 ## Goal
