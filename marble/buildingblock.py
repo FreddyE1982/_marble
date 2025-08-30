@@ -6,7 +6,7 @@ BuildingBlocks are tiny plugins that perform atomic graph manipulations.
 They can be combined freely to assemble higher level dynamic plugins.
 """
 
-from typing import Any, Dict
+from typing import Any, Dict, Sequence
 
 from .graph import _DeviceHelper
 
@@ -28,6 +28,32 @@ def register_buildingblock_type(name: str, plugin: Any) -> None:
 
 class BuildingBlock(_DeviceHelper):
     """Base class for all BuildingBlock plugins."""
+
+    def _to_index(self, brain: "Brain", index: Any) -> tuple:
+        """Convert a learnable index tensor into a usable tuple."""
+        if hasattr(index, "detach"):
+            try:
+                index = index.detach().to("cpu").tolist()
+            except Exception:
+                index = [index.detach().to("cpu").item()]
+        if not isinstance(index, Sequence):
+            index = [index]
+        out = []
+        for v in index:
+            if hasattr(v, "detach"):
+                v = v.detach().to("cpu").item()
+            out.append(int(float(v)))
+        if getattr(brain, "mode", "grid") == "grid":
+            return tuple(out)
+        return tuple(float(v) for v in out)
+
+    def _to_float(self, value: Any) -> float:
+        if hasattr(value, "detach"):
+            try:
+                return float(value.detach().to("cpu").item())
+            except Exception:
+                pass
+        return float(value)
 
     def apply(self, brain: "Brain", *args: Any, **kwargs: Any) -> Any:  # pragma: no cover - interface
         raise NotImplementedError

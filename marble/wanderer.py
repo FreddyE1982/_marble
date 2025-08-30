@@ -40,31 +40,58 @@ def expose_learnable_params(fn: Callable[..., Any]) -> Callable[..., Any]:
     """
 
     sig = inspect.signature(fn)
-    param_info = [
-        p for p in sig.parameters.values() if p.name not in {"self", "wanderer"}
-    ]
+    param_info = []
+    for p in sig.parameters.values():
+        if p.name in {"self", "wanderer", "brain"}:
+            continue
+        ann_text = str(p.annotation)
+        if "str" in ann_text or "Synapse" in ann_text or "Neuron" in ann_text:
+            continue
+        if isinstance(p.default, str) or (p.default is None and "str" in ann_text):
+            continue
+        param_info.append(p)
 
     def wrapper(*args: Any, **kwargs: Any) -> Any:
         if not args:
             return fn(*args, **kwargs)
-        wanderer = args[0]
-        try:
-            ensure = getattr(wanderer, "ensure_learnable_param")
-            getter = getattr(wanderer, "get_learnable_param_tensor")
-        except Exception:
+        target = None
+        for obj in args:
+            if hasattr(obj, "ensure_learnable_param") and hasattr(
+                obj, "get_learnable_param_tensor"
+            ):
+                target = obj
+                break
+        if target is None:
             return fn(*args, **kwargs)
+        ensure = getattr(target, "ensure_learnable_param")
+        getter = getattr(target, "get_learnable_param_tensor")
+        use_prefix = getattr(target, "__class__", object).__name__ != "Wanderer"
+        prefix = f"{getattr(fn, '__qualname__', fn.__name__)}_" if use_prefix else ""
+        bound = sig.bind_partial(*args, **kwargs)
+        args_list = list(args)
+        param_positions = list(sig.parameters)
         for p in param_info:
-            name = p.name
-            if name not in getattr(wanderer, "_learnables", {}):
-                init = kwargs.get(name)
-                if init is None:
-                    if p.default is inspect._empty:
-                        init = 0.0
-                    else:
-                        init = p.default
-                ensure(name, init)
-            kwargs[name] = getter(name)
-        return fn(*args, **kwargs)
+            name = f"{prefix}{p.name}"
+            init = bound.arguments.get(p.name, p.default if p.default is not inspect._empty else 0.0)
+            try:
+                float_init = float(init) if not isinstance(init, (list, tuple)) else init
+            except Exception:
+                # Non-numeric parameter; pass through unchanged
+                pos = param_positions.index(p.name)
+                if pos < len(args_list):
+                    args_list[pos] = init
+                else:
+                    kwargs[p.name] = init
+                continue
+            if name not in getattr(target, "_learnables", {}):
+                ensure(name, float_init)
+            tensor = getter(name)
+            pos = param_positions.index(p.name)
+            if pos < len(args_list):
+                args_list[pos] = tensor
+            else:
+                kwargs[p.name] = tensor
+        return fn(*args_list, **kwargs)
 
     return wrapper
 

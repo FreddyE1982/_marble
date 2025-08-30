@@ -4,11 +4,15 @@ from __future__ import annotations
 
 from ..buildingblock import BuildingBlock
 from ..graph import Synapse
+from ..wanderer import expose_learnable_params
 
 
 class ChangeSynapseBiasPlugin(BuildingBlock):
+    @expose_learnable_params
     def apply(self, brain, synapse: Synapse, bias: float):
-        synapse.bias = float(bias)
+        if synapse not in getattr(brain, "synapses", []):
+            return None
+        synapse.bias = self._to_float(bias)
         return synapse.bias
 
 

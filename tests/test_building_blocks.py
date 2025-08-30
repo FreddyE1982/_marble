@@ -10,7 +10,7 @@ class TestBuildingBlocks(unittest.TestCase):
         brain = Brain(1, size=2)
         create = get_buildingblock_type("create_neuron")
         n0 = create.apply(brain, (0,), [0.0])
-        n1 = create.apply(brain, (1,), [0.0])
+        brain.add_neuron((1,), tensor=[0.0])
         weight = get_buildingblock_type("change_neuron_weight")
         weight.apply(brain, (0,), 2.0)
         bias = get_buildingblock_type("change_neuron_bias")
@@ -34,9 +34,10 @@ class TestBuildingBlocks(unittest.TestCase):
 
     def test_synapse_blocks(self):
         brain = Brain(1, size=2)
-        create = get_buildingblock_type("create_neuron")
-        n0 = create.apply(brain, (0,), [0.0])
-        n1 = create.apply(brain, (1,), [0.0])
+        brain.add_neuron((0,), tensor=[0.0])
+        brain.add_neuron((1,), tensor=[0.0])
+        n0 = brain.get_neuron((0,))
+        n1 = brain.get_neuron((1,))
         cs = get_buildingblock_type("create_synapse")
         syn = cs.apply(brain, (0,), (1,), weight=1.0, bias=0.5)
         w = get_buildingblock_type("change_synapse_weight")

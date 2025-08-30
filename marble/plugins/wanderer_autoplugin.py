@@ -15,6 +15,7 @@ model size and complexity (implicitly via gradients adjusting the gate biases).
 from typing import Any, List, Tuple, Optional
 
 from ..wanderer import expose_learnable_params
+from ..buildingblock import get_buildingblock_type, _BUILDINGBLOCK_TYPES
 
 
 class AutoPlugin:
@@ -52,6 +53,8 @@ class AutoPlugin:
             wanderer.ensure_learnable_param(f"autoplugin_bias_{name}", 0.0)
             new_stack.append(_GatedPlugin(p, name, self))
         wanderer._wplugins = new_stack
+        for bb_name in _BUILDINGBLOCK_TYPES.keys():
+            wanderer.ensure_learnable_param(f"autoplugin_bias_{bb_name}", 0.0)
 
     def before_walk(self, wanderer: "Wanderer", start: "Neuron") -> None:
         """Ensure neuroplasticity plugins are wrapped before training."""
@@ -92,6 +95,19 @@ class AutoPlugin:
         score = self._raw_score(wanderer)
         gate = torch.sigmoid(score + bias)
         return bool(gate.detach().to("cpu").item() > 0.5)
+
+    def apply_buildingblock(
+        self, wanderer: "Wanderer", name: str, *args: Any, **kwargs: Any
+    ) -> Any:
+        """Apply a building block if its gate is active."""
+
+        block = get_buildingblock_type(name)
+        if block is None or name in self._disabled:
+            return None
+        wanderer.ensure_learnable_param(f"autoplugin_bias_{name}", 0.0)
+        if not self.is_active(wanderer, name, None):
+            return None
+        return block.apply(wanderer.brain, *args, **kwargs)
 
     @expose_learnable_params
     def _raw_score(

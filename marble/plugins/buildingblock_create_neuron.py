@@ -5,9 +5,11 @@ from __future__ import annotations
 from typing import Any, Sequence
 
 from ..buildingblock import BuildingBlock
+from ..wanderer import expose_learnable_params
 
 
 class CreateNeuronPlugin(BuildingBlock):
+    @expose_learnable_params
     def apply(
         self,
         brain,
@@ -18,7 +20,17 @@ class CreateNeuronPlugin(BuildingBlock):
         bias: float = 0.0,
         type_name: str | None = None,
     ):
-        return brain.add_neuron(index, tensor=tensor, weight=weight, bias=bias, type_name=type_name)
+        idx = self._to_index(brain, index)
+        try:
+            return brain.add_neuron(
+                idx,
+                tensor=tensor,
+                weight=self._to_float(weight),
+                bias=self._to_float(bias),
+                type_name=type_name,
+            )
+        except Exception:
+            return None
 
 
 __all__ = ["CreateNeuronPlugin"]

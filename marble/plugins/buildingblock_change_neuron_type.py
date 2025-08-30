@@ -6,13 +6,16 @@ from typing import Sequence
 
 from ..buildingblock import BuildingBlock
 from ..graph import _NEURON_TYPES
+from ..wanderer import expose_learnable_params
 
 
 class ChangeNeuronTypePlugin(BuildingBlock):
+    @expose_learnable_params
     def apply(self, brain, index: Sequence[int], type_name: str):
-        neuron = brain.get_neuron(index)
+        idx = self._to_index(brain, index)
+        neuron = brain.get_neuron(idx)
         if neuron is None:
-            raise ValueError("Neuron not found")
+            return None
         neuron.type_name = type_name
         plugin = _NEURON_TYPES.get(type_name)
         if plugin is not None and hasattr(plugin, "on_init"):

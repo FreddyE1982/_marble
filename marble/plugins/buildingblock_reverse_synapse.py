@@ -4,12 +4,14 @@ from __future__ import annotations
 
 from ..buildingblock import BuildingBlock
 from ..graph import Neuron, Synapse
+from ..wanderer import expose_learnable_params
 
 
 class ReverseSynapsePlugin(BuildingBlock):
+    @expose_learnable_params
     def apply(self, brain, synapse: Synapse):
-        if synapse not in brain.synapses:
-            raise ValueError("Synapse not in brain")
+        if synapse not in getattr(brain, "synapses", []):
+            return None
         src = synapse.source
         dst = synapse.target
         if isinstance(src, Neuron):
