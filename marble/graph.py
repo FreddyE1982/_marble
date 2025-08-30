@@ -111,6 +111,13 @@ class Neuron(_DeviceHelper):
         except Exception:
             pass
 
+    # Disallow copying to maintain graph immutability during training
+    def __copy__(self):
+        raise TypeError("Neuron instances are immutable and cannot be copied")
+
+    def __deepcopy__(self, memo):
+        raise TypeError("Neuron instances are immutable and cannot be deep-copied")
+
     def connect_to(self, other: "Neuron", *, direction: str = "uni", age: int = 0, type_name: Optional[str] = None) -> "Synapse":
         s = Synapse(self, other, direction=direction, age=age, type_name=type_name)
         try:
@@ -211,6 +218,13 @@ class Synapse(_DeviceHelper):
             report("synapse", "create", {"direction": self.direction, "age": self.age, "weight": self.weight, "bias": self.bias, "type": self.type_name}, "events")
         except Exception:
             pass
+
+    # Disallow copying to maintain graph immutability during training
+    def __copy__(self):
+        raise TypeError("Synapse instances are immutable and cannot be copied")
+
+    def __deepcopy__(self, memo):
+        raise TypeError("Synapse instances are immutable and cannot be deep-copied")
 
     def transmit(self, value: Union[TensorLike, Sequence[float], float, int], *, direction: str = "forward") -> Neuron:
         plugin = _SYNAPSE_TYPES.get(self.type_name) if self.type_name else None

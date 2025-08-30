@@ -52,9 +52,9 @@ class QuantumTypeNeuronPlugin:
 
     # ------------------------------------------------------------------
     # Learnable global wave-function parameters
-    @staticmethod
     @expose_learnable_params
     def _wave_logits(
+        self,
         wanderer: "Wanderer",
         *,
         logits: Sequence[float] | None = None,
@@ -114,9 +114,14 @@ class QuantumTypeNeuronPlugin:
         logits = None
         if wanderer is not None:
             try:
-                logits = self._wave_logits(wanderer)
+                logits = wanderer.get_learnable_param_tensor("logits")
             except Exception:
                 logits = None
+            if logits is None:
+                try:
+                    logits = self._wave_logits(wanderer)
+                except Exception:
+                    logits = None
 
         if torch is not None and neuron._is_torch_tensor(x):
             w = weights if hasattr(weights, "to") else torch.tensor(weights, dtype=torch.float32, device=device)

@@ -5,9 +5,9 @@ import math
 import random
 import time
 import threading
-from threading import RLock
+from threading import Lock
 
-RLockType = type(RLock())
+LockType = type(Lock())
 from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Tuple, Union
 
 from .codec import UniversalTensorCodec, TensorLike
@@ -75,12 +75,8 @@ def run_wanderer_training(
             pass
         return out
 
-    lock = getattr(brain, "_train_lock", None)
-    if not isinstance(lock, RLockType):
-        lock = RLock()
-        setattr(brain, "_train_lock", lock)
-    with lock:
-        return _inner()
+    # Locking occurs within run_training_with_datapairs; no external lock to avoid deadlocks
+    return _inner()
 
 
 def create_start_neuron(brain: "Brain", encoded_input: Union[TensorLike, Sequence[float], float, int]) -> "Neuron":
@@ -196,7 +192,8 @@ def run_training_with_datapairs(
         )
         if selfattention is not None:
             try:
-                selfattention.attach_to_wanderer(w)
+                from .selfattention import attach_selfattention
+                attach_selfattention(w, selfattention)
             except Exception:
                 pass
 
@@ -228,8 +225,8 @@ def run_training_with_datapairs(
         return out
 
     lock = getattr(brain, "_train_lock", None)
-    if not isinstance(lock, RLockType):
-        lock = RLock()
+    if not isinstance(lock, LockType):
+        lock = Lock()
         setattr(brain, "_train_lock", lock)
     with lock:
         return _inner()
@@ -296,8 +293,8 @@ def run_wanderer_epochs_with_datapairs(
         return out
 
     lock = getattr(brain, "_train_lock", None)
-    if not isinstance(lock, RLockType):
-        lock = RLock()
+    if not isinstance(lock, LockType):
+        lock = Lock()
         setattr(brain, "_train_lock", lock)
     with lock:
         return _inner()
@@ -346,28 +343,22 @@ def run_wanderers_parallel(
 
     results: List[Dict[str, Any]] = []
     if mode == "thread":
-        lock = getattr(brain, "_train_lock", None)
-        if not isinstance(lock, RLockType):
-            lock = RLock()
-            setattr(brain, "_train_lock", lock)
-
         def worker(idx: int) -> None:
             seed = seeds[idx] if seeds is not None and idx < len(seeds) else None
-            with lock:
-                res = run_training_with_datapairs(
-                    brain,
-                    normed_lists[idx],
-                    codec,
-                    steps_per_pair=steps_per_pair,
-                    lr=lr,
-                    wanderer_type=wanderer_type,
-                    seed=seed,
-                    loss=loss,
-                    left_to_start=left_to_start,
-                    neuro_config=neuro_config,
-                    mixedprecision=mixedprecision,
-                )
-                results.append(res)
+            res = run_training_with_datapairs(
+                brain,
+                normed_lists[idx],
+                codec,
+                steps_per_pair=steps_per_pair,
+                lr=lr,
+                wanderer_type=wanderer_type,
+                seed=seed,
+                loss=loss,
+                left_to_start=left_to_start,
+                neuro_config=neuro_config,
+                mixedprecision=mixedprecision,
+            )
+            results.append(res)
 
         threads: List[threading.Thread] = []
         for i in range(len(normed_lists)):
