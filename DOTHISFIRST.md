@@ -46,7 +46,7 @@ literature.
 ## Steps
 1. Implement ultra neuron plugin suite. [complete]
 2. Implement ultra synapse plugin suite. [complete]
-3. Implement ultra wanderer plugin suite.
+3. Implement ultra wanderer plugin suite. [complete]
 4. Implement ultra brain_train plugin suite.
 5. Implement ultra selfattention plugin suite.
 6. Implement ultra neuroplasticity plugin suite.
