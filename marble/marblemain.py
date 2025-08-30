@@ -2584,28 +2584,28 @@ def run_wanderers_parallel(
     results: List[Optional[Dict[str, Any]]] = [None] * len(normed_lists)
 
     if mode == "thread":
-        import threading, copy
+        import threading
 
-        def runner(idx: int):
+        lock = threading.Lock()
+
+        def runner(idx: int) -> None:
             seed = None if seeds is None or idx >= len(seeds) else seeds[idx]
-            # Each thread trains on its own deep copy of the brain to prevent
-            # autograd graph conflicts when backward is executed concurrently.
-            local_brain = copy.deepcopy(brain)
-            res = run_training_with_datapairs(
-                local_brain,
-                normed_lists[idx],
-                codec,
-                steps_per_pair=steps_per_pair,
-                lr=lr,
-                wanderer_type=wanderer_type,
-                seed=seed,
-                loss=loss,
-                left_to_start=left_to_start,
-                mixedprecision=mixedprecision,
-            )
-            results[idx] = res
+            with lock:
+                res = run_training_with_datapairs(
+                    brain,
+                    normed_lists[idx],
+                    codec,
+                    steps_per_pair=steps_per_pair,
+                    lr=lr,
+                    wanderer_type=wanderer_type,
+                    seed=seed,
+                    loss=loss,
+                    left_to_start=left_to_start,
+                    mixedprecision=mixedprecision,
+                )
+                results[idx] = res
 
-        threads = []
+        threads: List[threading.Thread] = []
         for i in range(len(normed_lists)):
             t = threading.Thread(target=runner, args=(i,), daemon=True)
             threads.append(t)

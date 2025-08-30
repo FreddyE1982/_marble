@@ -101,7 +101,7 @@ Data Flow (Typical)
 
 Concurrency
 
-- Thread-mode parallelism is supported via `run_wanderers_parallel` with per-wanderer datasets and shared `Brain`. Basic lock files on Windows limit concurrent neuron/synapse mutation. Process mode is intentionally not implemented and raises `NotImplementedError`.
+- Thread-mode parallelism is supported via `run_wanderers_parallel` with per-wanderer datasets and a shared `Brain` guarded by a `threading.Lock`. The `Brain` and its graph are never copied during training. Process mode is intentionally not implemented and raises `NotImplementedError`.
 
 Packaging and Layout
 

@@ -23,6 +23,9 @@ class TestTrainingWithDataPairs(unittest.TestCase):
 
         from marble.marblemain import run_training_with_datapairs
 
+        pre_brain_id = id(b)
+        pre_graph_id = id(b.neurons)
+
         result = run_training_with_datapairs(
             b,
             pairs,
@@ -31,6 +34,8 @@ class TestTrainingWithDataPairs(unittest.TestCase):
             lr=5e-3,
             loss="nn.MSELoss",
         )
+        self.assertEqual(id(b), pre_brain_id)
+        self.assertEqual(id(b.neurons), pre_graph_id)
 
         print("datapair training final_loss:", result["final_loss"], "count:", result["count"])
         self.assertEqual(result["count"], 3)
