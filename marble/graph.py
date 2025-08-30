@@ -1,9 +1,12 @@
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
+from typing import Any, Dict, List, Optional, Sequence, Tuple, Union, TYPE_CHECKING
 
 from .codec import TensorLike
 from .reporter import report
+
+if TYPE_CHECKING:
+    from .selfattention import SelfAttention
 
 
 class _DeviceHelper:
@@ -161,6 +164,36 @@ class Neuron(_DeviceHelper):
         except Exception:
             pass
         return out
+
+    def describe_for_selfattention(self) -> Dict[str, Any]:
+        """Return core attributes for SelfAttention consumption."""
+        pos = getattr(self, "position", None)
+        return {
+            "weight": float(self.weight),
+            "type_name": self.type_name,
+            "position": pos,
+        }
+
+    def report_to_selfattention(self, sa: Optional["SelfAttention"] = None) -> Dict[str, Any]:
+        """Provide a snapshot of this neuron's state to a SelfAttention instance.
+
+        Parameters
+        ----------
+        sa:
+            Optional SelfAttention object that receives the report via its
+            internal `_receive_neuron_report` hook.
+        """
+        info = self.describe_for_selfattention()
+        if sa is not None:
+            try:
+                getattr(sa, "_receive_neuron_report", lambda *_: None)(self, info)
+            except Exception:
+                pass
+        try:
+            report("neuron", "selfattention_report", info, "events")
+        except Exception:
+            pass
+        return info
 
     def step_age(self, delta: int = 1) -> None:
         self.age += int(delta)
