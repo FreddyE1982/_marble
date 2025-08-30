@@ -47,7 +47,6 @@ class AutoPlugin:
         """Wrap existing Wanderer plugins with gating proxies."""
 
         wplugins = getattr(wanderer, "_wplugins", [])
-        explicit = getattr(wanderer, "_explicit_wplugin_names", set())
         new_stack: List[Any] = []
         for p in list(wplugins):
             if p is self:
@@ -55,9 +54,6 @@ class AutoPlugin:
                 continue
             name = p.__class__.__name__
             if name in self._disabled:
-                continue
-            if name in explicit:
-                new_stack.append(p)
                 continue
             wanderer.ensure_learnable_param(f"autoplugin_bias_{name}", 0.0)
             wanderer.ensure_learnable_param(f"autoplugin_gain_{name}", 1.0)
@@ -72,14 +68,10 @@ class AutoPlugin:
 
         if not self._neuro_wrapped:
             nplugins = getattr(wanderer, "_neuro_plugins", [])
-            explicit_n = getattr(wanderer, "_explicit_neuroplugin_names", set())
             new_stack: List[Any] = []
             for p in list(nplugins):
                 name = p.__class__.__name__
                 if name in self._disabled:
-                    continue
-                if name in explicit_n:
-                    new_stack.append(p)
                     continue
                 wanderer.ensure_learnable_param(f"autoplugin_bias_{name}", 0.0)
                 wanderer.ensure_learnable_param(f"autoplugin_gain_{name}", 1.0)
@@ -184,21 +176,17 @@ class AutoPlugin:
         if name in self._disabled:
             self._update_log(wanderer, plugintype, name, False)
             return False
-        explicit_w = getattr(wanderer, "_explicit_wplugin_names", set())
-        explicit_n = getattr(wanderer, "_explicit_neuroplugin_names", set())
-        if name in explicit_w or name in explicit_n:
-            self._update_log(wanderer, plugintype, name, True)
-            return True
         torch = getattr(wanderer, "_torch", None)
-        if torch is None:
-            self._update_log(wanderer, plugintype, name, True)
-            return True
         bias = wanderer.get_learnable_param_tensor(f"autoplugin_bias_{name}")
         wanderer.ensure_learnable_param(f"autoplugin_gain_{name}", 1.0)
         gain = wanderer.get_learnable_param_tensor(f"autoplugin_gain_{name}")
         score = self._attention_score(wanderer) * gain + bias
-        gate = torch.sigmoid(score)
-        result = bool(gate.detach().to("cpu").item() > 0.5)
+        if torch is None:
+            gate = 1.0 / (1.0 + math.exp(-float(score)))
+            result = gate > 0.5
+        else:
+            gate = torch.sigmoid(score)
+            result = bool(gate.detach().to("cpu").item() > 0.5)
         self._update_log(wanderer, plugintype, name, result)
         return result
 

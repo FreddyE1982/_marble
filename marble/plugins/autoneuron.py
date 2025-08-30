@@ -73,16 +73,24 @@ class AutoNeuronPlugin:
             except Exception:
                 score = bias
             scores.append(score)
-        if torch is None:
-            return names[0]
+        if torch is not None:
+            try:
+                stacked = torch.stack(
+                    [
+                        s if hasattr(s, "to") else torch.tensor(float(s), device=device)
+                        for s in scores
+                    ]
+                )
+                idx = int(torch.argmax(stacked).detach().to("cpu").item())
+                return names[idx]
+            except Exception:
+                pass
         try:
-            stacked = torch.stack(
-                [
-                    s if hasattr(s, "to") else torch.tensor(float(s), device=device)
-                    for s in scores
-                ]
-            )
-            idx = int(torch.argmax(stacked).detach().to("cpu").item())
+            vals = [
+                float(s.detach().to("cpu").item()) if hasattr(s, "detach") else float(s)
+                for s in scores
+            ]
+            idx = int(max(range(len(vals)), key=lambda i: vals[i]))
             return names[idx]
         except Exception:
             return names[0]

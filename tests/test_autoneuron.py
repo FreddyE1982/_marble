@@ -6,13 +6,18 @@ class TestAutoNeuron(unittest.TestCase):
         from marble.marblemain import Brain, Wanderer, register_neuron_type
 
         class FailingPlugin:
+            def __init__(self):
+                self.calls = 0
+
             def forward(self, neuron, input_value=None):
+                self.calls += 1
                 raise RuntimeError("boom")
 
         self.Brain = Brain
         self.Wanderer = Wanderer
         self.register_neuron_type = register_neuron_type
-        self.register_neuron_type("fail", FailingPlugin())
+        self.fail_impl = FailingPlugin()
+        self.register_neuron_type("fail", self.fail_impl)
 
     def test_fallback_on_error(self):
         b = self.Brain(1, size=(1,))
@@ -22,8 +27,9 @@ class TestAutoNeuron(unittest.TestCase):
         w.ensure_learnable_param("autoneuron_bias_fail", 10.0)
         w.ensure_learnable_param("autoneuron_bias_base", -10.0)
         res = w.walk(max_steps=1, start=n, lr=0.0)
-        print("walk result:", res)
+        print("walk result:", res, "fail calls:", self.fail_impl.calls)
         self.assertIn("loss", res)
+        self.assertGreater(self.fail_impl.calls, 0)
         self.assertEqual(n.type_name, "autoneuron")
 
     def test_exclude_prevents_usage(self):
