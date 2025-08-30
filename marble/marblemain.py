@@ -86,6 +86,11 @@ from .graph import (
     Neuron,
     Synapse,
 )
+from .buildingblock import (
+    register_buildingblock_type,
+    get_buildingblock_type,
+    BuildingBlock,
+)
 
 from .lobe import Lobe
 
@@ -97,6 +102,9 @@ __all__ += [
     "register_synapse_type",
     "Neuron",
     "Synapse",
+    "register_buildingblock_type",
+    "get_buildingblock_type",
+    "BuildingBlock",
     "Lobe",
 ]
 

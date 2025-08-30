@@ -436,3 +436,23 @@ Rule: Plugins must register solely through automatic discovery. Adding a module 
 Context: Ensures a consistent, zero-boilerplate plugin workflow.
 Benefit: Simplifies extension and eliminates manual registry bookkeeping.
 Rollback Plan: Remove this rule if manual registration ever becomes necessary again.
+
+# BuildingBlock Plugins
+
+Small "BuildingBlock" plugins provide atomic graph operations and can be freely
+combined into larger DynamicPlugins. Modules prefixed with `buildingblock_`
+are auto-registered. Available blocks include:
+
+- `move_neuron`
+- `change_neuron_weight`
+- `change_neuron_bias`
+- `create_neuron`
+- `change_neuron_type`
+- `move_synapse`
+- `change_synapse_weight`
+- `change_synapse_bias`
+- `create_synapse`
+- `change_synapse_type`
+
+Each block has unrestricted read/write access to the graph, neurons, and
+synapses (create, edit, move, change type/weight/bias).
