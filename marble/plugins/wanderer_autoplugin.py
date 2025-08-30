@@ -3,8 +3,9 @@ from __future__ import annotations
 """Wanderer plugin that learns to enable or disable other plugins.
 
 The plugin wraps all existing Wanderer and neuroplasticity plugins with a
-gating function. The gating decision is driven by learnable parameters exposed
-via :func:`expose_learnable_params` and per-plugin bias terms registered on the
+gating function. The gating decision is driven by a self‑attention score over
+training metrics (loss, speed, model complexity) exposed via
+:func:`expose_learnable_params` and per-plugin bias/gain terms registered on the
 owning :class:`~marble.wanderer.Wanderer` instance. For every step the gate
 considers the current walk step and the active neuron.
 
@@ -12,6 +13,7 @@ Learned objective prioritizes overall accuracy, then training speed, followed by
 model size and complexity (implicitly via gradients adjusting the gate biases).
 """
 
+import math
 from typing import Any, Dict, List, Tuple, Optional
 
 from ..wanderer import expose_learnable_params
@@ -52,10 +54,12 @@ class AutoPlugin:
                 new_stack.append(p)
                 continue
             wanderer.ensure_learnable_param(f"autoplugin_bias_{name}", 0.0)
+            wanderer.ensure_learnable_param(f"autoplugin_gain_{name}", 1.0)
             new_stack.append(_GatedPlugin(p, name, self))
         wanderer._wplugins = new_stack
         for bb_name in _BUILDINGBLOCK_TYPES.keys():
             wanderer.ensure_learnable_param(f"autoplugin_bias_{bb_name}", 0.0)
+            wanderer.ensure_learnable_param(f"autoplugin_gain_{bb_name}", 1.0)
 
     def before_walk(self, wanderer: "Wanderer", start: "Neuron") -> None:
         """Ensure all plugin stacks are wrapped before training."""
@@ -72,6 +76,7 @@ class AutoPlugin:
                     new_stack.append(p)
                     continue
                 wanderer.ensure_learnable_param(f"autoplugin_bias_{name}", 0.0)
+                wanderer.ensure_learnable_param(f"autoplugin_gain_{name}", 1.0)
                 new_stack.append(_GatedPlugin(p, name, self))
             wanderer._neuro_plugins = new_stack
             self._neuro_wrapped = True
@@ -88,6 +93,7 @@ class AutoPlugin:
                     if name in self._disabled:
                         continue
                     wanderer.ensure_learnable_param(f"autoplugin_bias_{name}", 0.0)
+                    wanderer.ensure_learnable_param(f"autoplugin_gain_{name}", 1.0)
                     new_routines.append(_GatedSARoutine(r, name, self))
                 sa._routines = new_routines
             self._sa_wrapped = True
@@ -108,8 +114,10 @@ class AutoPlugin:
         if torch is None:
             return True
         bias = wanderer.get_learnable_param_tensor(f"autoplugin_bias_{name}")
-        score = self._raw_score(wanderer)
-        gate = torch.sigmoid(score + bias)
+        wanderer.ensure_learnable_param(f"autoplugin_gain_{name}", 1.0)
+        gain = wanderer.get_learnable_param_tensor(f"autoplugin_gain_{name}")
+        score = self._attention_score(wanderer) * gain + bias
+        gate = torch.sigmoid(score)
         return bool(gate.detach().to("cpu").item() > 0.5)
 
     def apply_buildingblock(
@@ -121,27 +129,61 @@ class AutoPlugin:
         if block is None or name in self._disabled:
             return None
         wanderer.ensure_learnable_param(f"autoplugin_bias_{name}", 0.0)
+        wanderer.ensure_learnable_param(f"autoplugin_gain_{name}", 1.0)
         if not self.is_active(wanderer, name, None):
             return None
         return block.apply(wanderer.brain, *args, **kwargs)
 
     @expose_learnable_params
-    def _raw_score(
+    def _attention_score(
         self,
         wanderer: "Wanderer",
         *,
-        base: float = 0.0,
-        step_weight: float = 0.0,
-        neuron_weight: float = 0.0,
+        q_loss: float = 1.0,
+        q_speed: float = 0.5,
+        q_complexity: float = 0.1,
+        k_loss: float = 1.0,
+        k_speed: float = 0.5,
+        k_complexity: float = 0.1,
+        v_loss: float = 1.0,
+        v_speed: float = 0.5,
+        v_complexity: float = 0.1,
     ):
-        """Compute raw activation score prior to bias and sigmoid."""
+        """Self-attention score over loss, speed and model size."""
 
         torch = getattr(wanderer, "_torch", None)
+        loss = float(getattr(wanderer, "_last_walk_mean_loss", 0.0) or 0.0)
+        steps = float(getattr(wanderer, "_walk_step_count", 0.0))
+        brain = getattr(wanderer, "brain", None)
+        complexity = float(
+            len(getattr(brain, "neurons", {})) + len(getattr(brain, "synapses", []))
+            if brain is not None
+            else 0.0
+        )
         if torch is None:
-            return 0.0
-        step = getattr(wanderer, "_walk_step_count", 0)
-        nid = getattr(self, "_current_neuron_id", 0)
-        return base + step_weight * step + neuron_weight * nid
+            scores = [
+                q_loss * k_loss * loss,
+                q_speed * k_speed * steps,
+                q_complexity * k_complexity * complexity,
+            ]
+            m = max(scores)
+            exps = [math.exp(s - m) for s in scores]
+            denom = sum(exps) or 1.0
+            weights = [e / denom for e in exps]
+            vals = [v_loss * loss, v_speed * steps, v_complexity * complexity]
+            return sum(w * v for w, v in zip(weights, vals))
+        device = getattr(wanderer, "_device", "cpu")
+        metrics = torch.tensor([loss, steps, complexity], dtype=torch.float32, device=device)
+
+        def _to_tensor(val: Any) -> Any:
+            return val if hasattr(val, "to") else torch.tensor(float(val), dtype=torch.float32, device=device)
+
+        Q = torch.stack([_to_tensor(q_loss), _to_tensor(q_speed), _to_tensor(q_complexity)])
+        K = torch.stack([_to_tensor(k_loss), _to_tensor(k_speed), _to_tensor(k_complexity)])
+        V = torch.stack([_to_tensor(v_loss), _to_tensor(v_speed), _to_tensor(v_complexity)])
+        scores = (metrics * Q) * (metrics * K)
+        weights = torch.softmax(scores / math.sqrt(3.0), dim=0)
+        return torch.sum(weights * (metrics * V))
 
 
 class _GatedPlugin:

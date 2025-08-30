@@ -3,13 +3,14 @@ from __future__ import annotations
 """Neuron plugin that learns to delegate to other neuron types.
 
 `AutoNeuronPlugin` acts as a meta neuron type. For every forward pass it
-chooses a concrete neuron type via learnable scores exposed through
-``expose_learnable_params`` and delegates execution to that type. If the
-chosen type raises an exception (for example due to unmet wiring
-requirements), the plugin rolls back to the previously successful type and
-retries the step so training can continue without breaking gradients.
+chooses a concrete neuron type via a self-attention score over training
+metrics exposed through ``expose_learnable_params`` and delegates execution to
+that type. If the chosen type raises an exception (for example due to unmet
+wiring requirements), the plugin rolls back to the previously successful type
+and retries the step so training can continue without breaking gradients.
 """
 
+import math
 from typing import Any, List, Optional, Sequence
 
 from ..wanderer import expose_learnable_params
@@ -45,16 +46,24 @@ class AutoNeuronPlugin:
         torch = getattr(wanderer, "_torch", None)
         device = getattr(wanderer, "_device", "cpu")
         names = self._candidate_types()
+        base_score = self._attention_score(wanderer)
         scores: List[Any] = []
         for nm in names:
-            bias_name = f"autoneuron_bias_{nm or 'base'}"
+            key = nm or "base"
+            bias_name = f"autoneuron_bias_{key}"
+            gain_name = f"autoneuron_gain_{key}"
             try:
                 wanderer.ensure_learnable_param(bias_name, 0.0)
                 bias = wanderer.get_learnable_param_tensor(bias_name)
             except Exception:
                 bias = 0.0
             try:
-                score = self._raw_score(wanderer) + bias
+                wanderer.ensure_learnable_param(gain_name, 1.0)
+                gain = wanderer.get_learnable_param_tensor(gain_name)
+            except Exception:
+                gain = 1.0
+            try:
+                score = base_score * gain + bias
             except Exception:
                 score = bias
             scores.append(score)
@@ -73,22 +82,55 @@ class AutoNeuronPlugin:
             return names[0]
 
     @expose_learnable_params
-    def _raw_score(
+    def _attention_score(
         self,
         wanderer: "Wanderer",
         *,
-        base: float = 0.0,
-        step_weight: float = 0.0,
-        neuron_weight: float = 0.0,
+        q_loss: float = 1.0,
+        q_speed: float = 0.5,
+        q_complexity: float = 0.1,
+        k_loss: float = 1.0,
+        k_speed: float = 0.5,
+        k_complexity: float = 0.1,
+        v_loss: float = 1.0,
+        v_speed: float = 0.5,
+        v_complexity: float = 0.1,
     ):
-        """Compute a score using walk step and neuron id."""
+        """Self-attention score over loss, speed and model size."""
 
         torch = getattr(wanderer, "_torch", None)
+        loss = float(getattr(wanderer, "_last_walk_mean_loss", 0.0) or 0.0)
+        steps = float(getattr(wanderer, "_walk_step_count", 0.0))
+        brain = getattr(wanderer, "brain", None)
+        complexity = float(
+            len(getattr(brain, "neurons", {})) + len(getattr(brain, "synapses", []))
+            if brain is not None
+            else 0.0
+        )
         if torch is None:
-            return base
-        step = getattr(wanderer, "_walk_step_count", 0)
-        nid = getattr(self, "_current_neuron_id", 0)
-        return base + step_weight * step + neuron_weight * nid
+            scores = [
+                q_loss * k_loss * loss,
+                q_speed * k_speed * steps,
+                q_complexity * k_complexity * complexity,
+            ]
+            m = max(scores)
+            exps = [math.exp(s - m) for s in scores]
+            denom = sum(exps) or 1.0
+            weights = [e / denom for e in exps]
+            vals = [v_loss * loss, v_speed * steps, v_complexity * complexity]
+            return sum(w * v for w, v in zip(weights, vals))
+        device = getattr(wanderer, "_device", "cpu")
+        metrics = torch.tensor([loss, steps, complexity], dtype=torch.float32, device=device)
+
+        def _to_tensor(val: Any) -> Any:
+            return val if hasattr(val, "to") else torch.tensor(float(val), dtype=torch.float32, device=device)
+
+        Q = torch.stack([_to_tensor(q_loss), _to_tensor(q_speed), _to_tensor(q_complexity)])
+        K = torch.stack([_to_tensor(k_loss), _to_tensor(k_speed), _to_tensor(k_complexity)])
+        V = torch.stack([_to_tensor(v_loss), _to_tensor(v_speed), _to_tensor(v_complexity)])
+        scores = (metrics * Q) * (metrics * K)
+        weights = torch.softmax(scores / math.sqrt(3.0), dim=0)
+        return torch.sum(weights * (metrics * V))
 
     # ---- Core operations -----------------------------------------------
     def _base_forward(self, neuron: "Neuron", input_value=None):
