@@ -12,7 +12,7 @@ Learned objective prioritizes overall accuracy, then training speed, followed by
 model size and complexity (implicitly via gradients adjusting the gate biases).
 """
 
-from typing import Any, List, Tuple, Optional
+from typing import Any, Dict, List, Tuple, Optional
 
 from ..wanderer import expose_learnable_params
 from ..buildingblock import get_buildingblock_type, _BUILDINGBLOCK_TYPES
@@ -31,6 +31,7 @@ class AutoPlugin:
 
     def __init__(self, disabled_plugins: Optional[List[str]] = None) -> None:
         self._neuro_wrapped = False
+        self._sa_wrapped = False
         self._current_neuron_id = 0
         self._disabled = set(disabled_plugins or [])
 
@@ -57,24 +58,39 @@ class AutoPlugin:
             wanderer.ensure_learnable_param(f"autoplugin_bias_{bb_name}", 0.0)
 
     def before_walk(self, wanderer: "Wanderer", start: "Neuron") -> None:
-        """Ensure neuroplasticity plugins are wrapped before training."""
+        """Ensure all plugin stacks are wrapped before training."""
 
-        if self._neuro_wrapped:
-            return
-        nplugins = getattr(wanderer, "_neuro_plugins", [])
-        explicit_n = getattr(wanderer, "_explicit_neuroplugin_names", set())
-        new_stack: List[Any] = []
-        for p in list(nplugins):
-            name = p.__class__.__name__
-            if name in self._disabled:
-                continue
-            if name in explicit_n:
-                new_stack.append(p)
-                continue
-            wanderer.ensure_learnable_param(f"autoplugin_bias_{name}", 0.0)
-            new_stack.append(_GatedPlugin(p, name, self))
-        wanderer._neuro_plugins = new_stack
-        self._neuro_wrapped = True
+        if not self._neuro_wrapped:
+            nplugins = getattr(wanderer, "_neuro_plugins", [])
+            explicit_n = getattr(wanderer, "_explicit_neuroplugin_names", set())
+            new_stack: List[Any] = []
+            for p in list(nplugins):
+                name = p.__class__.__name__
+                if name in self._disabled:
+                    continue
+                if name in explicit_n:
+                    new_stack.append(p)
+                    continue
+                wanderer.ensure_learnable_param(f"autoplugin_bias_{name}", 0.0)
+                new_stack.append(_GatedPlugin(p, name, self))
+            wanderer._neuro_plugins = new_stack
+            self._neuro_wrapped = True
+
+        if not self._sa_wrapped:
+            for sa in getattr(wanderer, "_selfattentions", []) or []:
+                routines = getattr(sa, "_routines", [])
+                new_routines: List[Any] = []
+                for r in list(routines):
+                    if isinstance(r, _GatedSARoutine):
+                        new_routines.append(r)
+                        continue
+                    name = r.__class__.__name__
+                    if name in self._disabled:
+                        continue
+                    wanderer.ensure_learnable_param(f"autoplugin_bias_{name}", 0.0)
+                    new_routines.append(_GatedSARoutine(r, name, self))
+                sa._routines = new_routines
+            self._sa_wrapped = True
 
     def is_active(
         self, wanderer: "Wanderer", name: str, neuron: "Neuron | None"
@@ -168,6 +184,36 @@ class _GatedPlugin:
             return self._plugin.loss(wanderer, outputs)
         torch = getattr(wanderer, "_torch", None)
         return 0.0 if torch is None else torch.tensor(0.0, device=getattr(wanderer, "_device", "cpu"))
+
+
+class _GatedSARoutine:
+    """Proxy for SelfAttention routines controlled by :class:`AutoPlugin`."""
+
+    def __init__(self, routine: Any, name: str, controller: AutoPlugin) -> None:
+        self._routine = routine
+        self._name = name
+        self._controller = controller
+
+    def __getattr__(self, item: str) -> Any:  # pragma: no cover - passthrough
+        return getattr(self._routine, item)
+
+    def on_init(self, selfattention: "SelfAttention") -> None:
+        if hasattr(self._routine, "on_init"):
+            self._routine.on_init(selfattention)
+
+    def after_step(
+        self,
+        selfattention: "SelfAttention",
+        reporter_ro: Any,
+        wanderer: "Wanderer",
+        step_index: int,
+        ctx: Dict[str, Any],
+    ):
+        if hasattr(self._routine, "after_step") and self._controller.is_active(
+            wanderer, self._name, None
+        ):
+            return self._routine.after_step(selfattention, reporter_ro, wanderer, step_index, ctx)
+        return None
 
 
 __all__ = ["AutoPlugin"]

@@ -23,14 +23,19 @@ evaluation walk happens to trigger further neuron additions.
 
 from typing import Any, Dict, Optional
 
-
+from ..wanderer import expose_learnable_params
 from ..graph import _NEURON_TYPES
+
+
+@expose_learnable_params
+def _nbt_params(wanderer, max_eval_types: float = 10.0):
+    return max_eval_types
 
 
 class FindBestNeuronTypeRoutine:
     """SelfAttention routine implementing neuron type search."""
 
-    def __init__(self) -> None:  # no configurable parameters yet
+    def __init__(self) -> None:
         self._sa = None  # type: Optional["SelfAttention"]
         self._orig_add = None
         self._eval_active = False
@@ -43,13 +48,18 @@ class FindBestNeuronTypeRoutine:
         except Exception:
             return float("inf")
 
-    def _list_types(self) -> list[str]:
+    def _list_types(self, wanderer: "Wanderer") -> list[str]:
+        max_t = _nbt_params(wanderer)
+        try:
+            limit = max(1, int(max_t.detach().to("cpu").item()))
+        except Exception:
+            limit = 10
         types = ["base"]
         try:
             types += list(_NEURON_TYPES.keys())
         except Exception:
             pass
-        return sorted(set(t for t in types if isinstance(t, str) and t))
+        return sorted(set(t for t in types if isinstance(t, str) and t))[:limit]
 
     # ---- Hook installation -------------------------------------------------
     def on_init(self, selfattention: "SelfAttention") -> None:
@@ -74,7 +84,7 @@ class FindBestNeuronTypeRoutine:
                 best_type: Optional[str] = None
                 best_diff: Optional[float] = None
                 existing = len(getattr(brain, "neurons", {}) or {})
-                for t in self._list_types():
+                for t in self._list_types(w):
                     if t != "base" and existing < 2:
                         # No other neurons available to form required wiring
                         continue
