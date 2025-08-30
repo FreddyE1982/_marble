@@ -83,7 +83,7 @@ The following test modules still need to be run and outputs analyzed:
 - tests/test_reporter.py
 - tests/test_reporter_clear.py
 - tests/test_reporter_subgroups.py
-- tests/test_selfattention_conv1d.py
+- tests/test_selfattention_conv1d.py (currently failing)
 - tests/test_super_advanced_neuron_plugins.py
 - tests/test_synapse_plugins.py
 - tests/test_training_with_datapairs.py

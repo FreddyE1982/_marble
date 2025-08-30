@@ -931,6 +931,13 @@ class Brain:
         # Lock to guard training operations and ensure thread safety
         self._train_lock = threading.Lock()
 
+    # Prevent accidental copying which could break training immutability
+    def __copy__(self):
+        raise TypeError("Brain instances are immutable and cannot be copied")
+
+    def __deepcopy__(self, memo):
+        raise TypeError("Brain instances are immutable and cannot be deep-copied")
+
     # --- Public API ---
     def is_inside(self, index: Sequence[int]) -> bool:
         if self.mode == "grid":

@@ -94,25 +94,21 @@ class Conv1DRandomInsertionRoutine:
         # Prepare parameter neurons (kernel, stride, padding, dilation, bias)
         created: List["Neuron"] = []
         try:
-            ps = self._pick_param_sources(brain, exclude=[])
-            if len(ps) < 5:
-                # Create simple default params if not enough
-                ps = []
-                ps.append(brain.add_neuron(self._random_free_index(brain), tensor=list(self.kernel)))
-                ps.append(brain.add_neuron(self._random_free_index(brain), tensor=[1.0]))
-                ps.append(brain.add_neuron(self._random_free_index(brain), tensor=[0.0]))
-                ps.append(brain.add_neuron(self._random_free_index(brain), tensor=[1.0]))
-                ps.append(brain.add_neuron(self._random_free_index(brain), tensor=[0.0]))
-                created.extend(ps)
-            # Create conv node and wire
+            ps = [
+                brain.add_neuron(self._random_free_index(brain), tensor=list(self.kernel)),
+                brain.add_neuron(self._random_free_index(brain), tensor=[1.0]),
+                brain.add_neuron(self._random_free_index(brain), tensor=[0.0]),
+                brain.add_neuron(self._random_free_index(brain), tensor=[1.0]),
+                brain.add_neuron(self._random_free_index(brain), tensor=[0.0]),
+            ]
+            created.extend(ps)
             dstn = brain.get_neuron(dst)
             if dstn is None:
                 return None
-            conv = brain.add_neuron(self._random_free_index(brain), tensor=[0.0])
-            from ..marblemain import wire_param_synapses, create_conv1d_from_existing
+            conv = brain.add_neuron(self._random_free_index(brain), tensor=[0.0], type_name="conv1d")
+            from ..marblemain import wire_param_synapses
             wire_param_synapses(brain, conv, ps)
             brain.connect(getattr(conv, "position"), dst, direction="uni")
-            conv.type_name = "conv1d"
         except Exception:
             return None
         # No param updates here; leave evaluation/rollback policy to future extensions
