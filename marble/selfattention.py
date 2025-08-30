@@ -88,6 +88,27 @@ class SelfAttention:
         except Exception:
             pass
 
+    # Neuron state reporting
+    def _receive_neuron_report(self, neuron: "Neuron", info: Dict[str, Any]) -> None:
+        """Internal hook used by Neuron.report_to_selfattention."""
+        try:
+            report("selfattention", "neuron_report", {"neuron": id(neuron), **info}, "builder")
+        except Exception:
+            pass
+
+    def get_neuron_report(self, neuron: "Neuron") -> Dict[str, Any]:
+        """Query a neuron's core attributes for analysis routines."""
+        if hasattr(neuron, "describe_for_selfattention"):
+            info = neuron.describe_for_selfattention()  # type: ignore[attr-defined]
+        else:
+            info = {
+                "weight": float(getattr(neuron, "weight", 1.0)),
+                "type_name": getattr(neuron, "type_name", None),
+                "position": getattr(neuron, "position", None),
+            }
+        self._receive_neuron_report(neuron, info)
+        return info
+
     # Internal wiring
     def _bind(self, wanderer: "Wanderer") -> None:
         self._owner = wanderer
