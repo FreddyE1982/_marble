@@ -16,6 +16,8 @@ class TestParallelWanderers(unittest.TestCase):
             [self.make_dp({"i": i}, float(i % 2)) for i in range(3)]
         ]
         datasets = [ds[0], ds[0]]
+        pre_brain_id = id(b)
+        pre_graph_id = id(b.neurons)
         results = run_wanderers_parallel(
             b,
             datasets,
@@ -27,6 +29,8 @@ class TestParallelWanderers(unittest.TestCase):
         )
         print("parallel thread results count:", len(results))
         self.assertEqual(len(results), 2)
+        self.assertEqual(id(b), pre_brain_id)
+        self.assertEqual(id(b.neurons), pre_graph_id)
 
 
 if __name__ == "__main__":
