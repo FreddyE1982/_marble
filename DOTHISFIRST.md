@@ -76,22 +76,6 @@ enforced strictly through `Lock` primitives.
 # Pending tests
 
 The following test modules still need to be run and outputs analyzed:
-- tests/test_datapair.py
-- tests/test_earlystop_plugin.py
-- tests/test_epochs.py
-- tests/test_findbestneurontype_fallback.py
-- tests/test_graph.py
-- tests/test_latent_and_synthetic_plugins.py
-- tests/test_learnable_params.py
-- tests/test_learning_paradigm.py
-- tests/test_learning_paradigm_helpers.py
-- tests/test_learning_paradigm_stacking.py
-- tests/test_learning_paradigm_toggle_and_growth.py
-- tests/test_lobe_training.py
-- tests/test_maxpool_improvement.py
-- tests/test_neuroplasticity.py
-- tests/test_new_neuron_plugins.py
-- tests/test_new_paradigms_and_plugins.py
 - tests/test_new_wanderer_plugins.py
 - tests/test_parallel.py
 - tests/test_plugin_stacking.py
