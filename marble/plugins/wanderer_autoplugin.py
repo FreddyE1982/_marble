@@ -14,6 +14,7 @@ model size and complexity (implicitly via gradients adjusting the gate biases).
 """
 
 import math
+import time
 from typing import Any, Dict, List, Tuple, Optional
 
 from ..wanderer import expose_learnable_params
@@ -31,11 +32,16 @@ class AutoPlugin:
         this list will be removed from the active plugin stacks entirely.
     """
 
-    def __init__(self, disabled_plugins: Optional[List[str]] = None) -> None:
+    def __init__(
+        self, disabled_plugins: Optional[List[str]] = None, log_path: Optional[str] = None
+    ) -> None:
         self._neuro_wrapped = False
         self._sa_wrapped = False
         self._current_neuron_id = 0
         self._disabled = set(disabled_plugins or [])
+        self._log_path = log_path
+        self._log_fp = open(log_path, "w") if log_path else None
+        self._log_state: Dict[Tuple[str, str], Dict[str, Any]] = {}
 
     def on_init(self, wanderer: "Wanderer") -> None:  # noqa: D401
         """Wrap existing Wanderer plugins with gating proxies."""
@@ -98,27 +104,103 @@ class AutoPlugin:
                 sa._routines = new_routines
             self._sa_wrapped = True
 
+    def _write_log(
+        self,
+        action: str,
+        plugintype: str,
+        name: str,
+        last_time: float,
+        last_steps: int,
+        total_steps: int,
+    ) -> None:
+        if self._log_fp is None:
+            return
+        self._log_fp.write(
+            f"{action},{plugintype},{name},{last_time:.3f},{last_steps},{total_steps}\n"
+        )
+        self._log_fp.flush()
+
+    def _update_log(
+        self,
+        wanderer: "Wanderer",
+        plugintype: str,
+        name: str,
+        active: bool,
+    ) -> None:
+        if self._log_fp is None:
+            return
+        key = (plugintype, name)
+        state = self._log_state.setdefault(
+            key,
+            {
+                "active": False,
+                "active_since_step": 0,
+                "active_since_time": 0.0,
+                "last_active_steps": 0,
+                "last_active_time": 0.0,
+                "total_active_steps": 0,
+            },
+        )
+        step = getattr(wanderer, "_walk_step_count", 0)
+        now = time.time()
+        if active and not state["active"]:
+            self._write_log(
+                "activated",
+                plugintype,
+                name,
+                state["last_active_time"],
+                state["last_active_steps"],
+                state["total_active_steps"],
+            )
+            state["active"] = True
+            state["active_since_step"] = step
+            state["active_since_time"] = now
+        elif not active and state["active"]:
+            last_steps = step - state["active_since_step"]
+            last_time = now - state["active_since_time"]
+            state["last_active_steps"] = last_steps
+            state["last_active_time"] = last_time
+            state["total_active_steps"] += last_steps
+            self._write_log(
+                "deactivated",
+                plugintype,
+                name,
+                last_time,
+                last_steps,
+                state["total_active_steps"],
+            )
+            state["active"] = False
+
     def is_active(
-        self, wanderer: "Wanderer", name: str, neuron: "Neuron | None"
+        self,
+        wanderer: "Wanderer",
+        name: str,
+        neuron: "Neuron | None",
+        plugintype: str = "wanderer",
     ) -> bool:
         """Return True if the named plugin should be active."""
 
         self._current_neuron_id = 0 if neuron is None else id(neuron)
         if name in self._disabled:
+            self._update_log(wanderer, plugintype, name, False)
             return False
         explicit_w = getattr(wanderer, "_explicit_wplugin_names", set())
         explicit_n = getattr(wanderer, "_explicit_neuroplugin_names", set())
         if name in explicit_w or name in explicit_n:
+            self._update_log(wanderer, plugintype, name, True)
             return True
         torch = getattr(wanderer, "_torch", None)
         if torch is None:
+            self._update_log(wanderer, plugintype, name, True)
             return True
         bias = wanderer.get_learnable_param_tensor(f"autoplugin_bias_{name}")
         wanderer.ensure_learnable_param(f"autoplugin_gain_{name}", 1.0)
         gain = wanderer.get_learnable_param_tensor(f"autoplugin_gain_{name}")
         score = self._attention_score(wanderer) * gain + bias
         gate = torch.sigmoid(score)
-        return bool(gate.detach().to("cpu").item() > 0.5)
+        result = bool(gate.detach().to("cpu").item() > 0.5)
+        self._update_log(wanderer, plugintype, name, result)
+        return result
 
     def apply_buildingblock(
         self, wanderer: "Wanderer", name: str, *args: Any, **kwargs: Any
@@ -130,7 +212,7 @@ class AutoPlugin:
             return None
         wanderer.ensure_learnable_param(f"autoplugin_bias_{name}", 0.0)
         wanderer.ensure_learnable_param(f"autoplugin_gain_{name}", 1.0)
-        if not self.is_active(wanderer, name, None):
+        if not self.is_active(wanderer, name, None, plugintype="buildingblock"):
             return None
         return block.apply(wanderer.brain, *args, **kwargs)
 
@@ -185,6 +267,14 @@ class AutoPlugin:
         weights = torch.softmax(scores / math.sqrt(3.0), dim=0)
         return torch.sum(weights * (metrics * V))
 
+    def finalize_logs(self, wanderer: "Wanderer") -> None:
+        for (ptype, name), state in list(self._log_state.items()):
+            if state.get("active"):
+                self._update_log(wanderer, ptype, name, False)
+        if self._log_fp is not None:
+            self._log_fp.close()
+            self._log_fp = None
+
 
 class _GatedPlugin:
     """Proxy that consults :class:`AutoPlugin` before delegating."""
@@ -203,7 +293,7 @@ class _GatedPlugin:
 
     def before_walk(self, wanderer: "Wanderer", start: "Neuron") -> None:
         if hasattr(self._plugin, "before_walk") and self._controller.is_active(
-            wanderer, self._name, start
+            wanderer, self._name, start, plugintype="wanderer"
         ):
             self._plugin.before_walk(wanderer, start)
 
@@ -214,14 +304,14 @@ class _GatedPlugin:
         choices: List[Tuple["Synapse", str]],
     ):
         if hasattr(self._plugin, "choose_next") and self._controller.is_active(
-            wanderer, self._name, current
+            wanderer, self._name, current, plugintype="wanderer"
         ):
             return self._plugin.choose_next(wanderer, current, choices)
         return None
 
     def loss(self, wanderer: "Wanderer", outputs: List[Any]):
         if hasattr(self._plugin, "loss") and self._controller.is_active(
-            wanderer, self._name, None
+            wanderer, self._name, None, plugintype="wanderer"
         ):
             return self._plugin.loss(wanderer, outputs)
         torch = getattr(wanderer, "_torch", None)
@@ -252,7 +342,7 @@ class _GatedSARoutine:
         ctx: Dict[str, Any],
     ):
         if hasattr(self._routine, "after_step") and self._controller.is_active(
-            wanderer, self._name, None
+            wanderer, self._name, None, plugintype="selfattention"
         ):
             return self._routine.after_step(selfattention, reporter_ro, wanderer, step_index, ctx)
         return None
