@@ -86,9 +86,11 @@ def main(epochs: int = 1) -> None:
         "Rapidata/Imagen-4-ultra-24-7-25_t2i_human_preference",
         split="train",
         streaming=True,
-        trust_remote_code=True,
         codec=codec,
     )
+    # Consumed fields: prompt, image1, image2, weighted_results_image1_preference,
+    # weighted_results_image2_preference, weighted_results_image1_alignment,
+    # weighted_results_image2_alignment
     brain = Brain(
         2,
         size=32,
@@ -103,7 +105,7 @@ def main(epochs: int = 1) -> None:
     sa = SelfAttention(
         routines=[
             QualityAwareRoutine(window=8),
-            AdaptiveGradClipRoutine(threshold_ratio=1.3, max_norm=1.0),
+            AdaptiveGradClipRoutine(),
             FindBestNeuronTypeRoutine(),
             ContextAwareNoiseRoutine(),
         ]
