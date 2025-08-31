@@ -16,6 +16,19 @@ from ..wanderer import expose_learnable_params
 from ..buildingblock import get_buildingblock_type
 from ..graph import register_neuron_type
 
+_EXTRA_SPECS = {
+    "reset_neuron_age": {},
+    "randomize_neuron_weight": {"min_val": -1.0, "max_val": 1.0},
+    "randomize_neuron_bias": {"min_val": -0.5, "max_val": 0.5},
+    "shift_neuron_tensor": {"delta": 0.0},
+    "scale_neuron_tensor": {"factor": 1.0},
+    "normalize_neuron_tensor": {},
+    "noise_neuron_tensor": {"sigma": 0.1},
+    "clamp_neuron_tensor": {"min_val": -1.0, "max_val": 1.0},
+    "reset_neuron_tensor": {},
+    "shuffle_neuron_tensor": {},
+}
+
 
 class DynamicNeuronBuilderPlugin:
     """Create new neuron types by attending over BuildingBlocks."""
@@ -26,6 +39,7 @@ class DynamicNeuronBuilderPlugin:
         self._chg_bias = None
         self._chg_type = None
         self._counter = 0
+        self._extras = {name: None for name in _EXTRA_SPECS}
 
     @expose_learnable_params
     def on_walk_end(
@@ -54,6 +68,9 @@ class DynamicNeuronBuilderPlugin:
             self._chg_bias = get_buildingblock_type("change_neuron_bias")
         if self._chg_type is None:
             self._chg_type = get_buildingblock_type("change_neuron_type")
+        for name in self._extras:
+            if self._extras[name] is None:
+                self._extras[name] = get_buildingblock_type(name)
         if self._create is None or self._chg_type is None:
             return
         device = getattr(wanderer, "_device", "cpu")
@@ -87,6 +104,25 @@ class DynamicNeuronBuilderPlugin:
             self._chg_weight.apply(brain, idx, weight=weight_val)
         if self._chg_bias is not None and float(b_prob.detach().to("cpu").item()) > thr:
             self._chg_bias.apply(brain, idx, bias=bias_val)
+
+        for name, plugin in self._extras.items():
+            if plugin is None:
+                continue
+            score_name = f"dyn_use_{name}"
+            wanderer.ensure_learnable_param(score_name, 1.0)
+            score = torch.sigmoid(wanderer.get_learnable_param_tensor(score_name))
+            if float(score.detach().to("cpu").item()) <= thr:
+                continue
+            kwargs = {}
+            for p, default in _EXTRA_SPECS[name].items():
+                param_name = f"dyn_{name}_{p}"
+                wanderer.ensure_learnable_param(param_name, default)
+                val = wanderer.get_learnable_param_tensor(param_name)
+                if hasattr(val, "detach"):
+                    kwargs[p] = float(val.detach().to("cpu").item())
+                else:
+                    kwargs[p] = float(val)
+            plugin.apply(brain, idx, **kwargs)
 
         type_name = f"dyn_{self._counter}"
 
