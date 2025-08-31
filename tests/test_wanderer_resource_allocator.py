@@ -21,6 +21,22 @@ class TestResourceAllocatorPlugin(unittest.TestCase):
         print("param_count", len(params))
         self.assertGreaterEqual(len(params), 30)
 
+    def test_params_optimized_by_default(self):
+        b = self.Brain(1, size=(1,))
+        w = self.Wanderer(b)
+        plug = next(p for p in w._wplugins if p.__class__.__name__ == "ResourceAllocatorPlugin")
+        # Fetch one learnable param tensor
+        pname = next(iter(w._learnables))
+        t = w.get_learnable_param_tensor(pname)
+        torch = w._torch  # type: ignore[attr-defined]
+        before = t.clone()
+        loss = t.sum()
+        loss.backward()
+        w._update_learnables()
+        after = w.get_learnable_param_tensor(pname)
+        print("param_before_after", before.tolist(), after.tolist())
+        self.assertFalse(torch.equal(before, after))
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

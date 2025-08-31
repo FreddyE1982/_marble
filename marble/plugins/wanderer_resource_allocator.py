@@ -108,6 +108,11 @@ class ResourceAllocatorPlugin:
         st.setdefault("resource_hits", {})
         st.setdefault("last_loss", None)
         st.setdefault("last_time", time.perf_counter())
+        before = set(getattr(wanderer, "_learnables", {}))
+        self._params(wanderer)
+        after = set(getattr(wanderer, "_learnables", {}))
+        for name in after - before:
+            wanderer.set_param_optimization(name, enabled=True)
 
     # Helper metrics -----------------------------------------------------
     def _system_metrics(self) -> dict:
