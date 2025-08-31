@@ -1403,12 +1403,15 @@ class Brain:
             torch = None  # type: ignore
         if torch is None:
             return
+        groups = []
         for t, lr in self._collect_enabled_params():
             if hasattr(t, "grad") and t.grad is not None:
-                with torch.no_grad():
-                    t -= lr * t.grad
-                if hasattr(t, "grad"):
-                    t.grad = None
+                groups.append({"params": [t], "lr": lr})
+        if not groups:
+            return
+        opt = torch.optim.Adam(groups)
+        opt.step()
+        opt.zero_grad(set_to_none=True)
 
     # --- Cross-process locking helpers ---
     def _lockfile_path(self, key: str) -> str:

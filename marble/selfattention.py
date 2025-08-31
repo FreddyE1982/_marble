@@ -227,21 +227,20 @@ class SelfAttention:
         return out
 
     def _update_learnables(self, wanderer: "Wanderer") -> None:
-        """Apply SGD updates to enabled learnable params after loss.backward()."""
+        """Update enabled learnable params using the chosen optimizer."""
         torch = getattr(wanderer, "_torch", None)
         if torch is None:
             return
         pairs = self._collect_enabled_params(wanderer)
+        groups = []
         for t, lr in pairs:
-            try:
-                if hasattr(t, "grad") and t.grad is not None:
-                    with torch.no_grad():
-                        t -= lr * t.grad
-                    # Clear grad for next step
-                    if hasattr(t, "grad"):
-                        t.grad = None
-            except Exception:
-                pass
+            if hasattr(t, "grad") and t.grad is not None:
+                groups.append({"params": [t], "lr": lr})
+        if not groups:
+            return
+        opt = torch.optim.Adam(groups)
+        opt.step()
+        opt.zero_grad(set_to_none=True)
 
     def _after_step(self, wanderer: "Wanderer", step_index: int, ctx: Dict[str, Any]) -> None:
         # Derive global metrics to influence all decisions
