@@ -227,6 +227,10 @@ class Wanderer(_DeviceHelper):
                 plug = _WANDERER_TYPES.get(str(nm))
                 if plug is not None:
                     self._wplugins.append(plug)
+        # Always enable resource allocator plugin by default
+        default_plug = _WANDERER_TYPES.get("resourceallocator")
+        if default_plug is not None and default_plug not in self._wplugins:
+            self._wplugins.append(default_plug)
         # on_init for all wanderer plugins
         for plug in self._wplugins:
             try:
