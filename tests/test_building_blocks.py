@@ -1,4 +1,5 @@
 import unittest
+import math
 
 import marble.plugins  # noqa: F401 - ensure plugins load
 from marble.marblemain import Brain
@@ -60,6 +61,35 @@ class TestBuildingBlocks(unittest.TestCase):
         print("extra", n0.weight, n0.bias, n0.age, n0.tensor)
         self.assertEqual(n0.age, 0)
         self.assertEqual(list(n0.tensor), [0.0])
+
+    def test_new_neuron_blocks(self):
+        def apply(name, tensor, **kwargs):
+            brain = Brain(1, size=1)
+            create = get_buildingblock_type("create_neuron")
+            create.apply(brain, (0,), tensor)
+            block = get_buildingblock_type(name)
+            block.apply(brain, (0,), **kwargs)
+            t = brain.get_neuron((0,)).tensor
+            if hasattr(t, "detach"):
+                return t.detach().to("cpu").tolist()
+            return list(t)
+
+        self.assertEqual(apply("abs_neuron_tensor", [0.5, -0.5]), [0.5, 0.5])
+        self.assertEqual(apply("square_neuron_tensor", [2.0, -3.0]), [4.0, 9.0])
+        self.assertEqual(apply("sqrt_neuron_tensor", [4.0, 9.0]), [2.0, 3.0])
+        log_res = apply("log_neuron_tensor", [1.0, 1.0], epsilon=1e-6)
+        self.assertAlmostEqual(log_res[0], 0.0, places=5)
+        self.assertAlmostEqual(log_res[1], 0.0, places=5)
+        exp_res = apply("exp_neuron_tensor", [0.0, 1.0])
+        self.assertEqual(exp_res[0], 1.0)
+        self.assertAlmostEqual(exp_res[1], math.e, places=5)
+        res = apply("sigmoid_neuron_tensor", [0.0])
+        print("sigmoid", res)
+        self.assertAlmostEqual(res[0], 0.5, places=5)
+        self.assertEqual(apply("tanh_neuron_tensor", [0.0]), [0.0])
+        self.assertEqual(apply("relu_neuron_tensor", [-1.0, 2.0]), [0.0, 2.0])
+        self.assertEqual(apply("softmax_neuron_tensor", [1.0, 1.0], dim=0), [0.5, 0.5])
+        self.assertEqual(apply("dropout_neuron_tensor", [1.0, 1.0], p=1.0), [0.0, 0.0])
 
     def test_synapse_blocks(self):
         brain = Brain(1, size=2)
