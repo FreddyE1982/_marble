@@ -27,6 +27,16 @@ _EXTRA_SPECS = {
     "clamp_neuron_tensor": {"min_val": -1.0, "max_val": 1.0},
     "reset_neuron_tensor": {},
     "shuffle_neuron_tensor": {},
+    "abs_neuron_tensor": {},
+    "square_neuron_tensor": {},
+    "sqrt_neuron_tensor": {},
+    "log_neuron_tensor": {"epsilon": 1e-6},
+    "exp_neuron_tensor": {},
+    "sigmoid_neuron_tensor": {},
+    "tanh_neuron_tensor": {},
+    "relu_neuron_tensor": {},
+    "softmax_neuron_tensor": {"dim": 0},
+    "dropout_neuron_tensor": {"p": 0.5},
 }
 
 
