@@ -2,6 +2,7 @@ from __future__ import annotations
 from typing import Any, Dict
 from ..wanderer import expose_learnable_params
 from ..reporter import report
+from .selfattention_metric_utils import metric_factor
 
 @expose_learnable_params
 def _entropy_params(wanderer, entropy_threshold: float = 0.5, high_temp: float = 2.0, low_temp: float = 0.5):
@@ -21,6 +22,10 @@ class EntropyRoutingRoutine:
             lo = float(low_t.detach().to("cpu").item())
         except Exception:
             thr, hi, lo = 0.5, 2.0, 0.5
+        factor = metric_factor(ctx, "entropy_router")
+        thr *= 1.0 + factor
+        hi *= factor
+        lo *= factor
         try:
             cur = float(ctx.get("cur_loss_tensor").detach().to("cpu").item()) if ctx.get("cur_loss_tensor") is not None else None
         except Exception:

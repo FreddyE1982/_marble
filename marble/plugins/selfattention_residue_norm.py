@@ -6,6 +6,7 @@ from typing import Any, Dict
 
 from ..wanderer import expose_learnable_params
 from ..reporter import report
+from .selfattention_metric_utils import metric_factor
 
 
 @expose_learnable_params
@@ -22,6 +23,7 @@ class ResidueNormRoutine:
             rb = float(rb_t.detach().to("cpu").item())
         except Exception:
             rb = 0.0
+        rb *= metric_factor(ctx, "residue_norm")
         try:
             cur = float(selfattention.get_param("temperature", 1.0))
             selfattention.set_param("temperature", cur + rb)

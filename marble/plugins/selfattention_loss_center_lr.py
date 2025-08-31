@@ -7,6 +7,7 @@ import torch
 
 from ..wanderer import expose_learnable_params
 from ..reporter import report
+from .selfattention_metric_utils import metric_factor
 
 
 @expose_learnable_params
@@ -34,6 +35,9 @@ class LossCenterLRRoutine:
             scale = float(sc_t.detach().to("cpu").item())
         except Exception:
             scale = 0.5
+        factor = metric_factor(ctx, "loss_center_lr")
+        target *= 1.0 + factor
+        scale *= factor
         loss_tensor = ctx.get("cur_loss_tensor")
         if loss_tensor is None:
             return None
@@ -42,7 +46,7 @@ class LossCenterLRRoutine:
         except Exception:
             return None
         diff = abs(cur - target)
-        lr = float(selfattention.get_param("lr_override", 0.0) or 0.0)
+        lr = float(selfattention.get_param("lr_override") or 0.0)
         selfattention.set_param("lr_override", lr + diff * scale if lr else diff * scale)
         report("selfattention", "loss_center_lr", {"step": step_index, "diff": diff}, "events")
         return None

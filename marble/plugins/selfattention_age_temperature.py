@@ -4,6 +4,7 @@ from typing import Any, Dict, List
 
 from ..wanderer import expose_learnable_params
 from ..reporter import report
+from .selfattention_metric_utils import metric_factor
 
 
 @expose_learnable_params
@@ -38,6 +39,10 @@ class AgeTemperatureRoutine:
             otemp = float(o_t.detach().to("cpu").item())
         except Exception:
             count, start, thr, ytemp, otemp = 3, 0, 1.0, 2.0, 0.5
+        factor = metric_factor(ctx, "age_temperature")
+        thr *= 1.0 + factor
+        ytemp *= factor
+        otemp *= factor
         neurons = list(getattr(wanderer.brain, "neurons", {}).values())
         if not neurons:
             return None

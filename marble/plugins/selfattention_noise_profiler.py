@@ -4,6 +4,7 @@ from typing import Any, Dict
 
 from ..wanderer import expose_learnable_params
 from ..reporter import report
+from .selfattention_metric_utils import metric_factor
 
 
 @expose_learnable_params
@@ -35,6 +36,8 @@ class ContextAwareNoiseRoutine:
             noise_score = float((var_t * spatial_t).detach().to("cpu").item())
         except Exception:
             return None
+        mf = metric_factor(ctx, "noise_profiler")
+        noise_score *= 1.0 + mf
         try:
             report(
                 "selfattention",
@@ -53,6 +56,7 @@ class ContextAwareNoiseRoutine:
             new_lr = max(1e-5, base_lr * 0.9)
         else:
             new_lr = min(5e-3, base_lr * 1.05)
+        new_lr *= mf
         return {"lr_override": float(new_lr)}
 
 

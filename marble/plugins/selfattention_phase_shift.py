@@ -6,6 +6,7 @@ from typing import Any, Dict
 
 from ..wanderer import expose_learnable_params
 from ..reporter import report
+from .selfattention_metric_utils import metric_factor
 
 
 @expose_learnable_params
@@ -29,6 +30,7 @@ class PhaseShiftRoutine:
             ph = float(ph_t.detach().to("cpu").item())
         except Exception:
             ph = 0.0
+        mf = metric_factor(ctx, "phase_shift")
 
         # Gather reported state to ground decisions in self-attention context
         try:
@@ -56,7 +58,7 @@ class PhaseShiftRoutine:
 
         neuron_count = int(len(getattr(wanderer.brain, "neurons", {})))
         try:
-            new_temp = 1.0 + ph * (1.0 + loss_speed / max(1.0, float(neuron_count)))
+            new_temp = 1.0 + ph * (1.0 + loss_speed / max(1.0, float(neuron_count))) * mf
             selfattention.set_param("temperature", new_temp)
         except Exception:
             new_temp = float("nan")

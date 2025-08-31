@@ -6,6 +6,7 @@ from typing import Any, Dict
 
 from ..wanderer import expose_learnable_params
 from ..reporter import report
+from .selfattention_metric_utils import metric_factor
 
 
 @expose_learnable_params
@@ -22,6 +23,7 @@ class TunnelVisionRoutine:
             tf = float(tf_t.detach().to("cpu").item())
         except Exception:
             tf = 1.0
+        tf *= metric_factor(ctx, "tunnel_vision")
         try:
             base = float(selfattention.get_param("temperature", 1.0))
             selfattention.set_param("temperature", base / (1.0 + abs(tf)))

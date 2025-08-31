@@ -7,6 +7,7 @@ import torch
 
 from ..wanderer import expose_learnable_params
 from ..reporter import report
+from .selfattention_metric_utils import metric_factor
 
 
 @expose_learnable_params
@@ -30,6 +31,7 @@ class StepFaderRoutine:
             slope = float(s_t.detach().to("cpu").item())
         except Exception:
             slope = 0.01
+        slope *= metric_factor(ctx, "step_fader")
         try:
             base = float(selfattention.get_param("temperature", 1.0))
             new_temp = max(0.0, base - slope * float(step_index))

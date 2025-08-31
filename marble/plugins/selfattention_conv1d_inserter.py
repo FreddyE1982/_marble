@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any, Dict, List, Optional
 
 from ..wanderer import expose_learnable_params
+from .selfattention_metric_utils import metric_factor
 
 
 @expose_learnable_params
@@ -98,8 +99,9 @@ class Conv1DRandomInsertionRoutine:
             period = max(1, int(self._period_def))
             eval_after = max(1, int(self._eval_after_def))
             self.max_data_sources = max(0, int(self._max_data_sources_def))
-        self.period = period
-        self.eval_after = eval_after
+        factor = metric_factor(ctx, "conv1d_inserter")
+        self.period = max(1, int(period * (1.0 + factor)))
+        self.eval_after = max(1, int(eval_after * (1.0 + factor)))
 
         gstep = self._global_step(sa)
         if gstep % max(1, self.period) != 0:

@@ -4,6 +4,7 @@ from typing import Any, Dict, List
 
 from ..wanderer import expose_learnable_params
 from ..reporter import report
+from .selfattention_metric_utils import metric_factor
 
 
 @expose_learnable_params
@@ -38,6 +39,10 @@ class BiasTemperatureRoutine:
             lo = float(lo_t.detach().to("cpu").item())
         except Exception:
             count, start, thr, hi, lo = 3, 0, 0.0, 2.0, 0.5
+        factor = metric_factor(ctx, "bias_temperature")
+        thr *= 1.0 + factor
+        hi *= factor
+        lo *= factor
         neurons = list(getattr(wanderer.brain, "neurons", {}).values())
         if not neurons:
             return None

@@ -4,6 +4,7 @@ from typing import Any, Dict, List
 
 from ..wanderer import expose_learnable_params
 from ..reporter import report
+from .selfattention_metric_utils import metric_factor
 
 
 @expose_learnable_params
@@ -36,6 +37,9 @@ class WeightLRRoutine:
             scale = float(sc_t.detach().to("cpu").item())
         except Exception:
             count, start, thr, scale = 3, 0, 1.0, 0.5
+        mf = metric_factor(ctx, "weight_lr")
+        thr *= 1.0 + mf
+        scale *= mf
         neurons = list(getattr(wanderer.brain, "neurons", {}).values())
         if not neurons:
             return None
