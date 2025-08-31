@@ -65,28 +65,28 @@ enforced strictly through `Lock` primitives.
 ## Steps
 1. Audit `marble/training.py`, `marble/graph.py`, and all plugin modules for
    any use of `copy`, `deepcopy`, or cloning of brain and graph objects during
-   training. Replace such patterns with direct references.
+   training. Replace such patterns with direct references. [complete]
 2. Introduce explicit `threading.Lock` guards around training sections that
-   require thread safety, removing any copy-based safety mechanisms.
+   require thread safety, removing any copy-based safety mechanisms. [complete]
 3. Extend tests to assert object identity for brain and graph instances before
-   and after training steps to detect accidental copies.
+   and after training steps to detect accidental copies. [complete]
 4. Document the lock-only policy and immutability guarantees in
-   `ARCHITECTURE.md` and update tutorials if necessary.
+   `ARCHITECTURE.md` and update tutorials if necessary. [complete]
 
 # Pending tests
 
 The following test modules still need to be run and outputs analyzed:
 - tests/test_new_wanderer_plugins.py
-- tests/test_parallel.py
+- tests/test_parallel.py [complete]
 - tests/test_plugin_stacking.py
 - tests/test_quantumtype_plugin.py
 - tests/test_reporter.py
 - tests/test_reporter_clear.py
 - tests/test_reporter_subgroups.py
-- tests/test_selfattention_conv1d.py (currently failing)
+- tests/test_selfattention_conv1d.py [complete]
 - tests/test_super_advanced_neuron_plugins.py
 - tests/test_synapse_plugins.py
-- tests/test_training_with_datapairs.py
+- tests/test_training_with_datapairs.py [complete]
 - tests/test_triple_contrast_plugin.py
 - tests/test_ultra_brain_train_plugins.py
 - tests/test_ultra_neuron_plugins.py
