@@ -945,7 +945,19 @@ class Wanderer(_DeviceHelper):
                 device=self._device,
                 requires_grad=requires_grad,
             )
-        self._learnables[name] = {"tensor": t, "opt": False, "lr": lr}
+        m = torch.zeros_like(t)
+        v = torch.zeros_like(t)
+        self._learnables[name] = {
+            "tensor": t,
+            "opt": False,
+            "lr": lr,
+            "m": m,
+            "v": v,
+            "t_step": 0,
+            "beta1": 0.9,
+            "beta2": 0.999,
+            "eps": 1e-8,
+        }
         self._plugin_state.setdefault("learnable_params", {})[name] = t
         try:
             report("wanderer", "ensure_learnable", {"name": name}, "builder")
@@ -965,27 +977,41 @@ class Wanderer(_DeviceHelper):
         ent = self._learnables.get(name)
         return None if ent is None else ent.get("tensor")
 
-    def _collect_enabled_params(self) -> List[Tuple[Any, float]]:
-        out: List[Tuple[Any, float]] = []
+    def _collect_enabled_params(self) -> List[Tuple[Any, float, dict]]:
+        out: List[Tuple[Any, float, dict]] = []
         default_lr = float(self.current_lr or 0.0) or 1e-2
         for cfg in self._learnables.values():
             if not cfg.get("opt"):
                 continue
             t = cfg.get("tensor")
-            lr = float(cfg.get("lr", default_lr))
-            out.append((t, lr))
+            lr_val = cfg.get("lr")
+            lr = float(lr_val if lr_val is not None else default_lr)
+            out.append((t, lr, cfg))
         return out
 
     def _update_learnables(self) -> None:
         torch = self._torch  # type: ignore[assignment]
         if torch is None:
             return
-        for t, lr in self._collect_enabled_params():
-            if hasattr(t, "grad") and t.grad is not None:
-                with torch.no_grad():
-                    t -= lr * t.grad
-                if hasattr(t, "grad"):
-                    t.grad = None
+        for t, lr, cfg in self._collect_enabled_params():
+            g = getattr(t, "grad", None)
+            if g is None:
+                continue
+            m = cfg.setdefault("m", torch.zeros_like(t))
+            v = cfg.setdefault("v", torch.zeros_like(t))
+            beta1 = float(cfg.get("beta1", 0.9))
+            beta2 = float(cfg.get("beta2", 0.999))
+            eps = float(cfg.get("eps", 1e-8))
+            cfg["t_step"] = int(cfg.get("t_step", 0)) + 1
+            t_step = cfg["t_step"]
+            with torch.no_grad():
+                m.mul_(beta1).add_(g, alpha=1 - beta1)
+                v.mul_(beta2).addcmul_(g, g, value=1 - beta2)
+                m_hat = m / (1 - beta1 ** t_step)
+                v_hat = v / (1 - beta2 ** t_step)
+                t -= lr * m_hat / (v_hat.sqrt() + eps)
+            if hasattr(t, "grad"):
+                t.grad = None
 
     def walkfinish(self) -> Tuple[float, Optional[float]]:
         if not self._walk_ctx:
