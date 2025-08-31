@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional, Sequence, Tuple, Union, TYPE_CHECKING
 
+import torch
+
 from .codec import TensorLike
 from .reporter import report
 
@@ -168,8 +170,12 @@ class Neuron(_DeviceHelper):
     def describe_for_selfattention(self) -> Dict[str, Any]:
         """Return core attributes for SelfAttention consumption."""
         pos = getattr(self, "position", None)
+        try:
+            weight = float(self.weight.detach().to("cpu").item())
+        except Exception:
+            weight = float(self.weight)
         return {
-            "weight": float(self.weight),
+            "weight": weight,
             "type_name": self.type_name,
             "position": pos,
         }
