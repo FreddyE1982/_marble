@@ -76,27 +76,27 @@ enforced strictly through `Lock` primitives.
 # Pending tests
 
 The following test modules still need to be run and outputs analyzed:
-- tests/test_new_wanderer_plugins.py
+- tests/test_new_wanderer_plugins.py [complete]
 - tests/test_parallel.py [complete]
-- tests/test_plugin_stacking.py
-- tests/test_quantumtype_plugin.py
-- tests/test_reporter.py
-- tests/test_reporter_clear.py
-- tests/test_reporter_subgroups.py
+- tests/test_plugin_stacking.py [complete]
+- tests/test_quantumtype_plugin.py [complete]
+- tests/test_reporter.py [complete]
+- tests/test_reporter_clear.py [complete]
+- tests/test_reporter_subgroups.py [complete]
 - tests/test_selfattention_conv1d.py [complete]
-- tests/test_super_advanced_neuron_plugins.py
-- tests/test_synapse_plugins.py
+- tests/test_super_advanced_neuron_plugins.py [complete]
+- tests/test_synapse_plugins.py [complete]
 - tests/test_training_with_datapairs.py [complete]
-- tests/test_triple_contrast_plugin.py
-- tests/test_ultra_brain_train_plugins.py
-- tests/test_ultra_neuron_plugins.py
-- tests/test_ultra_neuroplasticity_plugins.py
-- tests/test_ultra_selfattention_plugins.py
-- tests/test_ultra_synapse_plugins.py
-- tests/test_ultra_wanderer_plugins.py
-- tests/test_unfold_fold_unpool_improvement.py
-- tests/test_wanderer.py
-- tests/test_wanderer_alternate_paths_creator.py
-- tests/test_wanderer_bestpath_weights.py
-- tests/test_wanderer_walk_summary.py
-- tests/test_wanderer_wayfinder_plugin.py
+- tests/test_triple_contrast_plugin.py [complete]
+- tests/test_ultra_brain_train_plugins.py [complete]
+- tests/test_ultra_neuron_plugins.py [complete]
+- tests/test_ultra_neuroplasticity_plugins.py [complete]
+- tests/test_ultra_selfattention_plugins.py [complete]
+- tests/test_ultra_synapse_plugins.py [complete]
+- tests/test_ultra_wanderer_plugins.py [complete]
+- tests/test_unfold_fold_unpool_improvement.py [complete]
+- tests/test_wanderer.py [complete]
+- tests/test_wanderer_alternate_paths_creator.py [complete]
+- tests/test_wanderer_bestpath_weights.py [complete]
+- tests/test_wanderer_walk_summary.py [complete]
+- tests/test_wanderer_wayfinder_plugin.py [complete]
