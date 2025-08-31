@@ -11,6 +11,25 @@ This project provides a single-file core library in `marble/marblemain.py` that 
 
 All imports are centralized in `marble/marblemain.py`; other files must not import.
 
+Helper and Analysis Tools
+
+- `count_numeric_parameters.py`: Static analysis helper that scans the
+  `marble/` package for function parameters with numeric defaults. It reports
+  how many of those parameters are automatically exposed via the
+  `@expose_learnable_params` decorator and how many remain fixed constants. Run
+  it from the repository root:
+
+  ```bash
+  $ python count_numeric_parameters.py
+  Total numeric parameters: 97
+  Learnable numeric parameters: 84
+  Non-learnable numeric parameters: 13
+  ```
+
+  This allows quick audits of the codebase as plugins evolve. The accompanying
+  test `tests/test_numeric_parameter_counter.py` ensures the script stays
+  in sync with the library.
+
 Core Components
 
 - `UniversalTensorCodec`: Serializes any Python object via pickle to bytes, builds a byte-level vocabulary, and encodes/decodes to integer token sequences. If PyTorch is available, returns tensors on CUDA when available, else CPU; otherwise returns Python lists. Supports `export_vocab`/`import_vocab` for reproducible vocabularies.
