@@ -130,7 +130,7 @@ Step 9: Advanced Physics and Failure Modes
         Subsubstep 9.11.7: Account for belt tension, frame rigidity, and stepper calibration on final print fidelity
 
 Step 10: Comprehensive Marlin Configuration Coverage
-    Substep 10.1: Parse Marlin Configuration.h and Configuration_adv.h to enumerate all configuration items
+    Substep 10.1: Parse Marlin Configuration.h and Configuration_adv.h to enumerate all configuration items [complete]
     Substep 10.2: Implement each configuration item in the simulator respecting physical behavior
         Subsubstep 10.2.1: CONFIGURATION_H_VERSION
         Subsubstep 10.2.2: STRING_CONFIG_H_AUTHOR

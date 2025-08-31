@@ -15,3 +15,10 @@ Marlin organizes hardware support under `src/HAL/`, providing separate directori
 - Maximum print area derived from bed sizes and axis limits.
 - Extruder count set by `EXTRUDERS` and related advanced options.
 These settings must be mirrored in the simulator's configuration system.
+
+## Configuration Enumeration Tool
+
+To ensure comprehensive coverage, ``marlin_config_parser.py`` downloads
+Marlin's ``Configuration.h`` and ``Configuration_adv.h`` and extracts all
+``#define`` identifiers. This script keeps the simulator's development
+plan aligned with upstream firmware options.
