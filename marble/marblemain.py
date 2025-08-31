@@ -811,6 +811,7 @@ class Brain:
     - bounds: list/tuple of (min,max) for each dimension; defaults sensible ranges
     - formula: string expression referencing variables n1..nN, or 'mandelbrot'
     - max_iters, escape_radius: parameters for Mandelbrot computations
+    - kuzu_path: optional filename for a Kuzu graph database mirroring the brain
 
     The brain maintains a discrete occupancy grid; neurons/synapses must be placed
     at indices that are inside this shape.
@@ -832,6 +833,7 @@ class Brain:
         snapshot_path: Optional[str] = None,
         snapshot_freq: Optional[int] = None,
         snapshot_keep: Optional[int] = None,
+        kuzu_path: Optional[str] = None,
     ) -> None:
         if n < 1:
             raise ValueError("n must be >= 1")
@@ -931,6 +933,100 @@ class Brain:
         # Lock to guard training operations and ensure thread safety
         self._train_lock = threading.Lock()
 
+        # Optional Kuzu graph mirroring
+        self._kuzu_conn = None
+        if kuzu_path:
+            try:
+                import kuzu  # type: ignore
+
+                self._kuzu_db = kuzu.Database(kuzu_path)
+                self._kuzu_conn = kuzu.Connection(self._kuzu_db)
+                self._kuzu_conn.execute(
+                    "CREATE NODE TABLE IF NOT EXISTS Neuron(key STRING, coords STRING, PRIMARY KEY(key))"
+                )
+                self._kuzu_conn.execute(
+                    "CREATE REL TABLE IF NOT EXISTS Synapse(FROM Neuron TO Neuron, direction STRING)"
+                )
+            except Exception:
+                self._kuzu_conn = None
+
+    def _kuzu_key(self, coords: Sequence[float]) -> str:
+        return ",".join(str(float(c)) for c in coords)
+
+    def _kuzu_add_neuron(self, coords: Sequence[float]) -> None:
+        if self._kuzu_conn is None:
+            return
+        try:
+            self._kuzu_conn.execute(
+                "CREATE (:Neuron {key:$key, coords:$coords})",
+                {"key": self._kuzu_key(coords), "coords": json.dumps(list(coords))},
+            )
+            self._kuzu_conn.execute("CHECKPOINT")
+        except Exception:
+            pass
+
+    def _kuzu_remove_neuron(self, coords: Sequence[float]) -> None:
+        if self._kuzu_conn is None:
+            return
+        try:
+            self._kuzu_conn.execute(
+                "MATCH (n:Neuron {key:$key}) DETACH DELETE n",
+                {"key": self._kuzu_key(coords)},
+            )
+        except Exception:
+            pass
+
+    def _kuzu_add_synapse(
+        self, src_coords: Sequence[float], dst_coords: Sequence[float], direction: str
+    ) -> None:
+        if self._kuzu_conn is None:
+            return
+        try:
+            self._kuzu_conn.execute(
+                "MATCH (a:Neuron {key:$src}),(b:Neuron {key:$dst}) CREATE (a)-[:Synapse {direction:$dir}]->(b)",
+                {
+                    "src": self._kuzu_key(src_coords),
+                    "dst": self._kuzu_key(dst_coords),
+                    "dir": direction,
+                },
+            )
+            self._kuzu_conn.execute("CHECKPOINT")
+        except Exception:
+            pass
+
+    def _kuzu_rebuild_all(self) -> None:
+        if self._kuzu_conn is None:
+            return
+        try:
+            self._kuzu_conn.execute("MATCH (n) DETACH DELETE n")
+            for pos, neuron in self.neurons.items():
+                coords = self.world_coords(pos) if self.mode == "grid" else pos
+                self._kuzu_conn.execute(
+                    "CREATE (:Neuron {key:$key, coords:$coords})",
+                    {"key": self._kuzu_key(coords), "coords": json.dumps(list(coords))},
+                )
+            for syn in self.synapses:
+                if isinstance(getattr(syn, "source", None), Neuron) and isinstance(
+                    getattr(syn, "target", None), Neuron
+                ):
+                    s_pos = getattr(syn.source, "position", None)
+                    d_pos = getattr(syn.target, "position", None)
+                    if s_pos is None or d_pos is None:
+                        continue
+                    s_coords = self.world_coords(s_pos) if self.mode == "grid" else s_pos
+                    d_coords = self.world_coords(d_pos) if self.mode == "grid" else d_pos
+                    self._kuzu_conn.execute(
+                        "MATCH (a:Neuron {key:$src}),(b:Neuron {key:$dst}) CREATE (a)-[:Synapse {direction:$dir}]->(b)",
+                        {
+                            "src": self._kuzu_key(s_coords),
+                            "dst": self._kuzu_key(d_coords),
+                            "dir": getattr(syn, "direction", "uni"),
+                        },
+                    )
+            self._kuzu_conn.execute("CHECKPOINT")
+        except Exception:
+            pass
+
     # Prevent accidental copying which could break training immutability
     def __copy__(self):
         raise TypeError("Brain instances are immutable and cannot be copied")
@@ -1000,6 +1096,10 @@ class Brain:
                 report("brain", "add_neuron", {"position": idx}, "events")
             except Exception:
                 pass
+            try:
+                self._kuzu_add_neuron(self.world_coords(idx))
+            except Exception:
+                pass
             return neuron
         else:
             coords = tuple(float(v) for v in index)
@@ -1012,6 +1112,10 @@ class Brain:
             self.neurons[coords] = neuron
             try:
                 report("brain", "add_neuron", {"coords": coords}, "events")
+            except Exception:
+                pass
+            try:
+                self._kuzu_add_neuron(coords)
             except Exception:
                 pass
             return neuron
@@ -1039,6 +1143,16 @@ class Brain:
             report("brain", "connect", {"direction": direction}, "events")
         except Exception:
             pass
+        if isinstance(src, Neuron) and isinstance(dst, Neuron):
+            try:
+                s_pos = getattr(src, "position", None)
+                d_pos = getattr(dst, "position", None)
+                if s_pos is not None and d_pos is not None:
+                    s_coords = self.world_coords(s_pos) if self.mode == "grid" else s_pos
+                    d_coords = self.world_coords(d_pos) if self.mode == "grid" else d_pos
+                    self._kuzu_add_synapse(s_coords, d_coords, direction)
+            except Exception:
+                pass
         return syn
 
     def define_lobe(
@@ -1187,12 +1301,17 @@ class Brain:
         except Exception:
             pass
         try:
+            self._kuzu_rebuild_all()
+        except Exception:
+            pass
+        try:
             report("brain", "remove_synapse", {"direction": synapse.direction}, "events")
         except Exception:
             pass
 
     # Remove a neuron and bridge its synapses to avoid gaps
     def remove_neuron(self, neuron: "Neuron") -> None:
+        pos = getattr(neuron, "position", None)
         incomings = list(getattr(neuron, "incoming", []) or [])
         outgoings = list(getattr(neuron, "outgoing", []) or [])
         try:
@@ -1229,6 +1348,10 @@ class Brain:
                 except Exception:
                     self.neurons = {k: v for k, v in self.neurons.items() if v is not neuron}
             report("brain", "remove_neuron", {"position": pos}, "events")
+        except Exception:
+            pass
+        try:
+            self._kuzu_rebuild_all()
         except Exception:
             pass
     # --- Learnable parameter management (global) ---
