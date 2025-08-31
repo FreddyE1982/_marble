@@ -62,6 +62,7 @@ class SelfAttention:
         self._learnables: Dict[int, Dict[str, Dict[str, Any]]] = {}
         # Global learnable parameters for SelfAttention routines
         self._global_learnables: Dict[str, Dict[str, Any]] = {}
+        self._prev_loss: Optional[float] = None
 
     # API exposed to routines
     def get_param(self, name: str) -> Any:
@@ -242,6 +243,52 @@ class SelfAttention:
                 pass
 
     def _after_step(self, wanderer: "Wanderer", step_index: int, ctx: Dict[str, Any]) -> None:
+        # Derive global metrics to influence all decisions
+        brain = getattr(wanderer, "brain", None)
+        loss_tensor = ctx.get("cur_loss_tensor")
+        loss_val: Optional[float] = None
+        if loss_tensor is not None:
+            try:
+                loss_val = float(loss_tensor.detach().to("cpu").item())
+            except Exception:
+                loss_val = None
+        loss_speed = 0.0
+        if loss_val is not None:
+            if self._prev_loss is not None:
+                loss_speed = loss_val - self._prev_loss
+            self._prev_loss = loss_val
+        complexity = 0
+        if brain is not None:
+            try:
+                complexity = int(len(getattr(brain, "neurons", []) or [])) + int(len(getattr(brain, "synapses", []) or []))
+            except Exception:
+                complexity = 0
+        ctx = dict(ctx)
+        ctx.update({
+            "sa_loss": loss_val,
+            "sa_loss_speed": loss_speed,
+            "sa_model_complexity": complexity,
+        })
+        try:
+            report(
+                "selfattention",
+                "metrics",
+                {"step": step_index, "loss": loss_val, "loss_speed": loss_speed, "complexity": complexity},
+                "events",
+            )
+        except Exception:
+            pass
+
+        def _apply_metrics(val: Any) -> Any:
+            if isinstance(val, (int, float)):
+                factor = 1.0
+                if loss_val is not None:
+                    factor /= 1.0 + abs(loss_val)
+                factor /= 1.0 + abs(loss_speed)
+                factor /= 1.0 + complexity
+                return val * factor
+            return val
+
         # Invoke routines with read-only reporter and context; they may return updates
         for r in self._routines:
             try:
@@ -249,7 +296,7 @@ class SelfAttention:
                     upd = r.after_step(self, self._reporter_ro, wanderer, step_index, dict(ctx))  # type: ignore[attr-defined]
                     if isinstance(upd, dict):
                         for k, v in upd.items():
-                            self.set_param(str(k), v)
+                            self.set_param(str(k), _apply_metrics(v))
             except Exception:
                 pass
 
