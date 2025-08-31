@@ -144,6 +144,7 @@ class Wanderer(_DeviceHelper):
         neuroplasticity_type: Optional[Union[str, Sequence[str]]] = "base",
         neuro_config: Optional[Dict[str, Any]] = None,
         gradient_clip: Optional[Dict[str, Any]] = None,
+        optimizer: Optional[Union[str, Any]] = "Adam",
         mixedprecision: bool = True,
     ) -> None:
         super().__init__()
@@ -152,6 +153,15 @@ class Wanderer(_DeviceHelper):
             raise RuntimeError(
                 "torch is required for Wanderer autograd. Please install CPU torch (or GPU if available) and retry."
             )
+        torch = self._torch  # type: ignore[assignment]
+        opt = optimizer or "Adam"
+        if isinstance(opt, str):
+            opt_cls = getattr(torch.optim, opt, None)
+            if opt_cls is None:
+                raise ValueError(f"Unknown optimizer '{opt}'")
+            self._optimizer_cls = opt_cls
+        else:
+            self._optimizer_cls = opt
         self.brain = brain
         orig_type_name = type_name
         if mixedprecision:
@@ -703,20 +713,6 @@ class Wanderer(_DeviceHelper):
         except Exception:
             self.current_lr = lr_eff  # type: ignore[assignment]
 
-        for n in self._visited:
-            w_param, b_param = self._param_map[id(n)]
-            with torch.no_grad():
-                w_new = w_param - lr_eff * (w_param.grad if w_param.grad is not None else 0.0)
-                b_new = b_param - lr_eff * (b_param.grad if b_param.grad is not None else 0.0)
-            try:
-                n.weight = float(w_new.item())  # type: ignore[assignment]
-            except Exception:
-                n.weight = float(w_new)  # type: ignore[assignment]
-            try:
-                n.bias = float(b_new.item())  # type: ignore[assignment]
-            except Exception:
-                n.bias = float(b_new)  # type: ignore[assignment]
-
         try:
             for sa in getattr(self, "_selfattentions", []) or []:
                 if hasattr(sa, "_update_learnables"):
@@ -724,11 +720,7 @@ class Wanderer(_DeviceHelper):
         except Exception:
             pass
 
-        try:
-            if hasattr(self, "_update_learnables"):
-                self._update_learnables()
-        except Exception:
-            pass
+        self._apply_optimizer(lr_eff)
 
         try:
             if hasattr(self.brain, "_update_learnables"):
@@ -945,19 +937,7 @@ class Wanderer(_DeviceHelper):
                 device=self._device,
                 requires_grad=requires_grad,
             )
-        m = torch.zeros_like(t)
-        v = torch.zeros_like(t)
-        self._learnables[name] = {
-            "tensor": t,
-            "opt": False,
-            "lr": lr,
-            "m": m,
-            "v": v,
-            "t_step": 0,
-            "beta1": 0.9,
-            "beta2": 0.999,
-            "eps": 1e-8,
-        }
+        self._learnables[name] = {"tensor": t, "opt": False, "lr": lr}
         self._plugin_state.setdefault("learnable_params", {})[name] = t
         try:
             report("wanderer", "ensure_learnable", {"name": name}, "builder")
@@ -977,8 +957,8 @@ class Wanderer(_DeviceHelper):
         ent = self._learnables.get(name)
         return None if ent is None else ent.get("tensor")
 
-    def _collect_enabled_params(self) -> List[Tuple[Any, float, dict]]:
-        out: List[Tuple[Any, float, dict]] = []
+    def _collect_enabled_params(self) -> List[Tuple[Any, float]]:
+        out: List[Tuple[Any, float]] = []
         default_lr = float(self.current_lr or 0.0) or 1e-2
         for cfg in self._learnables.values():
             if not cfg.get("opt"):
@@ -986,32 +966,56 @@ class Wanderer(_DeviceHelper):
             t = cfg.get("tensor")
             lr_val = cfg.get("lr")
             lr = float(lr_val if lr_val is not None else default_lr)
-            out.append((t, lr, cfg))
+            out.append((t, lr))
         return out
 
     def _update_learnables(self) -> None:
         torch = self._torch  # type: ignore[assignment]
         if torch is None:
             return
-        for t, lr, cfg in self._collect_enabled_params():
-            g = getattr(t, "grad", None)
-            if g is None:
+        groups = []
+        for t, lr in self._collect_enabled_params():
+            if hasattr(t, "grad") and t.grad is not None:
+                groups.append({"params": [t], "lr": lr})
+        if not groups:
+            return
+        opt = self._optimizer_cls(groups)
+        opt.step()
+        opt.zero_grad(set_to_none=True)
+
+    def _apply_optimizer(self, lr_eff: float) -> None:
+        torch = self._torch  # type: ignore[assignment]
+        if torch is None:
+            return
+        param_groups: List[Dict[str, Any]] = []
+        seen: set[int] = set()
+        for n in self._visited:
+            w_param, b_param = self._param_map[id(n)]
+            for p in (w_param, b_param):
+                if id(p) in seen:
+                    continue
+                param_groups.append({"params": [p], "lr": lr_eff})
+                seen.add(id(p))
+        for t, lr in self._collect_enabled_params():
+            if id(t) in seen:
                 continue
-            m = cfg.setdefault("m", torch.zeros_like(t))
-            v = cfg.setdefault("v", torch.zeros_like(t))
-            beta1 = float(cfg.get("beta1", 0.9))
-            beta2 = float(cfg.get("beta2", 0.999))
-            eps = float(cfg.get("eps", 1e-8))
-            cfg["t_step"] = int(cfg.get("t_step", 0)) + 1
-            t_step = cfg["t_step"]
-            with torch.no_grad():
-                m.mul_(beta1).add_(g, alpha=1 - beta1)
-                v.mul_(beta2).addcmul_(g, g, value=1 - beta2)
-                m_hat = m / (1 - beta1 ** t_step)
-                v_hat = v / (1 - beta2 ** t_step)
-                t -= lr * m_hat / (v_hat.sqrt() + eps)
-            if hasattr(t, "grad"):
-                t.grad = None
+            param_groups.append({"params": [t], "lr": lr})
+            seen.add(id(t))
+        if not param_groups:
+            return
+        opt = self._optimizer_cls(param_groups)
+        opt.step()
+        opt.zero_grad(set_to_none=True)
+        for n in self._visited:
+            w_param, b_param = self._param_map[id(n)]
+            try:
+                n.weight = float(w_param.detach().to("cpu").item())  # type: ignore[assignment]
+            except Exception:
+                n.weight = float(w_param)  # type: ignore[assignment]
+            try:
+                n.bias = float(b_param.detach().to("cpu").item())  # type: ignore[assignment]
+            except Exception:
+                n.bias = float(b_param)  # type: ignore[assignment]
 
     def walkfinish(self) -> Tuple[float, Optional[float]]:
         if not self._walk_ctx:

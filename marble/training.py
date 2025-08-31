@@ -30,6 +30,7 @@ def run_wanderer_training(
     callback: Optional[Callable[[int, Dict[str, Any]], None]] = None,
     neuro_config: Optional[Dict[str, Any]] = None,
     lobe: Optional[Lobe] = None,
+    optimizer: Optional[Union[str, Any]] = None,
     mixedprecision: bool = True,
 ) -> Dict[str, Any]:
     from .marblemain import Wanderer  # lazy to avoid import cycle
@@ -46,6 +47,7 @@ def run_wanderer_training(
             loss=loss,
             target_provider=target_provider,
             neuro_config=cfg,
+            optimizer=optimizer,
             mixedprecision=mixedprecision,
         )
         history: List[Dict[str, Any]] = []
@@ -117,6 +119,9 @@ def run_training_with_datapairs(
     gradient_clip: Optional[Dict[str, Any]] = None,
     selfattention: Optional["SelfAttention"] = None,
     lobe: Optional[Lobe] = None,
+    batch_size: Optional[int] = None,
+    streaming: bool = True,
+    optimizer: Optional[Union[str, Any]] = None,
     mixedprecision: bool = True,
 ) -> Dict[str, Any]:
     from .marblemain import Wanderer  # lazy import
@@ -185,6 +190,10 @@ def run_training_with_datapairs(
         if lobe is not None and not getattr(lobe, "inherit_plugins", True):
             wtype = lobe.plugin_types
             cfg = lobe.neuro_config
+        cfg = dict(cfg or {})
+        if batch_size is not None:
+            cfg["batch_size"] = batch_size
+        cfg["streaming"] = streaming
         w = Wanderer(
             brain,
             type_name=wtype,
@@ -192,6 +201,7 @@ def run_training_with_datapairs(
             loss=loss,
             neuro_config=cfg,
             gradient_clip=gradient_clip,
+            optimizer=optimizer,
             mixedprecision=mixedprecision,
         )
         if selfattention is not None:
@@ -249,6 +259,9 @@ def run_wanderer_epochs_with_datapairs(
     loss: Optional[Union[str, Callable[..., Any], Any]] = "nn.MSELoss",
     left_to_start: Optional[Callable[[Any, "Brain"], Optional["Neuron"]]] = None,
     callback: Optional[Callable[[int, int, Dict[str, Any], DataPair], None]] = None,
+    batch_size: Optional[int] = None,
+    streaming: bool = True,
+    optimizer: Optional[Union[str, Any]] = None,
     mixedprecision: bool = True,
 ) -> Dict[str, Any]:
     def _inner() -> Dict[str, Any]:
@@ -278,6 +291,9 @@ def run_wanderer_epochs_with_datapairs(
                 loss=loss,
                 left_to_start=left_to_start,
                 callback=(lambda i, stats, dp: callback(e, i, stats, dp)) if callback is not None else None,
+                batch_size=batch_size,
+                streaming=streaming,
+                optimizer=optimizer,
                 mixedprecision=mixedprecision,
             )
             final_loss = res.get("final_loss", 0.0)
@@ -317,6 +333,9 @@ def run_wanderers_parallel(
     loss: Optional[Union[str, Callable[..., Any], Any]] = "nn.MSELoss",
     left_to_start: Optional[Callable[[Any, "Brain"], Optional["Neuron"]]] = None,
     neuro_config: Optional[Dict[str, Any]] = None,
+    batch_size: Optional[int] = None,
+    streaming: bool = True,
+    optimizer: Optional[Union[str, Any]] = None,
     mixedprecision: bool = True,
 ) -> List[Dict[str, Any]]:
     sigs: List[str] = []
@@ -360,6 +379,9 @@ def run_wanderers_parallel(
                 loss=loss,
                 left_to_start=left_to_start,
                 neuro_config=neuro_config,
+                batch_size=batch_size,
+                streaming=streaming,
+                optimizer=optimizer,
                 mixedprecision=mixedprecision,
             )
             results.append(res)
@@ -398,6 +420,9 @@ def quick_train_on_pairs(
     neuro_config: Optional[Dict[str, Any]] = None,
     gradient_clip: Optional[Dict[str, Any]] = None,
     selfattention: Optional["SelfAttention"] = None,
+    batch_size: Optional[int] = None,
+    streaming: bool = True,
+    optimizer: Optional[Union[str, Any]] = None,
     mixedprecision: bool = True,
 ) -> Dict[str, Any]:
     from .marblemain import Brain  # lazy import
@@ -415,6 +440,9 @@ def quick_train_on_pairs(
         neuro_config=neuro_config,
         gradient_clip=gradient_clip,
         selfattention=selfattention,
+        batch_size=batch_size,
+        streaming=streaming,
+        optimizer=optimizer,
         mixedprecision=mixedprecision,
     )
     try:
