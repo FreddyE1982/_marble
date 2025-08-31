@@ -63,6 +63,7 @@ class SelfAttention:
         # Global learnable parameters for SelfAttention routines
         self._global_learnables: Dict[str, Dict[str, Any]] = {}
         self._prev_loss: Optional[float] = None
+        self._prev_loss_speed: float = 0.0
 
     # API exposed to routines
     def get_param(self, name: str) -> Any:
@@ -257,6 +258,8 @@ class SelfAttention:
             if self._prev_loss is not None:
                 loss_speed = loss_val - self._prev_loss
             self._prev_loss = loss_val
+        loss_accel = loss_speed - getattr(self, "_prev_loss_speed", 0.0)
+        self._prev_loss_speed = loss_speed
         complexity = 0
         if brain is not None:
             try:
@@ -267,13 +270,14 @@ class SelfAttention:
         ctx.update({
             "sa_loss": loss_val,
             "sa_loss_speed": loss_speed,
+            "sa_loss_accel": loss_accel,
             "sa_model_complexity": complexity,
         })
         try:
             report(
                 "selfattention",
                 "metrics",
-                {"step": step_index, "loss": loss_val, "loss_speed": loss_speed, "complexity": complexity},
+                {"step": step_index, "loss": loss_val, "loss_speed": loss_speed, "loss_accel": loss_accel, "complexity": complexity},
                 "events",
             )
         except Exception:
@@ -285,6 +289,7 @@ class SelfAttention:
                 if loss_val is not None:
                     factor /= 1.0 + abs(loss_val)
                 factor /= 1.0 + abs(loss_speed)
+                factor /= 1.0 + abs(loss_accel)
                 factor /= 1.0 + complexity
                 return val * factor
             return val
