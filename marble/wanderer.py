@@ -13,6 +13,7 @@ import inspect
 from .graph import _DeviceHelper, Neuron, Synapse
 from .lobe import Lobe
 from .reporter import report
+from .learnable_param import LearnableParam
 
 # Core registries for Wanderer and Neuroplasticity plugins
 WANDERER_TYPES_REGISTRY: Dict[str, Any] = {}
@@ -74,7 +75,7 @@ def expose_learnable_params(fn: Callable[..., Any]) -> Callable[..., Any]:
             name = f"{prefix}{p.name}"
             init = bound.arguments.get(p.name, p.default if p.default is not inspect._empty else 0.0)
             try:
-                float_init = float(init) if not isinstance(init, (list, tuple)) else init
+                float(init) if not isinstance(init, (list, tuple)) else init
             except Exception:
                 # Non-numeric parameter; pass through unchanged
                 pos = param_positions.index(p.name)
@@ -84,7 +85,7 @@ def expose_learnable_params(fn: Callable[..., Any]) -> Callable[..., Any]:
                     kwargs[p.name] = init
                 continue
             if name not in getattr(target, "_learnables", {}):
-                ensure(name, float_init)
+                ensure(name, init)
             tensor = getter(name)
             pos = param_positions.index(p.name)
             if pos < len(args_list):
@@ -188,7 +189,7 @@ class Wanderer(_DeviceHelper):
         self._visited: List[Neuron] = []
         self._param_map: Dict[int, Tuple[Any, Any]] = {}  # id(neuron) -> (w_param, b_param)
         # Global learnable parameters exposed by plugins or decorators
-        self._learnables: Dict[str, Dict[str, Any]] = {}
+        self._learnables: Dict[str, LearnableParam] = {}
         self._loss_spec = loss
         self._loss_module = None  # torch.nn.* instance if applicable
         self._target_provider = target_provider
@@ -911,11 +912,19 @@ class Wanderer(_DeviceHelper):
         return total
 
     # --- Learnable parameter management (global to Wanderer) ---
-    def ensure_learnable_param(self, name: str, init_value: Any, *, requires_grad: bool = True,
-                               lr: Optional[float] = None) -> Any:
+    def ensure_learnable_param(
+        self,
+        name: str,
+        init_value: Any,
+        *,
+        requires_grad: bool = True,
+        lr: Optional[float] = None,
+        min_value: Optional[float] = None,
+        max_value: Optional[float] = None,
+    ) -> Any:
         """Register or fetch a Wanderer-level learnable parameter."""
         if name in self._learnables:
-            return self._learnables[name]["tensor"]
+            return self._learnables[name].tensor
         torch = self._torch  # type: ignore[assignment]
         try:
             if hasattr(init_value, "detach"):
@@ -937,7 +946,14 @@ class Wanderer(_DeviceHelper):
                 device=self._device,
                 requires_grad=requires_grad,
             )
-        self._learnables[name] = {"tensor": t, "opt": False, "lr": lr}
+        lp = LearnableParam(
+            tensor=t,
+            orig_type=type(init_value),
+            lr=lr,
+            min_value=min_value,
+            max_value=max_value,
+        )
+        self._learnables[name] = lp
         self._plugin_state.setdefault("learnable_params", {})[name] = t
         try:
             report("wanderer", "ensure_learnable", {"name": name}, "builder")
@@ -949,32 +965,31 @@ class Wanderer(_DeviceHelper):
         ent = self._learnables.get(name)
         if ent is None:
             return
-        ent["opt"] = bool(enabled)
+        ent.opt = bool(enabled)
         if lr is not None:
-            ent["lr"] = float(lr)
+            ent.lr = float(lr)
 
     def get_learnable_param_tensor(self, name: str) -> Any:
         ent = self._learnables.get(name)
-        return None if ent is None else ent.get("tensor")
+        return None if ent is None else ent.tensor
 
-    def _collect_enabled_params(self) -> List[Tuple[Any, float]]:
-        out: List[Tuple[Any, float]] = []
-        default_lr = float(self.current_lr or 0.0) or 1e-2
-        for cfg in self._learnables.values():
-            if not cfg.get("opt"):
-                continue
-            t = cfg.get("tensor")
-            lr_val = cfg.get("lr")
-            lr = float(lr_val if lr_val is not None else default_lr)
-            out.append((t, lr))
+    def _collect_enabled_params(self) -> List[LearnableParam]:
+        out: List[LearnableParam] = []
+        for lp in self._learnables.values():
+            if lp.opt:
+                out.append(lp)
         return out
 
     def _update_learnables(self) -> None:
         torch = self._torch  # type: ignore[assignment]
         if torch is None:
             return
+        params = self._collect_enabled_params()
         groups = []
-        for t, lr in self._collect_enabled_params():
+        default_lr = float(self.current_lr or 0.0) or 1e-2
+        for lp in params:
+            t = lp.tensor
+            lr = float(lp.lr if lp.lr is not None else default_lr)
             if hasattr(t, "grad") and t.grad is not None:
                 groups.append({"params": [t], "lr": lr})
         if not groups:
@@ -982,6 +997,8 @@ class Wanderer(_DeviceHelper):
         opt = self._optimizer_cls(groups)
         opt.step()
         opt.zero_grad(set_to_none=True)
+        for lp in params:
+            lp.apply_constraints()
 
     def _apply_optimizer(self, lr_eff: float) -> None:
         torch = self._torch  # type: ignore[assignment]
@@ -996,7 +1013,10 @@ class Wanderer(_DeviceHelper):
                     continue
                 param_groups.append({"params": [p], "lr": lr_eff})
                 seen.add(id(p))
-        for t, lr in self._collect_enabled_params():
+        enabled = self._collect_enabled_params()
+        for lp in enabled:
+            t = lp.tensor
+            lr = float(lp.lr if lp.lr is not None else lr_eff)
             if id(t) in seen:
                 continue
             param_groups.append({"params": [t], "lr": lr})
@@ -1006,6 +1026,8 @@ class Wanderer(_DeviceHelper):
         opt = self._optimizer_cls(param_groups)
         opt.step()
         opt.zero_grad(set_to_none=True)
+        for lp in enabled:
+            lp.apply_constraints()
         for n in self._visited:
             w_param, b_param = self._param_map[id(n)]
             try:
