@@ -100,3 +100,17 @@ The following test modules still need to be run and outputs analyzed:
 - tests/test_wanderer_bestpath_weights.py [complete]
 - tests/test_wanderer_walk_summary.py [complete]
 - tests/test_wanderer_wayfinder_plugin.py [complete]
+
+# SelfAttention metrics integration
+
+## Goal
+Ensure all SelfAttention routines consume the full set of reported state metrics
+(`sa_loss`, `sa_loss_speed`, `sa_loss_accel`, `sa_model_complexity`) when making
+decisions.
+
+## Steps
+1. Audit existing selfattention plugins and list those not using `ctx` metrics.
+2. Update each plugin to adjust behaviour based on the metrics and log their
+   usage to `REPORTER`.
+3. Expand tests to cover metric-driven behaviour for every plugin.
+4. Document the available metrics and integration guidelines in `ARCHITECTURE.md`.
