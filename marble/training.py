@@ -75,8 +75,12 @@ def run_wanderer_training(
             pass
         return out
 
-    # Locking occurs within run_training_with_datapairs; no external lock to avoid deadlocks
-    return _inner()
+    lock = getattr(brain, "_train_lock", None)
+    if not isinstance(lock, LockType):
+        lock = Lock()
+        setattr(brain, "_train_lock", lock)
+    with lock:
+        return _inner()
 
 
 def create_start_neuron(brain: "Brain", encoded_input: Union[TensorLike, Sequence[float], float, int]) -> "Neuron":
