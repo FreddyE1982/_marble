@@ -44,6 +44,7 @@ Core Components
   - Grid mode: discrete occupancy over an integer index lattice with world-coordinate bounds. Occupancy can be defined by formulas or Mandelbrot functions (`mandelbrot`, `mandelbrot_nd`). Omitting the `size` parameter enables a fully dynamic grid that expands as neurons are added; capacity becomes unbounded.
   - Sparse mode: only track explicit world coordinates within per-dimension bounds supporting open-ended maxima via `None`.
   Provides neuron placement, connections, coordinate mapping, bulk add, and JSON export/import for sparse brains. Includes basic cross-process file-based locks (Windows-friendly) for neurons and synapses. The brain can persist and restore its entire state via single-file snapshots (`save_snapshot`/`load_snapshot`) using the `.marble` extension. When constructed with `store_snapshots=True`, snapshots are automatically written every `snapshot_freq` wanderer walks into `snapshot_path`.
+  Optionally mirrors neurons and synapses into a Kuzu graph database when initialized with `kuzu_path`, keeping the external graph live-updated as the Brain changes.
 
 - `Lobe`: defines a subset of a Brain by selecting specific neurons and synapses. A lobe can be trained independently and may either inherit the active Wanderer plugin stack or supply its own `plugin_types` and `neuro_config` for isolated experimentation.
 
