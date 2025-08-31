@@ -29,6 +29,7 @@ import hashlib
 import importlib
 import itertools
 import gc
+from .learnable_param import LearnableParam
 try:
     import msvcrt  # type: ignore
 except Exception:
@@ -812,6 +813,8 @@ class Brain:
     - formula: string expression referencing variables n1..nN, or 'mandelbrot'
     - max_iters, escape_radius: parameters for Mandelbrot computations
     - kuzu_path: optional filename for a Kuzu graph database mirroring the brain
+    - learn_all_numeric_parameters: when True, numeric defaults in subsequently
+      imported modules are auto-exposed as learnable parameters
 
     The brain maintains a discrete occupancy grid; neurons/synapses must be placed
     at indices that are inside this shape.
@@ -834,6 +837,7 @@ class Brain:
         snapshot_freq: Optional[int] = None,
         snapshot_keep: Optional[int] = None,
         kuzu_path: Optional[str] = None,
+        learn_all_numeric_parameters: bool = False,
     ) -> None:
         if n < 1:
             raise ValueError("n must be >= 1")
@@ -842,6 +846,7 @@ class Brain:
         self._dataset_signature: Optional[str] = None
         self.allow_dissimilar_datasets_in_wanderers = bool(allow_dissimilar_datasets_in_wanderers)
         self._lock_dir = os.path.join(tempfile.gettempdir(), f"marble_brainlocks_{os.getpid()}_{id(self)}")
+        self.learn_all_numeric_parameters = bool(learn_all_numeric_parameters)
         try:
             os.makedirs(self._lock_dir, exist_ok=True)
         except Exception:
@@ -925,7 +930,7 @@ class Brain:
         self._progress_total_walks = 1
 
         # Global learnable parameters for brain-level plugins
-        self._learnables: Dict[str, Dict[str, Any]] = {}
+        self._learnables: Dict[str, LearnableParam] = {}
 
         # Named lobes (subgraphs of neurons and synapses)
         self.lobes: Dict[str, Lobe] = {}
@@ -1355,10 +1360,18 @@ class Brain:
         except Exception:
             pass
     # --- Learnable parameter management (global) ---
-    def ensure_learnable_param(self, name: str, init_value: Any, *, requires_grad: bool = True,
-                               lr: Optional[float] = None) -> Any:
+    def ensure_learnable_param(
+        self,
+        name: str,
+        init_value: Any,
+        *,
+        requires_grad: bool = True,
+        lr: Optional[float] = None,
+        min_value: Optional[float] = None,
+        max_value: Optional[float] = None,
+    ) -> Any:
         if name in self._learnables:
-            return self._learnables[name]["tensor"]
+            return self._learnables[name].tensor
         try:
             import torch  # type: ignore
         except Exception:
@@ -1371,29 +1384,32 @@ class Brain:
                 t = torch.tensor([float(init_value)], dtype=torch.float32, device=device, requires_grad=requires_grad)
         else:
             t = init_value
-        self._learnables[name] = {"tensor": t, "opt": False, "lr": lr}
+        self._learnables[name] = LearnableParam(
+            tensor=t,
+            orig_type=type(init_value),
+            lr=lr,
+            min_value=min_value,
+            max_value=max_value,
+        )
         return t
 
     def set_param_optimization(self, name: str, *, enabled: bool = True, lr: Optional[float] = None) -> None:
         ent = self._learnables.get(name)
         if ent is None:
             return
-        ent["opt"] = bool(enabled)
+        ent.opt = bool(enabled)
         if lr is not None:
-            ent["lr"] = float(lr)
+            ent.lr = float(lr)
 
     def get_learnable_param_tensor(self, name: str) -> Any:
         ent = self._learnables.get(name)
-        return None if ent is None else ent.get("tensor")
+        return None if ent is None else ent.tensor
 
-    def _collect_enabled_params(self) -> List[Tuple[Any, float]]:
-        out: List[Tuple[Any, float]] = []
-        for cfg in self._learnables.values():
-            if not cfg.get("opt"):
-                continue
-            t = cfg.get("tensor")
-            lr = float(cfg.get("lr", 1e-2))
-            out.append((t, lr))
+    def _collect_enabled_params(self) -> List[LearnableParam]:
+        out: List[LearnableParam] = []
+        for lp in self._learnables.values():
+            if lp.opt:
+                out.append(lp)
         return out
 
     def _update_learnables(self) -> None:
@@ -1403,8 +1419,11 @@ class Brain:
             torch = None  # type: ignore
         if torch is None:
             return
+        params = self._collect_enabled_params()
         groups = []
-        for t, lr in self._collect_enabled_params():
+        for lp in params:
+            t = lp.tensor
+            lr = float(lp.lr if lp.lr is not None else 1e-2)
             if hasattr(t, "grad") and t.grad is not None:
                 groups.append({"params": [t], "lr": lr})
         if not groups:
@@ -1412,6 +1431,8 @@ class Brain:
         opt = torch.optim.Adam(groups)
         opt.step()
         opt.zero_grad(set_to_none=True)
+        for lp in params:
+            lp.apply_constraints()
 
     # --- Cross-process locking helpers ---
     def _lockfile_path(self, key: str) -> str:

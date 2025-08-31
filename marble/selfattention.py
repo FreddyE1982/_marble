@@ -4,6 +4,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from .reporter import REPORTER, report
 from .graph import _NEURON_TYPES
+from .learnable_param import LearnableParam
 
 
 _SELFA_TYPES: Dict[str, Any] = {}
@@ -58,10 +59,10 @@ class SelfAttention:
         #              removed_synapses: [snapshot], removed_neurons: [snapshot]}
         self._change_stack: List[Dict[str, Any]] = []
         # Per-neuron learnable parameter registry managed by SelfAttention.
-        # Structure: { id(neuron): { name: { 'tensor': torch.Tensor, 'opt': bool, 'lr': Optional[float] } } }
-        self._learnables: Dict[int, Dict[str, Dict[str, Any]]] = {}
+        # Structure: { id(neuron): { name: LearnableParam } }
+        self._learnables: Dict[int, Dict[str, LearnableParam]] = {}
         # Global learnable parameters for SelfAttention routines
-        self._global_learnables: Dict[str, Dict[str, Any]] = {}
+        self._global_learnables: Dict[str, LearnableParam] = {}
         self._prev_loss: Optional[float] = None
         self._prev_loss_speed: float = 0.0
 
@@ -122,7 +123,17 @@ class SelfAttention:
                 pass
 
     # --- Learnable parameter management (per-neuron) ---
-    def ensure_learnable_param(self, neuron: "Neuron", name: str, init_value: Any, *, requires_grad: bool = True, lr: Optional[float] = None) -> Any:
+    def ensure_learnable_param(
+        self,
+        neuron: "Neuron",
+        name: str,
+        init_value: Any,
+        *,
+        requires_grad: bool = True,
+        lr: Optional[float] = None,
+        min_value: Optional[float] = None,
+        max_value: Optional[float] = None,
+    ) -> Any:
         """Register (or fetch existing) per-neuron learnable parameter accessible to plugins.
 
         - Stores tensor under neuron._plugin_state['learnable_params'][name]
@@ -137,7 +148,7 @@ class SelfAttention:
             self._learnables[nid] = {}
         entry = self._learnables[nid].get(name)
         if entry is not None:
-            return entry.get("tensor")
+            return entry.tensor
         # Build tensor from init_value
         if torch is not None:
             try:
@@ -148,7 +159,13 @@ class SelfAttention:
         else:
             # Without torch, store as plain list/float for plugin access; no autograd
             t = init_value
-        self._learnables[nid][name] = {"tensor": t, "opt": False, "lr": lr}
+        self._learnables[nid][name] = LearnableParam(
+            tensor=t,
+            orig_type=type(init_value),
+            lr=lr,
+            min_value=min_value,
+            max_value=max_value,
+        )
         try:
             # Also expose in neuron's plugin_state so plugins prefer it in forward paths
             lstore = getattr(neuron, "_plugin_state", {}).setdefault("learnable_params", {})
@@ -161,13 +178,21 @@ class SelfAttention:
             pass
         return t
 
-    def ensure_global_learnable_param(self, name: str, init_value: Any, *, requires_grad: bool = True,
-                                      lr: Optional[float] = None) -> Any:
+    def ensure_global_learnable_param(
+        self,
+        name: str,
+        init_value: Any,
+        *,
+        requires_grad: bool = True,
+        lr: Optional[float] = None,
+        min_value: Optional[float] = None,
+        max_value: Optional[float] = None,
+    ) -> Any:
         owner = getattr(self, "_owner", None)
         torch = getattr(owner, "_torch", None) if owner is not None else None
         device = getattr(owner, "_device", "cpu") if owner is not None else "cpu"
         if name in self._global_learnables:
-            return self._global_learnables[name]["tensor"]
+            return self._global_learnables[name].tensor
         if torch is not None:
             try:
                 t = torch.tensor(init_value, dtype=torch.float32, device=device, requires_grad=requires_grad)
@@ -175,7 +200,13 @@ class SelfAttention:
                 t = torch.tensor([init_value], dtype=torch.float32, device=device, requires_grad=requires_grad)
         else:
             t = init_value
-        self._global_learnables[name] = {"tensor": t, "opt": False, "lr": lr}
+        self._global_learnables[name] = LearnableParam(
+            tensor=t,
+            orig_type=type(init_value),
+            lr=lr,
+            min_value=min_value,
+            max_value=max_value,
+        )
         return t
 
     def set_param_optimization(self, neuron: "Neuron", name: str, *, enabled: bool = True, lr: Optional[float] = None) -> None:
@@ -183,47 +214,41 @@ class SelfAttention:
         if nid not in self._learnables or name not in self._learnables[nid]:
             # Not registered yet; nothing to toggle
             return
-        self._learnables[nid][name]["opt"] = bool(enabled)
+        lp = self._learnables[nid][name]
+        lp.opt = bool(enabled)
         if lr is not None:
-            self._learnables[nid][name]["lr"] = float(lr)
+            lp.lr = float(lr)
 
     def set_global_param_optimization(self, name: str, *, enabled: bool = True, lr: Optional[float] = None) -> None:
         ent = self._global_learnables.get(name)
         if ent is None:
             return
-        ent["opt"] = bool(enabled)
+        ent.opt = bool(enabled)
         if lr is not None:
-            ent["lr"] = float(lr)
+            ent.lr = float(lr)
 
     def get_neuron_param_tensor(self, neuron: "Neuron", name: str) -> Any:
         nid = id(neuron)
         ent = self._learnables.get(nid, {}).get(name)
-        return None if ent is None else ent.get("tensor")
+        return None if ent is None else ent.tensor
 
     def get_global_param_tensor(self, name: str) -> Any:
         ent = self._global_learnables.get(name)
-        return None if ent is None else ent.get("tensor")
+        return None if ent is None else ent.tensor
 
     def list_neuron_learnables(self, neuron: "Neuron") -> List[str]:
         return list(self._learnables.get(id(neuron), {}).keys())
 
-    def _collect_enabled_params(self, wanderer: "Wanderer") -> List[Tuple[Any, float]]:
-        out: List[Tuple[Any, float]] = []
+    def _collect_enabled_params(self, wanderer: "Wanderer") -> List[LearnableParam]:
+        out: List[LearnableParam] = []
         torch = getattr(wanderer, "_torch", None)
-        default_lr = float(getattr(wanderer, "current_lr", 0.0) or 0.0) or 1e-2
-        for nid, params in self._learnables.items():
-            for name, cfg in params.items():
-                if not cfg.get("opt"):
-                    continue
-                t = cfg.get("tensor")
-                if torch is not None and hasattr(t, "requires_grad"):
-                    out.append((t, float(cfg.get("lr", default_lr))))
-        for name, cfg in self._global_learnables.items():
-            if not cfg.get("opt"):
-                continue
-            t = cfg.get("tensor")
-            if torch is not None and hasattr(t, "requires_grad"):
-                out.append((t, float(cfg.get("lr", default_lr))))
+        for params in self._learnables.values():
+            for lp in params.values():
+                if lp.opt and torch is not None and hasattr(lp.tensor, "requires_grad"):
+                    out.append(lp)
+        for lp in self._global_learnables.values():
+            if lp.opt and torch is not None and hasattr(lp.tensor, "requires_grad"):
+                out.append(lp)
         return out
 
     def _update_learnables(self, wanderer: "Wanderer") -> None:
@@ -231,9 +256,12 @@ class SelfAttention:
         torch = getattr(wanderer, "_torch", None)
         if torch is None:
             return
-        pairs = self._collect_enabled_params(wanderer)
+        params = self._collect_enabled_params(wanderer)
         groups = []
-        for t, lr in pairs:
+        default_lr = float(getattr(wanderer, "current_lr", 0.0) or 0.0) or 1e-2
+        for lp in params:
+            t = lp.tensor
+            lr = float(lp.lr if lp.lr is not None else default_lr)
             if hasattr(t, "grad") and t.grad is not None:
                 groups.append({"params": [t], "lr": lr})
         if not groups:
@@ -241,6 +269,8 @@ class SelfAttention:
         opt = torch.optim.Adam(groups)
         opt.step()
         opt.zero_grad(set_to_none=True)
+        for lp in params:
+            lp.apply_constraints()
 
     def _after_step(self, wanderer: "Wanderer", step_index: int, ctx: Dict[str, Any]) -> None:
         # Derive global metrics to influence all decisions

@@ -62,6 +62,36 @@ class LearnableParamTests(unittest.TestCase):
         self.assertFalse(torch.equal(wp_before, w.get_learnable_param_tensor("wp")))
         self.assertFalse(torch.equal(bp_before, brain.get_learnable_param_tensor("bp")))
         self.assertFalse(torch.equal(sp_before, sa.get_global_param_tensor("sp")))
+class AutoParamLearningTests(unittest.TestCase):
+    def test_auto_learn_all_numeric_parameters(self):
+        import importlib.util
+        import os
+        import sys
+        import tempfile
+
+        from marble.marblemain import Brain, Wanderer
+        from marble.auto_param import enable_auto_param_learning
+
+        brain = Brain(1, size=1, learn_all_numeric_parameters=True)
+        w = Wanderer(brain)
+
+        module_code = (
+            "def foo(wanderer, b=2.0):\n"
+            "    return wanderer.get_learnable_param_tensor('b')\n"
+        )
+
+        path = os.path.join(os.getcwd(), "mymod_temp.py")
+        with open(path, "w", encoding="utf8") as fh:
+            fh.write(module_code)
+        try:
+            with enable_auto_param_learning(brain):
+                mod = importlib.import_module("mymod_temp")
+            mod.foo(w)
+        finally:
+            if "mymod_temp" in sys.modules:
+                del sys.modules["mymod_temp"]
+            os.remove(path)
+        self.assertIn("b", w._learnables)
 
 
 if __name__ == "__main__":

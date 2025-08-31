@@ -4,3 +4,7 @@ try:
     _os.environ.setdefault("PYTORCH_DISABLE_NNPACK", "1")
 except Exception:
     pass
+
+from .auto_param import enable_auto_param_learning
+
+__all__ = ["enable_auto_param_learning"]

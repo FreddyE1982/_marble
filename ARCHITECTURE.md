@@ -30,6 +30,32 @@ Helper and Analysis Tools
   test `tests/test_numeric_parameter_counter.py` ensures the script stays
   in sync with the library.
 
+- **Automatic numeric parameter learning**: Passing
+  ``learn_all_numeric_parameters=True`` to :class:`Brain` enables a global
+  import hook via :func:`marble.auto_param.enable_auto_param_learning`.
+  Modules imported inside this context are rewritten on the fly so that any
+  function with numeric default arguments automatically receives the
+  ``@expose_learnable_params`` decorator. Each parameter becomes a learnable
+  tensor wrapped in a :class:`~marble.learnable_param.LearnableParam`, which
+  tracks the original Python type and optional bounds for safe casting after
+  optimization steps.
+
+  Example:
+
+  ```python
+  from marble.marblemain import Brain, Wanderer
+  from marble.auto_param import enable_auto_param_learning
+
+  brain = Brain(1, size=1, learn_all_numeric_parameters=True)
+  w = Wanderer(brain)
+
+  with enable_auto_param_learning(brain):
+      import my_custom_plugin  # numeric defaults become learnable
+
+  # any function in ``my_custom_plugin`` with defaults like ``foo(x=1.0)``
+  # will now register ``foo_x`` as a learnable parameter on first use.
+  ```
+
 Core Components
 
 - `UniversalTensorCodec`: Serializes any Python object via pickle to bytes, builds a byte-level vocabulary, and encodes/decodes to integer token sequences. If PyTorch is available, returns tensors on CUDA when available, else CPU; otherwise returns Python lists. Supports `export_vocab`/`import_vocab` for reproducible vocabularies.
