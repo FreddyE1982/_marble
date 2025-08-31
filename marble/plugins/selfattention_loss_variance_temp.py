@@ -7,6 +7,7 @@ import torch
 
 from ..wanderer import expose_learnable_params
 from ..reporter import report
+from .selfattention_metric_utils import metric_factor
 
 
 @expose_learnable_params
@@ -34,6 +35,9 @@ class LossVarianceTemperatureRoutine:
             factor = float(f_t.detach().to("cpu").item())
         except Exception:
             factor = 0.1
+        mfac = metric_factor(ctx, "loss_variance_temp")
+        window = max(1, int(window * (1.0 + mfac)))
+        factor *= mfac
         losses = []
         for i in range(max(0, step_index - window), step_index):
             try:

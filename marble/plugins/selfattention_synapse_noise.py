@@ -7,6 +7,7 @@ import torch
 
 from ..wanderer import expose_learnable_params
 from ..reporter import report
+from .selfattention_metric_utils import metric_factor
 
 
 @expose_learnable_params
@@ -30,6 +31,7 @@ class SynapseNoiseRoutine:
             std = float(ns_t.detach().to("cpu").item())
         except Exception:
             std = 0.01
+        std *= metric_factor(ctx, "synapse_noise")
         noise = torch.randn(1).item() * std
         for syn in list(getattr(wanderer.brain, "synapses", [])):
             w = getattr(syn, "weight", None)

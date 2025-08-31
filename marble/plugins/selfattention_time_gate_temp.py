@@ -7,6 +7,7 @@ import torch
 
 from ..wanderer import expose_learnable_params
 from ..reporter import report
+from .selfattention_metric_utils import metric_factor
 
 
 @expose_learnable_params
@@ -34,6 +35,9 @@ class TimeGateTemperatureRoutine:
             gated_temp = float(gt_t.detach().to("cpu").item())
         except Exception:
             gated_temp = 0.5
+        mf = metric_factor(ctx, "time_gate_temp")
+        interval = max(1, int(interval * (1.0 + mf)))
+        gated_temp *= mf
         if step_index % interval == 0:
             try:
                 selfattention.set_param("temperature", gated_temp)

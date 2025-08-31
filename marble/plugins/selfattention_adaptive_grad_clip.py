@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any, Dict
 
 from ..reporter import report
+from .selfattention_metric_utils import metric_factor
 from ..wanderer import expose_learnable_params
 
 
@@ -37,6 +38,10 @@ class AdaptiveGradClipRoutine:
             cooldown = int(float(cd_t.detach().to("cpu").item()))
         except Exception:
             thr, max_norm, cooldown = 1.5, 1.0, 5
+        factor = metric_factor(ctx, "adaptive_grad_clip")
+        thr *= 1.0 + factor
+        max_norm *= factor
+        cooldown = max(1, int(cooldown * (1.0 + factor)))
         try:
             cur = float(ctx.get("cur_loss_tensor").detach().to("cpu").item()) if ctx.get("cur_loss_tensor") is not None else None
         except Exception:

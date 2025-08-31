@@ -7,6 +7,7 @@ import torch
 
 from ..wanderer import expose_learnable_params
 from ..reporter import report
+from .selfattention_metric_utils import metric_factor
 
 
 @expose_learnable_params
@@ -30,6 +31,7 @@ class SynapseRenormRoutine:
             target = float(tn_t.detach().to("cpu").item())
         except Exception:
             target = 1.0
+        target *= metric_factor(ctx, "synapse_renorm")
         for syn in list(getattr(wanderer.brain, "synapses", [])):
             w = getattr(syn, "weight", None)
             if w is None:

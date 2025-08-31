@@ -25,6 +25,7 @@ from typing import Any, Dict, Optional
 
 from ..wanderer import expose_learnable_params
 from ..graph import _NEURON_TYPES
+from .selfattention_metric_utils import metric_factor
 
 
 @expose_learnable_params
@@ -39,6 +40,7 @@ class FindBestNeuronTypeRoutine:
         self._sa = None  # type: Optional["SelfAttention"]
         self._orig_add = None
         self._eval_active = False
+        self._limit_factor = 1.0
 
     # ---- Helper utilities -------------------------------------------------
     def _baseline_loss(self, wanderer: "Wanderer") -> float:
@@ -54,6 +56,7 @@ class FindBestNeuronTypeRoutine:
             limit = max(1, int(max_t.detach().to("cpu").item()))
         except Exception:
             limit = 10
+        limit = max(1, int(limit * self._limit_factor))
         types = ["base"]
         try:
             types += list(_NEURON_TYPES.keys())
@@ -122,6 +125,17 @@ class FindBestNeuronTypeRoutine:
             brain.add_neuron = wrapped_add_neuron  # type: ignore[assignment]
         except Exception:
             pass
+
+    def after_step(
+        self,
+        selfattention: "SelfAttention",
+        reporter_ro: Any,
+        wanderer: "Wanderer",
+        step_index: int,
+        ctx: Dict[str, Any],
+    ) -> None:
+        self._limit_factor = 1.0 + metric_factor(ctx, "findbestneurontype")
+        return None
 
 
 __all__ = ["FindBestNeuronTypeRoutine"]

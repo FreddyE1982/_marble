@@ -7,6 +7,7 @@ import torch
 
 from ..wanderer import expose_learnable_params
 from ..reporter import report
+from .selfattention_metric_utils import metric_factor
 
 
 @expose_learnable_params
@@ -34,6 +35,9 @@ class AgePruneRoutine:
             cool_temp = float(cool_t.detach().to("cpu").item())
         except Exception:
             cool_temp = 0.2
+        factor = metric_factor(ctx, "age_prune")
+        max_age *= 1.0 + factor
+        cool_temp *= factor
         for n in list(getattr(wanderer.brain, "neurons", {}).values()):
             info = selfattention.get_neuron_report(n)
             try:

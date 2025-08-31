@@ -8,6 +8,7 @@ import torch
 
 from ..wanderer import expose_learnable_params
 from ..reporter import report
+from .selfattention_metric_utils import metric_factor
 
 
 @expose_learnable_params
@@ -21,18 +22,11 @@ class SignalBoosterRoutine:
     def after_step(self, selfattention: "SelfAttention", reporter_ro: Any, wanderer: "Wanderer", step_index: int, ctx: Dict[str, Any]):
         bg_t = _boost_param(wanderer)
         try:
-            gain_t = torch.tensor(bg_t.detach().to("cpu").item(), dtype=torch.float32)
+            gain = float(bg_t.detach().to("cpu").item())
         except Exception:
-            gain_t = torch.tensor(1.0)
-        loss = float(ctx.get("sa_loss", 0.0) or 0.0)
-        speed = float(ctx.get("sa_loss_speed", 0.0) or 0.0)
-        accel = float(ctx.get("sa_loss_accel", 0.0) or 0.0)
-        complexity = float(ctx.get("sa_model_complexity", 0.0) or 0.0)
-        gain_t = gain_t / (1.0 + torch.abs(torch.tensor(loss)))
-        gain_t = gain_t / (1.0 + torch.abs(torch.tensor(speed)))
-        gain_t = gain_t / (1.0 + torch.abs(torch.tensor(accel)))
-        gain_t = gain_t / (1.0 + torch.tensor(complexity))
-        gain = float(gain_t.detach().to("cpu").item())
+            gain = 1.0
+        mf = metric_factor(ctx, "signal_booster")
+        gain *= mf
         try:
             base = float(selfattention.get_param("temperature", 1.0))
             selfattention.set_param("temperature", base * gain)
@@ -41,14 +35,7 @@ class SignalBoosterRoutine:
         report(
             "selfattention",
             "signal_booster",
-            {
-                "step": step_index,
-                "gain": gain,
-                "loss": loss,
-                "speed": speed,
-                "accel": accel,
-                "complexity": complexity,
-            },
+            {"step": step_index, "gain": gain},
             "events",
         )
         return None

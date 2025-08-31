@@ -109,8 +109,8 @@ Ensure all SelfAttention routines consume the full set of reported state metrics
 decisions.
 
 ## Steps
-1. Audit existing selfattention plugins and list those not using `ctx` metrics.
+1. Audit existing selfattention plugins and list those not using `ctx` metrics. [complete]
 2. Update each plugin to adjust behaviour based on the metrics and log their
-   usage to `REPORTER`.
-3. Expand tests to cover metric-driven behaviour for every plugin.
-4. Document the available metrics and integration guidelines in `ARCHITECTURE.md`.
+   usage to `REPORTER`. [complete]
+3. Expand tests to cover metric-driven behaviour for every plugin. [complete]
+4. Document the available metrics and integration guidelines in `ARCHITECTURE.md`. [complete]

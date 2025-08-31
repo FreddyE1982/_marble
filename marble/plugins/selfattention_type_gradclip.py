@@ -4,6 +4,7 @@ from typing import Any, Dict, List
 
 from ..wanderer import expose_learnable_params
 from ..reporter import report
+from .selfattention_metric_utils import metric_factor
 
 
 @expose_learnable_params
@@ -36,6 +37,9 @@ class TypeGradClipRoutine:
             max_norm = float(m_t.detach().to("cpu").item())
         except Exception:
             count, start, thr, max_norm = 3, 0, 0.5, 1.0
+        mf = metric_factor(ctx, "type_gradclip")
+        thr *= 1.0 + mf
+        max_norm *= mf
         neurons = list(getattr(wanderer.brain, "neurons", {}).values())
         if not neurons:
             return None

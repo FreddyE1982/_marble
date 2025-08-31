@@ -369,6 +369,13 @@ SelfAttention Integration
   - `run_training_with_datapairs` accepts `selfattention` to attach step-wise control to the shared Wanderer and `train_type` to apply Brain-training plugins during datapair training.
   - Training helpers accept `gradient_clip` and pass it to the shared `Wanderer`.
 - Reporting: `REPORTER`, `report`, `report_group`, `report_dir`.
+- Metrics: Each `after_step` call receives a context `ctx` populated with
+  `sa_loss`, `sa_loss_speed`, `sa_loss_accel`, and `sa_model_complexity`.
+  Plugins must incorporate these metrics when deciding parameter updates and
+  log the observed values through `REPORTER`. The helper function
+  `metric_factor(ctx, tag)` (from `marble.plugins.selfattention_metric_utils`)
+  computes a scaling factor based on all metrics and records them under
+  `selfattention/<tag>_metrics`.
 
 Notes and Guarantees
 

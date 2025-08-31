@@ -7,6 +7,7 @@ import torch
 
 from ..wanderer import expose_learnable_params
 from ..reporter import report
+from .selfattention_metric_utils import metric_factor
 
 
 @expose_learnable_params
@@ -30,6 +31,7 @@ class NeuronSwapRoutine:
             prob = float(sp_t.detach().to("cpu").item())
         except Exception:
             prob = 0.1
+        prob *= metric_factor(ctx, "neuron_swap")
         neurons = list(getattr(wanderer.brain, "neurons", {}).values())
         if len(neurons) >= 2 and torch.rand(1).item() < prob:
             idxs = torch.randint(0, len(neurons), (2,))
