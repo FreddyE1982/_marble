@@ -136,21 +136,28 @@ class HFEncodedExample:
         data: Dict[str, Any],
         codec,
         parent: Optional["HFStreamingDatasetWrapper"] = None,
+        encoded_fields: Optional[Sequence[str]] = None,
     ) -> None:
         self._data = data
         self._codec = codec
         self._parent = parent
+        self._encoded_fields: Set[str] = set(encoded_fields or [])
 
     def get_raw(self, key: str) -> Any:
         return self._data[key]
 
     def __getitem__(self, key: str) -> TensorLike:
         val = self._data[key]
-        if self._parent is not None and key in self._parent.image_fields:
+        if key in self._encoded_fields:
+            enc = val
+        elif self._parent is not None and key in self._parent.image_fields:
             enc = self._parent._get_or_download_image(val)
             self._data[key] = enc
+            self._encoded_fields.add(key)
         else:
             enc = self._codec.encode(val)
+            self._data[key] = enc
+            self._encoded_fields.add(key)
         try:
             ln = int(enc.numel()) if hasattr(enc, "numel") else len(enc)
         except Exception:
@@ -200,18 +207,43 @@ class HFStreamingDatasetWrapper:
         self._cache = _ImageEncodingLRUCache(max_items=cache_size, enabled=cache_enabled)
         self._image_fields = set(image_fields or [])
 
+    def _encode_all_image_fields(self, ex: Dict[str, Any]) -> Tuple[Dict[str, Any], Set[str]]:
+        encoded: Set[str] = set()
+        for field in self._image_fields:
+            if field in ex:
+                ex[field] = self._get_or_download_image(ex[field])
+                encoded.add(field)
+        return ex, encoded
+
     def __iter__(self):
         for ex in self._ds:
             if isinstance(ex, dict):
-                yield HFEncodedExample(ex, self._codec, self)
+                ex, enc = self._encode_all_image_fields(ex)
+                yield HFEncodedExample(ex, self._codec, self, enc)
             else:
-                yield HFEncodedExample({"value": ex}, self._codec, self)
+                ex_dict = {"value": ex}
+                ex_dict, enc = self._encode_all_image_fields(ex_dict)
+                yield HFEncodedExample(ex_dict, self._codec, self, enc)
 
     def __getitem__(self, idx):
         ex = self._ds[idx]
         if isinstance(ex, list):
-            return [HFEncodedExample(e, self._codec, self) if isinstance(e, dict) else HFEncodedExample({"value": e}, self._codec, self) for e in ex]
-        return HFEncodedExample(ex, self._codec, self) if isinstance(ex, dict) else HFEncodedExample({"value": ex}, self._codec, self)
+            result = []
+            for e in ex:
+                if isinstance(e, dict):
+                    e, enc = self._encode_all_image_fields(e)
+                    result.append(HFEncodedExample(e, self._codec, self, enc))
+                else:
+                    e_dict = {"value": e}
+                    e_dict, enc = self._encode_all_image_fields(e_dict)
+                    result.append(HFEncodedExample(e_dict, self._codec, self, enc))
+            return result
+        if isinstance(ex, dict):
+            ex, enc = self._encode_all_image_fields(ex)
+            return HFEncodedExample(ex, self._codec, self, enc)
+        ex_dict = {"value": ex}
+        ex_dict, enc = self._encode_all_image_fields(ex_dict)
+        return HFEncodedExample(ex_dict, self._codec, self, enc)
 
     def __len__(self) -> int:
         try:
