@@ -6,6 +6,7 @@ import time
 import threading
 from typing import List, Tuple, Any, Dict
 import weakref
+from contextlib import contextmanager
 
 import torch
 try:
@@ -43,14 +44,47 @@ class TensorRegistry:
 
         for (oid, attr), ref in list(self._entries.items()):
             obj = ref()
-            if obj is None or not hasattr(obj, attr):
+            if obj is None:
                 continue
-            t = getattr(obj, attr)
+            t = None
+            if hasattr(obj, attr):
+                t = getattr(obj, attr)
+            else:
+                try:
+                    t = obj[attr]  # type: ignore[index]
+                except Exception:
+                    continue
             if torch.is_tensor(t):
                 yield obj, attr, t
 
 
 TENSOR_REGISTRY = TensorRegistry()
+
+
+@contextmanager
+def track_tensor(obj: Any, attr: str):
+    """Register tensors assigned to ``obj.attr`` inside the context.
+
+    Parameters
+    ----------
+    obj:
+        Object or mapping that will receive the tensor.
+    attr:
+        Attribute name or mapping key to watch.
+    """
+
+    yield
+    try:
+        val = getattr(obj, attr)
+    except AttributeError:
+        try:
+            val = obj[attr]  # type: ignore[index]
+        except Exception:
+            return
+    except Exception:
+        return
+    if torch.is_tensor(val):
+        TENSOR_REGISTRY.register(obj, attr)
 
 
 def _load_resource_cfg() -> Dict[str, Any]:
@@ -420,5 +454,10 @@ class ResourceAllocatorPlugin:
         return None, "forward"
 
 
-__all__ = ["ResourceAllocatorPlugin", "TensorRegistry", "TENSOR_REGISTRY"]
+__all__ = [
+    "ResourceAllocatorPlugin",
+    "TensorRegistry",
+    "TENSOR_REGISTRY",
+    "track_tensor",
+]
 PLUGIN_NAME = "resourceallocator"

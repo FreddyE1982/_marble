@@ -75,11 +75,13 @@ class _ImageEncodingLRUCache:
     def put(self, key: str, value: Any) -> None:
         if not self.enabled:
             return
-        if key in self._od:
-            self._od.pop(key)
-        self._od[key] = value
-        while len(self._od) > max(0, self.max_items):
-            self._od.popitem(last=False)
+        from .plugins import wanderer_resource_allocator as resource_allocator
+        with resource_allocator.track_tensor(self._od, key):
+            if key in self._od:
+                self._od.pop(key)
+            self._od[key] = value
+            while len(self._od) > max(0, self.max_items):
+                self._od.popitem(last=False)
 
     def get_or_encode(self, obj: Any, codec) -> Tuple[str, Any]:
         key = self._make_key(obj)
