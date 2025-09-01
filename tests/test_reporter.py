@@ -29,6 +29,16 @@ class TestReporter(unittest.TestCase):
         print("reporter debug msg:", val)
         self.assertEqual(val, {"a": 1})
 
+    def test_dict_merge(self):
+        r = self.reporter
+        r.registergroup("stats")
+        r.item["status", "stats"] = {"a": 1}
+        # second set should merge rather than replace
+        r.item["status", "stats"] = {"b": 2}
+        merged = r.group("stats")["status"]
+        print("reporter merged status:", merged)
+        self.assertEqual(merged, {"a": 1, "b": 2})
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
