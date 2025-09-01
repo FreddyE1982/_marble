@@ -42,7 +42,10 @@ class AutoPlugin:
         self._current_neuron_id = 0
         self._disabled = set(disabled_plugins or [])
         self._log_path = log_path
-        self._log_fp = open(log_path, "w") if log_path else None
+        if log_path:
+            # Create/clear the log file so it's readable immediately during training
+            with open(log_path, "w", encoding="utf-8"):
+                pass
         self._log_state: Dict[Tuple[str, str], Dict[str, Any]] = {}
         self._protected: set[str] = set()
 
@@ -109,12 +112,12 @@ class AutoPlugin:
         last_steps: int,
         total_steps: int,
     ) -> None:
-        if self._log_fp is None:
+        if not self._log_path:
             return
-        self._log_fp.write(
-            f"{action},{plugintype},{name},{last_time:.3f},{last_steps},{total_steps}\n"
-        )
-        self._log_fp.flush()
+        with open(self._log_path, "a", encoding="utf-8") as fp:
+            fp.write(
+                f"{action},{plugintype},{name},{last_time:.3f},{last_steps},{total_steps}\n"
+            )
 
     def _update_log(
         self,
@@ -123,7 +126,7 @@ class AutoPlugin:
         name: str,
         active: bool,
     ) -> None:
-        if self._log_fp is None:
+        if not self._log_path:
             return
         key = (plugintype, name)
         state = self._log_state.setdefault(
@@ -266,9 +269,7 @@ class AutoPlugin:
         for (ptype, name), state in list(self._log_state.items()):
             if state.get("active"):
                 self._update_log(wanderer, ptype, name, False)
-        if self._log_fp is not None:
-            self._log_fp.close()
-            self._log_fp = None
+        self._log_state.clear()
 
 
 class _GatedPlugin:
