@@ -228,7 +228,7 @@ def load_hf_streaming_dataset(
     name: Optional[str] = None,
     split: Optional[str] = "train",
     codec=None,
-    streaming: bool = True,
+    streaming: str = "memory",
     trust_remote_code: bool = False,
     download_config=None,
     cache_images: bool = True,
@@ -247,10 +247,19 @@ def load_hf_streaming_dataset(
         Dataset split to load, defaults to ``"train"``.
     codec: Optional[Any]
         Codec used for automatic tensor encoding.
-    streaming: bool
-        Whether to enable streaming mode (default: ``True``). When set to
-        ``False`` the full dataset is materialized in memory but images are
-        replaced by their URL/path so that they can be fetched lazily.
+    streaming: str
+        Select how the dataset is materialized. Options are:
+        ``"memory"`` (default) – stream directly into memory,
+        ``"memory_lazy_images"`` – like ``"memory"`` but replace image objects
+        with their URL so they are downloaded on demand,
+        ``"disk"`` – store the dataset on disk and stream examples from there,
+        ``"disk_lazy_images"`` – like ``"disk"`` but replace image objects with
+        URLs,
+        ``"memory_full"`` – materialize the entire dataset in memory,
+        ``"memory_full_lazy_images"`` – materialize everything in memory but
+        keep only image URLs,
+        ``"disk_full_lazy_image"`` – materialize the dataset on disk with image
+        URLs only.
     trust_remote_code: bool
         Forwarded to ``datasets.load_dataset`` when supported.
     download_config: Optional[Any]
@@ -268,52 +277,79 @@ def load_hf_streaming_dataset(
     used_codec = codec if codec is not None else make_default_codec()
     import inspect
 
+    streaming_mode = str(streaming).lower()
+    valid_modes = {
+        "memory",
+        "memory_lazy_images",
+        "disk",
+        "disk_lazy_images",
+        "memory_full",
+        "memory_full_lazy_images",
+        "disk_full_lazy_image",
+    }
+    if streaming_mode not in valid_modes:
+        raise ValueError(f"streaming must be one of {sorted(valid_modes)}")
+
     ds_kwargs: Dict[str, Any] = {
         "path": path,
         "name": name,
         "split": split,
-        "streaming": True,
+        "streaming": streaming_mode.startswith("memory"),
         **kwargs,
     }
+    if not streaming_mode.startswith("memory"):
+        ds_kwargs["keep_in_memory"] = False
     if download_config is not None:
         ds_kwargs["download_config"] = download_config
     if "trust_remote_code" in inspect.signature(ds_mod.load_dataset).parameters:
         ds_kwargs["trust_remote_code"] = trust_remote_code
 
     ds_stream = ds_mod.load_dataset(**ds_kwargs)
-    if streaming:
-        ds = ds_stream
-    else:
-        def _extract_image_url(obj: Any) -> Any:
-            try:
-                if isinstance(obj, dict):
-                    for k in ("url", "path", "filename", "image_url"):
-                        v = obj.get(k)
-                        if isinstance(v, str):
-                            return v
-            except Exception:
-                pass
-            for attr in ("url", "path", "filename", "image_url"):
-                try:
-                    v = getattr(obj, attr)
+
+    def _extract_image_url(obj: Any) -> Any:
+        try:
+            if isinstance(obj, dict):
+                for k in ("url", "path", "filename", "image_url"):
+                    v = obj.get(k)
                     if isinstance(v, str):
                         return v
-                except Exception:
-                    continue
-            return obj
+        except Exception:
+            pass
+        for attr in ("url", "path", "filename", "image_url"):
+            try:
+                v = getattr(obj, attr)
+                if isinstance(v, str):
+                    return v
+            except Exception:
+                continue
+        return obj
 
-        materialized = []
-        for ex in ds_stream:
+    def _replace_images_iter(ds):
+        for ex in ds:
             if isinstance(ex, dict):
-                materialized.append({k: _extract_image_url(v) for k, v in ex.items()})
+                yield {k: _extract_image_url(v) for k, v in ex.items()}
             else:
-                materialized.append(_extract_image_url(ex))
-        ds = materialized
+                yield _extract_image_url(ex)
+
+    if streaming_mode == "memory":
+        ds = ds_stream
+    elif streaming_mode == "memory_lazy_images":
+        ds = _replace_images_iter(ds_stream)
+    elif streaming_mode == "disk":
+        ds = ds_stream
+    elif streaming_mode in {"disk_lazy_images", "disk_full_lazy_image"}:
+        ds = ds_stream.map(lambda ex: {k: _extract_image_url(v) for k, v in ex.items()}, keep_in_memory=False)
+    elif streaming_mode == "memory_full":
+        ds = list(ds_stream)
+    elif streaming_mode == "memory_full_lazy_images":
+        ds = list(_replace_images_iter(ds_stream))
+    else:  # safeguard
+        ds = ds_stream
     try:
         report(
             "huggingface",
             "load_dataset",
-            {"path": path, "name": name, "split": split, "streaming": bool(streaming)},
+            {"path": path, "name": name, "split": split, "streaming": streaming_mode},
             "dataset",
         )
     except Exception:
