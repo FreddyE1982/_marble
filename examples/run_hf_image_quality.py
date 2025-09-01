@@ -16,10 +16,8 @@ from __future__ import annotations
 
 from typing import Iterator, Any, Dict, Optional
 import os
-import hashlib
 import re
 import time
-from collections import OrderedDict
 from datasets import DownloadConfig
 
 from marble.marblemain import (
@@ -67,75 +65,9 @@ class QualityAwareRoutine:
         return {"lr_override": float(new_lr)}
 
 
-class _ImageEncodingLRUCache:
-    """Simple LRU cache that stores the encoded representation of images.
-
-    - Keys are derived from common URL/path attributes or a stable repr digest.
-    - Values are the result of `UniversalTensorCodec.encode(image_obj)`.
-    - Used only within this example to avoid repeated downloads when the
-      dataset yields the same image multiple times.
-    """
-
-    def __init__(self, max_items: int = 20, enabled: bool = True) -> None:
-        self.enabled = bool(enabled)
-        self.max_items = int(max_items)
-        self._od: "OrderedDict[str, Any]" = OrderedDict()
-
-    def _make_key(self, obj: Any) -> str:
-        # Prefer explicit URL/path attributes when present (to avoid fetching bytes)
-        try:
-            if isinstance(obj, dict):
-                for k in ("url", "uri", "image_url", "path", "filename"):
-                    if k in obj and isinstance(obj[k], str):
-                        return f"url:{obj[k]}"
-        except Exception:
-            pass
-        for attr in ("url", "uri", "path", "filename"):
-            try:
-                v = getattr(obj, attr, None)
-                if isinstance(v, str) and v:
-                    return f"url:{v}"
-            except Exception:
-                pass
-        # If it looks like a plain string that could be a URL or path, use it
-        if isinstance(obj, str) and obj:
-            return f"url:{obj}"
-        # Fallback: stable digest of repr (avoids large materialization)
-        try:
-            r = repr(obj)
-        except Exception:
-            r = f"{type(obj).__name__}:{id(obj)}"
-        return f"repr:{hashlib.sha256(r.encode('utf-8', errors='ignore')).hexdigest()}"
-
-    def get(self, key: str) -> Optional[Any]:
-        if not self.enabled:
-            return None
-        if key in self._od:
-            val = self._od.pop(key)
-            self._od[key] = val  # move to end (most recently used)
-            return val
-        return None
-
-    def put(self, key: str, value: Any) -> None:
-        if not self.enabled:
-            return
-        if key in self._od:
-            self._od.pop(key)
-        self._od[key] = value
-        while len(self._od) > max(0, self.max_items):
-            self._od.popitem(last=False)
-
-    def get_or_encode(self, obj: Any, codec: UniversalTensorCodec):
-        key = self._make_key(obj)
-        cached = self.get(key)
-        if cached is not None:
-            return key, cached
-        enc = codec.encode(obj)
-        self.put(key, enc)
-        return key, enc
 
 
-def _sample_pairs(ds, codec: UniversalTensorCodec, cache: _ImageEncodingLRUCache) -> Iterator:
+def _sample_pairs(ds) -> Iterator:
     n_retries = int(os.environ.get("MARBLE_IMG_RETRY", "3"))
     timeout = float(os.environ.get("MARBLE_IMG_TIMEOUT", "0"))
 
@@ -164,14 +96,14 @@ def _sample_pairs(ds, codec: UniversalTensorCodec, cache: _ImageEncodingLRUCache
             def _enc(img: Any, label: str):
                 for attempt in range(n_retries):
                     try:
-                        return cache.get_or_encode(img, codec)
+                        return ds.cache_image(img)
                     except Exception as err:
-                        print(f"get_or_encode failed for {label} attempt {attempt + 1}/{n_retries}: {err}; example={ex}")
+                        print(f"cache_image failed for {label} attempt {attempt + 1}/{n_retries}: {err}; example={ex}")
                         if timeout:
                             time.sleep(timeout)
-                raise RuntimeError(f"unable to encode {label}")
+                raise RuntimeError(f"unable to cache {label}")
 
-            # Use cache to encode images once; store only the encoded form.
+            # Cache image encodings once; store only the cache key.
             key1, _ = _enc(img1, "image1")
             key2, _ = _enc(img2, "image2")
         except Exception as err:
@@ -205,6 +137,8 @@ def main(epochs: int = 1) -> None:
         streaming=True,
         codec=codec,
         download_config=DownloadConfig(max_retries=hf_retries, timeout=hf_timeout),
+        cache_images=cache_enabled,
+        cache_size=cache_size,
     )
     # Consumed fields: prompt, image1, image2, weighted_results_image1_preference,
     # weighted_results_image2_preference, weighted_results_image1_alignment,
@@ -262,7 +196,6 @@ def main(epochs: int = 1) -> None:
         "add_min_new_neurons_per_step": 5,
         "aggressive_phase_steps": 100,
     }
-    cache = _ImageEncodingLRUCache(max_items=cache_size, enabled=cache_enabled)
     port = 8501
     start_dashboard(port)
     print(f"Dashboard available at https://alpaca-model-easily.ngrok-free.app:{port}")
@@ -272,7 +205,7 @@ def main(epochs: int = 1) -> None:
         key = left.get("image_key")
         enc_img = None
         if isinstance(key, str):
-            enc_img = cache.get(key)
+            enc_img = ds.get_cached_image(key)
         # Build a tuple combining the raw prompt and cached image tokens (or the key if missing)
         payload = (left.get("prompt"), enc_img if enc_img is not None else key)
         enc = codec.encode(payload)
@@ -288,7 +221,7 @@ def main(epochs: int = 1) -> None:
         return n
 
     for _ in range(int(epochs)):
-        pairs = _sample_pairs(ds, codec, cache)
+        pairs = _sample_pairs(ds)
         res = run_training_with_datapairs(
             brain,
             pairs,
