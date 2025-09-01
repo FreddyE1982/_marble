@@ -134,7 +134,7 @@ def main(epochs: int = 1) -> None:
     ds = load_hf_streaming_dataset(
         "Rapidata/Imagen-4-ultra-24-7-25_t2i_human_preference",
         split="train",
-        streaming="memory",
+        streaming="disk_lazy_images",  # disk-backed dataset; images downloaded lazily per sample
         codec=codec,
         download_config=DownloadConfig(max_retries=hf_retries, timeout=hf_timeout),
         cache_images=cache_enabled,
