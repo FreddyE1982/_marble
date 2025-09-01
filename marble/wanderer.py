@@ -15,6 +15,13 @@ from .lobe import Lobe
 from .reporter import report
 from .learnable_param import LearnableParam
 
+def _register_tensor(obj: Any, attr: str) -> None:
+    try:
+        from .plugins.wanderer_resource_allocator import TENSOR_REGISTRY  # type: ignore
+        TENSOR_REGISTRY.register(obj, attr)
+    except Exception:
+        pass
+
 # Core registries for Wanderer and Neuroplasticity plugins
 WANDERER_TYPES_REGISTRY: Dict[str, Any] = {}
 NEURO_TYPES_REGISTRY: Dict[str, Any] = {}
@@ -633,6 +640,8 @@ class Wanderer(_DeviceHelper):
                 "steps": steps,
                 "cur_loss_tensor": step_loss_t,
             }
+            self._cur_loss_tensor = step_loss_t
+            _register_tensor(self, "_cur_loss_tensor")
 
             choices = self._gather_choices(current)
             if not choices:
@@ -1137,6 +1146,8 @@ class Wanderer(_DeviceHelper):
         delta = None if self._last_walk_loss is None else (loss_v - self._last_walk_loss)
         out_pos = getattr(current, "position", None) if current is not None else None
         self._finish_stats = {"loss_tensor": loss_t, "loss": loss_v, "delta": delta, "output_neuron": out_pos}
+        self._finish_loss_tensor = loss_t
+        _register_tensor(self, "_finish_loss_tensor")
         self._finish_requested = True
         try:
             report("wanderer", "walkfinish", {"loss": loss_v, "delta_vs_prev": delta, "output_neuron_pos": out_pos}, "events")
