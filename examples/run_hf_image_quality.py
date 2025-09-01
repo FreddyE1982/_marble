@@ -19,6 +19,7 @@ import os
 import hashlib
 import re
 from collections import OrderedDict
+from datasets import DownloadConfig
 
 from marble.marblemain import (
     Brain,
@@ -165,6 +166,7 @@ def main(epochs: int = 1) -> None:
         split="train",
         streaming=True,
         codec=codec,
+        download_config=DownloadConfig(max_retries=5, timeout=60),
     )
     # Consumed fields: prompt, image1, image2, weighted_results_image1_preference,
     # weighted_results_image2_preference, weighted_results_image1_alignment,
