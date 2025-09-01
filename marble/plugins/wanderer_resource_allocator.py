@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+import tempfile
 import time
 from typing import List, Tuple, Any
 
@@ -167,6 +169,56 @@ class ResourceAllocatorPlugin:
         st[pos] = st.get(pos, 0) + 1
         return float(st[pos])
 
+    # Device management -------------------------------------------------
+    def _offload_to_disk(self, tensor: torch.Tensor) -> str:
+        """Persist *tensor* to a temporary file and return its path."""
+        fd, path = tempfile.mkstemp(prefix="marble_offload_", suffix=".pt")
+        os.close(fd)
+        torch.save(tensor, path)
+        return path
+
+    def _safe_transfer(self, obj: Any, attr: str, tensor: torch.Tensor, device: str) -> None:
+        """Move ``tensor`` to ``device`` handling VRAM/RAM pressure.
+
+        On CUDA out-of-memory errors the tensor is first moved to CPU. If RAM
+        is also exhausted the tensor is serialized to disk and the attribute is
+        cleared while the disk path is stored on the object under
+        ``_<attr>_offload`` for later retrieval.
+        """
+
+        off_attr = f"_{attr}_offload"
+        off_path = getattr(obj, off_attr, None)
+        if isinstance(off_path, str):
+            try:
+                tensor.data = torch.load(off_path, map_location=device)
+                os.remove(off_path)
+                setattr(obj, off_attr, None)
+            except Exception:
+                return
+            return
+
+        try:
+            tensor.data = tensor.data.to(device)
+            return
+        except torch.cuda.OutOfMemoryError:
+            pass
+        except Exception:
+            return
+
+        # CUDA OOM: try CPU first, then disk
+        try:
+            cpu_tensor = tensor.detach().to("cpu")
+            avail = psutil.virtual_memory().available if psutil else float("inf")
+            needed = cpu_tensor.element_size() * cpu_tensor.nelement()
+            if avail < needed:
+                path = self._offload_to_disk(cpu_tensor)
+                setattr(obj, off_attr, path)
+                tensor.data = torch.empty(0)
+            else:
+                tensor.data = cpu_tensor
+        except Exception:
+            tensor.data = torch.empty(0)
+
     # Core logic ---------------------------------------------------------
     def choose_next(self, wanderer, current, choices: List[Tuple["Synapse", str]]):
         if not choices:
@@ -276,10 +328,7 @@ class ResourceAllocatorPlugin:
             for attr, coef in (("weight", syn_move), ("tensor", neu_move)):
                 t = getattr(obj, attr, None)
                 if torch.is_tensor(t):
-                    try:
-                        t.data = t.data.to(target_device)
-                    except Exception:
-                        pass
+                    self._safe_transfer(obj, attr, t, target_device)
         return syn, dir_str
 
 
