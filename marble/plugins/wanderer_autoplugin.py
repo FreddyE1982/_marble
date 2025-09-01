@@ -11,6 +11,8 @@ considers the current walk step and the active neuron.
 
 Learned objective prioritizes overall accuracy, then training speed, followed by
 model size and complexity (implicitly via gradients adjusting the gate biases).
+Plugins explicitly supplied in the Wanderer's ``wplugins`` list remain active at
+all times and are only logged, never deactivated.
 """
 
 import math
@@ -42,6 +44,7 @@ class AutoPlugin:
         self._log_path = log_path
         self._log_fp = open(log_path, "w") if log_path else None
         self._log_state: Dict[Tuple[str, str], Dict[str, Any]] = {}
+        self._protected: set[str] = set()
 
     def on_init(self, wanderer: "Wanderer") -> None:  # noqa: D401
         """Wrap existing Wanderer plugins with gating proxies."""
@@ -55,6 +58,7 @@ class AutoPlugin:
             name = p.__class__.__name__
             if name in self._disabled:
                 continue
+            self._protected.add(name)
             wanderer.ensure_learnable_param(f"autoplugin_bias_{name}", 0.0)
             wanderer.ensure_learnable_param(f"autoplugin_gain_{name}", 1.0)
             new_stack.append(_GatedPlugin(p, name, self))
@@ -176,6 +180,9 @@ class AutoPlugin:
         if name in self._disabled:
             self._update_log(wanderer, plugintype, name, False)
             return False
+        if name in self._protected:
+            self._update_log(wanderer, plugintype, name, True)
+            return True
         torch = getattr(wanderer, "_torch", None)
         bias = wanderer.get_learnable_param_tensor(f"autoplugin_bias_{name}")
         wanderer.ensure_learnable_param(f"autoplugin_gain_{name}", 1.0)
