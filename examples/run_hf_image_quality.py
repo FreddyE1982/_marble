@@ -31,6 +31,7 @@ import marble.plugins  # ensure plugin discovery
 from marble.plugins.selfattention_adaptive_grad_clip import AdaptiveGradClipRoutine
 from marble.plugins.selfattention_findbestneurontype import FindBestNeuronTypeRoutine
 from marble.plugins.selfattention_noise_profiler import ContextAwareNoiseRoutine
+from marble.dashboard import start_dashboard
 
 
 class QualityAwareRoutine:
@@ -208,8 +209,14 @@ def main(epochs: int = 1) -> None:
         "rl_gamma": 0.95,
         "l2_lambda": 1e-4,
         "batch_size": 5,
+        "aggressive_starting_neuroplasticity": True,
+        "add_min_new_neurons_per_step": 5,
+        "aggressive_phase_steps": 100,
     }
     cache = _ImageEncodingLRUCache(max_items=cache_size, enabled=cache_enabled)
+    port = 8501
+    start_dashboard(port)
+    print(f"Dashboard available at https://alpaca-model-easily.ngrok-free.app:{port}")
 
     def _start_neuron(left: Dict[str, Any], br):
         # Compose a compact input using the cached image encoding whenever available
@@ -246,6 +253,7 @@ def main(epochs: int = 1) -> None:
             streaming=True,
             batch_size=5,
             left_to_start=_start_neuron,
+            dashboard=True,
         )
     print("streamed quality training complete")
 

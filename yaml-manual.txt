@@ -1,0 +1,10 @@
+# YAML Manual
+
+## Neuroplasticity Training Parameters
+
+- aggressive_starting_neuroplasticity (bool, default: false)
+  Enables an initial phase where a minimum number of neurons is added at each training step.
+- add_min_new_neurons_per_step (int)
+  Required when aggressive_starting_neuroplasticity is true. Minimum neurons to grow per step during the aggressive phase.
+- aggressive_phase_steps (int)
+  Required when aggressive_starting_neuroplasticity is true. Number of steps to keep aggressive growth before reverting to normal behaviour.
