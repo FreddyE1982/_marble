@@ -15,12 +15,13 @@ from .lobe import Lobe
 from .reporter import report
 from .learnable_param import LearnableParam
 
-def _register_tensor(obj: Any, attr: str) -> None:
-    try:
-        from .plugins.wanderer_resource_allocator import TENSOR_REGISTRY  # type: ignore
-        TENSOR_REGISTRY.register(obj, attr)
-    except Exception:
-        pass
+
+class _ParamHolder:
+    __slots__ = ("w", "b", "__weakref__")
+
+    def __init__(self) -> None:
+        self.w = None
+        self.b = None
 
 # Core registries for Wanderer and Neuroplasticity plugins
 WANDERER_TYPES_REGISTRY: Dict[str, Any] = {}
@@ -196,7 +197,7 @@ class Wanderer(_DeviceHelper):
         self.rng = random.Random(seed)
         self._plugin_state: Dict[str, Any] = {}
         self._visited: List[Neuron] = []
-        self._param_map: Dict[int, Tuple[Any, Any]] = {}  # id(neuron) -> (w_param, b_param)
+        self._param_map: Dict[int, _ParamHolder] = {}  # id(neuron) -> holder with w/b
         # Global learnable parameters exposed by plugins or decorators
         self._learnables: Dict[str, LearnableParam] = {}
         self._loss_spec = loss
@@ -423,8 +424,9 @@ class Wanderer(_DeviceHelper):
 
         def params_for(n: Neuron) -> Tuple[Any, Any]:
             key = id(n)
-            if key in self._param_map:
-                return self._param_map[key]
+            holder = self._param_map.get(key)
+            if holder is not None:
+                return holder.w, holder.b
             try:
                 wt_val = (
                     float(n.weight.detach().to("cpu").item())
@@ -433,7 +435,6 @@ class Wanderer(_DeviceHelper):
                 )
             except Exception:
                 wt_val = float(getattr(n, "weight", 0.0))
-            w = torch.tensor(wt_val, dtype=torch.float32, device=self._device, requires_grad=True)
             try:
                 bs_val = (
                     float(n.bias.detach().to("cpu").item())
@@ -442,9 +443,14 @@ class Wanderer(_DeviceHelper):
                 )
             except Exception:
                 bs_val = float(getattr(n, "bias", 0.0))
-            b = torch.tensor(bs_val, dtype=torch.float32, device=self._device, requires_grad=True)
-            self._param_map[key] = (w, b)
-            return w, b
+            holder = _ParamHolder()
+            from .plugins.wanderer_resource_allocator import track_tensor as _tt
+            with _tt(holder, "w"):
+                holder.w = torch.tensor(wt_val, dtype=torch.float32, device=self._device, requires_grad=True)
+            with _tt(holder, "b"):
+                holder.b = torch.tensor(bs_val, dtype=torch.float32, device=self._device, requires_grad=True)
+            self._param_map[key] = holder
+            return holder.w, holder.b
 
         try:
             for p in getattr(self, "_wplugins", []) or []:
@@ -652,8 +658,9 @@ class Wanderer(_DeviceHelper):
                 "steps": steps,
                 "cur_loss_tensor": step_loss_t,
             }
-            self._cur_loss_tensor = step_loss_t
-            _register_tensor(self, "_cur_loss_tensor")
+            from .plugins.wanderer_resource_allocator import track_tensor as _tt
+            with _tt(self, "_cur_loss_tensor"):
+                self._cur_loss_tensor = step_loss_t
 
             choices = self._gather_choices(current)
             if not choices:
@@ -773,8 +780,10 @@ class Wanderer(_DeviceHelper):
             scale = scaler.get_scale()
             params = []
             for n in self._visited:
-                w_param, b_param = self._param_map[id(n)]
-                params.append(w_param); params.append(b_param)
+                holder = self._param_map[id(n)]
+                w_param, b_param = holder.w, holder.b
+                params.append(w_param)
+                params.append(b_param)
             for p in params:
                 if p.grad is not None:
                     p.grad.data = p.grad.data / scale
@@ -792,7 +801,8 @@ class Wanderer(_DeviceHelper):
             method = str(gc.get("method", "")).lower()
             params = []
             for n in self._visited:
-                w_param, b_param = self._param_map[id(n)]
+                holder = self._param_map[id(n)]
+                w_param, b_param = holder.w, holder.b
                 if hasattr(w_param, "grad") or hasattr(b_param, "grad"):
                     params.append(w_param)
                     params.append(b_param)
@@ -1116,8 +1126,8 @@ class Wanderer(_DeviceHelper):
         param_groups: List[Dict[str, Any]] = []
         seen: set[int] = set()
         for n in self._visited:
-            w_param, b_param = self._param_map[id(n)]
-            for p in (w_param, b_param):
+            holder = self._param_map[id(n)]
+            for p in (holder.w, holder.b):
                 if id(p) in seen:
                     continue
                 param_groups.append({"params": [p], "lr": lr_eff})
@@ -1138,15 +1148,15 @@ class Wanderer(_DeviceHelper):
         for lp in enabled:
             lp.apply_constraints()
         for n in self._visited:
-            w_param, b_param = self._param_map[id(n)]
+            holder = self._param_map[id(n)]
             try:
-                n.weight = float(w_param.detach().to("cpu").item())  # type: ignore[assignment]
+                n.weight = float(holder.w.detach().to("cpu").item())  # type: ignore[assignment]
             except Exception:
-                n.weight = float(w_param)  # type: ignore[assignment]
+                n.weight = float(holder.w)  # type: ignore[assignment]
             try:
-                n.bias = float(b_param.detach().to("cpu").item())  # type: ignore[assignment]
+                n.bias = float(holder.b.detach().to("cpu").item())  # type: ignore[assignment]
             except Exception:
-                n.bias = float(b_param)  # type: ignore[assignment]
+                n.bias = float(holder.b)  # type: ignore[assignment]
 
     def walkfinish(self) -> Tuple[float, Optional[float]]:
         if not self._walk_ctx:
@@ -1158,8 +1168,9 @@ class Wanderer(_DeviceHelper):
         delta = None if self._last_walk_loss is None else (loss_v - self._last_walk_loss)
         out_pos = getattr(current, "position", None) if current is not None else None
         self._finish_stats = {"loss_tensor": loss_t, "loss": loss_v, "delta": delta, "output_neuron": out_pos}
-        self._finish_loss_tensor = loss_t
-        _register_tensor(self, "_finish_loss_tensor")
+        from .plugins.wanderer_resource_allocator import track_tensor as _tt
+        with _tt(self, "_finish_loss_tensor"):
+            self._finish_loss_tensor = loss_t
         self._finish_requested = True
         try:
             report("wanderer", "walkfinish", {"loss": loss_v, "delta_vs_prev": delta, "output_neuron_pos": out_pos}, "events")
