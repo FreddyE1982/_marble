@@ -816,6 +816,8 @@ class Brain:
     - kuzu_path: optional filename for a Kuzu graph database mirroring the brain
     - learn_all_numeric_parameters: when True, numeric defaults in subsequently
       imported modules are auto-exposed as learnable parameters
+    - prune_hit_count: number of times a neuron must exceed walk mean loss difference
+      before it is pruned
 
     The brain maintains a discrete occupancy grid; neurons/synapses must be placed
     at indices that are inside this shape.
@@ -839,6 +841,7 @@ class Brain:
         snapshot_keep: Optional[int] = None,
         kuzu_path: Optional[str] = None,
         learn_all_numeric_parameters: bool = False,
+        prune_hit_count: int = 2,
     ) -> None:
         if n < 1:
             raise ValueError("n must be >= 1")
@@ -863,6 +866,8 @@ class Brain:
         self.neurons_pruned = 0
         self.synapses_added = 0
         self.synapses_pruned = 0
+        self.prune_hit_count = int(prune_hit_count)
+        self._prune_marks: Dict[Neuron, int] = {}
 
         if self.mode == "grid":
             self.dynamic = size is None
