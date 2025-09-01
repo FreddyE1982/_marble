@@ -58,7 +58,7 @@ Helper and Analysis Tools
 
 Core Components
 
-- `UniversalTensorCodec`: Serializes any Python object via pickle to bytes, builds a byte-level vocabulary, and encodes/decodes to integer token sequences. If PyTorch is available, returns tensors on CUDA when available, else CPU; otherwise returns Python lists. Supports `export_vocab`/`import_vocab` for reproducible vocabularies.
+- `UniversalTensorCodec`: Serializes any Python object via pickle to bytes and compresses repeating byte sequences with an on-the-fly dictionary (LZW-style) so that each repeated sequence maps to a single token. If PyTorch is available, returns tensors on CUDA when available, else CPU; otherwise returns Python lists. Supports `export_vocab`/`import_vocab` for reproducible vocabularies.
 
 - `DataPair` + helpers: Lightweight container for two arbitrary Python objects with dependency-injected codec. Helpers: `make_datapair`, `encode_datapair`, `decode_datapair`. All encode/decode events are logged under reporter group `datapair/events`.
 

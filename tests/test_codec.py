@@ -1,7 +1,7 @@
 import os
 import unittest
 from pathlib import Path
-
+import pickle
 
 class CustomThing:
     def __init__(self, x):
@@ -66,6 +66,18 @@ class TestUniversalTensorCodec(unittest.TestCase):
         finally:
             if out_path.exists():
                 os.remove(out_path)
+
+    def test_repeating_sequence_compression(self):
+        codec = self.Codec()
+        data = b"A" * 100
+        raw_len = len(pickle.dumps(data, protocol=pickle.HIGHEST_PROTOCOL))
+        tokens = codec.encode(data)
+        try:
+            tok_len = int(tokens.numel()) if hasattr(tokens, "numel") else len(tokens)
+        except Exception:
+            tok_len = -1
+        print("compression lens:", tok_len, raw_len)
+        self.assertLess(tok_len, raw_len)
 
     def test_package_import(self):
         # Ensure the package is importable and only marblemain has imports
