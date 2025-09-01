@@ -18,6 +18,7 @@ from typing import Iterator, Any, Dict, Optional
 import os
 import hashlib
 import re
+import time
 from collections import OrderedDict
 from datasets import DownloadConfig
 
@@ -135,19 +136,48 @@ class _ImageEncodingLRUCache:
 
 
 def _sample_pairs(ds, codec: UniversalTensorCodec, cache: _ImageEncodingLRUCache) -> Iterator:
+    n_retries = int(os.environ.get("MARBLE_IMG_RETRY", "3"))
+    timeout = float(os.environ.get("MARBLE_IMG_TIMEOUT", "0"))
+
     for ex in ds:
-        prompt = ex.get_raw("prompt")
-        img1 = ex.get_raw("image1")
-        img2 = ex.get_raw("image2")
-        pref1 = float(ex.get_raw("weighted_results_image1_preference"))
-        pref2 = float(ex.get_raw("weighted_results_image2_preference"))
-        al1 = float(ex.get_raw("weighted_results_image1_alignment"))
-        al2 = float(ex.get_raw("weighted_results_image2_alignment"))
-        q1 = (pref1 + al1) / 2.0
-        q2 = (pref2 + al2) / 2.0
-        # Use cache to encode images once; store only the encoded form.
-        key1, _ = cache.get_or_encode(img1, codec)
-        key2, _ = cache.get_or_encode(img2, codec)
+        try:
+            def _raw(field: str):
+                for attempt in range(n_retries):
+                    try:
+                        return ex.get_raw(field)
+                    except Exception as err:
+                        print(f"get_raw failed for {field} attempt {attempt + 1}/{n_retries}: {err}; example={ex}")
+                        if timeout:
+                            time.sleep(timeout)
+                raise RuntimeError(f"unable to fetch {field}")
+
+            prompt = _raw("prompt")
+            img1 = _raw("image1")
+            img2 = _raw("image2")
+            pref1 = float(_raw("weighted_results_image1_preference"))
+            pref2 = float(_raw("weighted_results_image2_preference"))
+            al1 = float(_raw("weighted_results_image1_alignment"))
+            al2 = float(_raw("weighted_results_image2_alignment"))
+            q1 = (pref1 + al1) / 2.0
+            q2 = (pref2 + al2) / 2.0
+
+            def _enc(img: Any, label: str):
+                for attempt in range(n_retries):
+                    try:
+                        return cache.get_or_encode(img, codec)
+                    except Exception as err:
+                        print(f"get_or_encode failed for {label} attempt {attempt + 1}/{n_retries}: {err}; example={ex}")
+                        if timeout:
+                            time.sleep(timeout)
+                raise RuntimeError(f"unable to encode {label}")
+
+            # Use cache to encode images once; store only the encoded form.
+            key1, _ = _enc(img1, "image1")
+            key2, _ = _enc(img2, "image2")
+        except Exception as err:
+            print(f"skipping example after retries due to: {err}; example={ex}")
+            continue
+
         # Pass lightweight keys in the datapair to avoid triggering downloads on encode.
         yield make_datapair({"prompt": prompt, "image_key": key1}, q1)
         yield make_datapair({"prompt": prompt, "image_key": key2}, q2)
@@ -161,12 +191,20 @@ def main(epochs: int = 1) -> None:
     except Exception:
         cache_size = 20
     codec = UniversalTensorCodec()
+    try:
+        hf_retries = int(os.environ.get("MARBLE_IMG_RETRY", "5"))
+    except Exception:
+        hf_retries = 5
+    try:
+        hf_timeout = float(os.environ.get("MARBLE_IMG_TIMEOUT", "60"))
+    except Exception:
+        hf_timeout = 60.0
     ds = load_hf_streaming_dataset(
         "Rapidata/Imagen-4-ultra-24-7-25_t2i_human_preference",
         split="train",
         streaming=True,
         codec=codec,
-        download_config=DownloadConfig(max_retries=5, timeout=60),
+        download_config=DownloadConfig(max_retries=hf_retries, timeout=hf_timeout),
     )
     # Consumed fields: prompt, image1, image2, weighted_results_image1_preference,
     # weighted_results_image2_preference, weighted_results_image1_alignment,
