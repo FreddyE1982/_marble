@@ -149,13 +149,15 @@ def main() -> None:
 
     st.title("Marble Training Dashboard")
     placeholder = st.empty()
-    while True:
-        try:
-            data = json.loads(_METRICS_FILE.read_text())
-        except Exception:
-            data = {}
-        placeholder.json(data)
-        time.sleep(1.0)
+
+    try:
+        data = json.loads(_METRICS_FILE.read_text())
+    except Exception:
+        data = {}
+
+    placeholder.json(data)
+    time.sleep(1.0)
+    st.experimental_rerun()
 
 
 if __name__ == "__main__":
