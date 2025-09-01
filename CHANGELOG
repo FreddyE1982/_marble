@@ -5,6 +5,6 @@
 
 - Keep tqdm progress lines visible when training via `run_training_with_datapairs`:
   - Added `Wanderer.pbar_leave` public attribute (default False).
-  - The datapair and wanderer-training helpers set `w.pbar_leave = True` so the status line isn’t suppressed.
- - Added `Wanderer.pbar_verbose` to emit explicit per-walk start/end messages; enabled by both helpers.
-- Switch progress reporting to use `tqdm.auto` for robust notebook and terminal updates.
+- The datapair and wanderer-training helpers set `w.pbar_leave = True` so the status line isn’t suppressed.
+ - Added `Wanderer.pbar_verbose` to emit explicit per-walk start/end messages; helpers now leave it disabled so progress remains on a single line.
+ - Progress reporting uses `tqdm.auto` for robust notebook and terminal updates.

@@ -125,7 +125,7 @@ Core Components
   Change 2025-09-01: The lock-based datapair helper in `marble.training` now accepts `train_type` and applies brain-train plugin hooks (`on_init`/`on_end`) mirroring the extended helper in `marble.marblemain`. It also applies any enabled learning paradigms to the active `Wanderer` for consistent behavior across both entry points.
   Additionally, visible progress: `Wanderer` exposes public attributes to control progress behavior:
   - `pbar_leave`: controls tqdm's `leave` option. Both `run_training_with_datapairs` and `run_wanderer_training` set this to `True` so progress lines remain after completion.
-  - `pbar_verbose`: when `True`, emits explicit per-walk boundary messages using `tqdm.write` ("... walks: start" / "... walks: end (loss=..., steps=...)"). Helpers enable this to provide per-walk output alongside per-step progress.
+  - `pbar_verbose`: when `True`, emits explicit per-walk boundary messages using `tqdm.write` ("... walks: start" / "... walks: end (loss=..., steps=...)"). Helpers leave this disabled so the progress bar stays on a single updating line; enable manually if the extra messages are desired.
   SelfAttention can manage both via `get_param`/`set_param` on the owner Wanderer.
 
 - Reporter: Global `REPORTER` instance to record structured data. Convenience functions `report`, `report_group`, `report_dir`, and `clear_report_group` provide ergonomic logging, querying, and cleanup. Tests and core flows record key metrics and events for auditability.
