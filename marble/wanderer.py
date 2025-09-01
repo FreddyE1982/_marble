@@ -104,8 +104,15 @@ _NEURO_TYPES = NEURO_TYPES_REGISTRY
 
 def _tqdm_factory():
     try:
-        from tqdm.auto import tqdm  # type: ignore
-    except Exception:  # pragma: no cover
+        # Prefer notebook widget when running inside IPython to avoid
+        # newline spam from the plain tqdm variant.
+        from IPython import get_ipython  # type: ignore
+        ip = get_ipython()
+        if ip is not None and getattr(ip, "kernel", None) is not None:
+            from tqdm.notebook import tqdm  # type: ignore
+        else:  # pragma: no cover - fallback path
+            from tqdm import tqdm  # type: ignore
+    except Exception:  # pragma: no cover - minimal environments
         from tqdm import tqdm  # type: ignore
     return tqdm
 
@@ -520,6 +527,10 @@ class Wanderer(_DeviceHelper):
             desc += f"{getattr(self.brain, '_progress_walk', 0)+1}/{getattr(self.brain, '_progress_total_walks', 1)} walks"
             pbar.set_description(desc)
             try:
+                status = getattr(self.brain, "status", lambda: {})()
+            except Exception:
+                status = {}
+            try:
                 # Emit fields in a stable, human-readable order expected by examples/tests.
                 pbar.set_postfix(
                     brain=f"{cur_size}/{cap if cap is not None else '-'}",
@@ -528,9 +539,13 @@ class Wanderer(_DeviceHelper):
                     loss_speed=f"{loss_speed:.4f}",
                     mean_loss_speed=f"{mean_loss_speed:.4f}",
                     neurons=cur_size,
+                    neurons_added=status.get("neurons_added"),
+                    synapses=len(getattr(self.brain, "synapses", [])),
+                    synapses_added=status.get("synapses_added"),
+                    neurons_pruned=status.get("neurons_pruned"),
+                    synapses_pruned=status.get("synapses_pruned"),
                     paths=len(getattr(self.brain, "synapses", [])),
                     speed=f"{mean_speed:.2f}",
-                    synapses=len(getattr(self.brain, "synapses", [])),
                 )
             except Exception:
                 pass
