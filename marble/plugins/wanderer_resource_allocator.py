@@ -150,6 +150,7 @@ class ResourceAllocatorPlugin:
         cfg = _load_resource_cfg()
         self.max_disk_mb = float(cfg.get("max_disk_mb", 20480))
         self.compress_offload = bool(cfg.get("compress_offload", True))
+        self.min_gpu_tensor_mb = float(cfg.get("min_gpu_tensor_mb", 1.0))
         self._disk_used_mb = 0.0
         self._rebalance_thread: threading.Thread | None = None
         self._rebalance_stop = threading.Event()
@@ -317,7 +318,7 @@ class ResourceAllocatorPlugin:
         Offloading is skipped when it would exceed the configured disk budget.
         """
 
-        arr = tensor.detach().to("cpu", dtype=torch.float16, pin_memory=True).contiguous()
+        arr = tensor.detach().to("cpu", dtype=torch.float16).contiguous()
         size_mb = arr.element_size() * arr.nelement() / (1024 * 1024)
         if self._disk_used_mb + size_mb > self.max_disk_mb:
             return None
@@ -386,7 +387,7 @@ class ResourceAllocatorPlugin:
                 )
                 if dtype != tensor.dtype:
                     setattr(obj, dtype_attr, tensor.dtype)
-                tensor.data = tensor.detach().to(device, dtype=dtype, pin_memory=True)
+                tensor.data = tensor.detach().to(device, dtype=dtype)
             return
         except torch.cuda.OutOfMemoryError:
             pass
@@ -398,7 +399,7 @@ class ResourceAllocatorPlugin:
             cpu_dtype = torch.float16 if self.compress_offload and tensor.dtype == torch.float32 else tensor.dtype
             if cpu_dtype != tensor.dtype:
                 setattr(obj, dtype_attr, tensor.dtype)
-            cpu_tensor = tensor.detach().to("cpu", dtype=cpu_dtype, pin_memory=True)
+            cpu_tensor = tensor.detach().to("cpu", dtype=cpu_dtype)
             avail = psutil.virtual_memory().available if psutil else float("inf")
             needed = cpu_tensor.element_size() * cpu_tensor.nelement()
             if avail < needed:
@@ -470,7 +471,12 @@ class ResourceAllocatorPlugin:
             size_mb = t.element_size() * t.nelement() / (1024 * 1024)
             score = base_score + hit_freq_w * (hits + hit_freq_b) - storage_w * (size_mb + storage_b)
             target_device = "cpu"
-            if torch.cuda.is_available() and sysm["gpu"] < reserve_ratio and score > move_thr:
+            if (
+                size_mb > self.min_gpu_tensor_mb
+                and torch.cuda.is_available()
+                and sysm["gpu"] < reserve_ratio
+                and score > move_thr
+            ):
                 target_device = "cuda"
             self._safe_transfer(obj, attr, t, target_device)
 
