@@ -1072,8 +1072,11 @@ class Wanderer(_DeviceHelper):
             min_value=min_value,
             max_value=max_value,
         )
-        self._learnables[name] = lp
-        self._plugin_state.setdefault("learnable_params", {})[name] = t
+        from .plugins.wanderer_resource_allocator import track_tensor as _tt
+        state = self._plugin_state.setdefault("learnable_params", {})
+        with _tt(lp, "tensor"):
+            self._learnables[name] = lp
+        state[name] = t
         try:
             report("wanderer", "ensure_learnable", {"name": name}, "builder")
         except Exception:
