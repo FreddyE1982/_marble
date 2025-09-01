@@ -510,6 +510,28 @@ class Wanderer(_DeviceHelper):
             mean_loss = self._walk_loss_sum / max(1, self._walk_step_count)
             total_dt += dt if dt else 0.0
 
+            walk_mean_loss_diff = sum(abs(m.get("delta", 0.0)) for m in step_metrics) / max(1, len(step_metrics))
+            try:
+                mdiff = abs(getattr(current, "mean_loss_diff", 0.0))
+            except Exception:
+                mdiff = 0.0
+            try:
+                marks = getattr(self.brain, "_prune_marks", None)
+                thresh = int(getattr(self.brain, "prune_hit_count", 2))
+                if marks is not None:
+                    hits = marks.get(current, 0)
+                    if mdiff > walk_mean_loss_diff:
+                        hits += 1
+                        if hits >= thresh:
+                            self.brain.remove_neuron(current)
+                            marks.pop(current, None)
+                        else:
+                            marks[current] = hits
+                    elif hits:
+                        marks.pop(current, None)
+            except Exception:
+                pass
+
             try:
                 cum_loss_t = self._compute_loss(outputs, override_loss=loss_fn)
                 cur_walk_loss = float(cum_loss_t.detach().to("cpu").item())
