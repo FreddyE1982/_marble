@@ -150,8 +150,30 @@ def load_hf_streaming_dataset(
     codec=None,
     streaming: bool = True,
     trust_remote_code: bool = False,
+    download_config=None,
     **kwargs: Any,
 ) -> HFStreamingDatasetWrapper:
+    """Load a Hugging Face dataset with automatic encoding and streaming.
+
+    Parameters
+    ----------
+    path: str
+        Dataset identifier passed to ``datasets.load_dataset``.
+    name: Optional[str]
+        Optional configuration name.
+    split: Optional[str]
+        Dataset split to load, defaults to ``"train"``.
+    codec: Optional[Any]
+        Codec used for automatic tensor encoding.
+    streaming: bool
+        Whether to enable streaming mode (default: ``True``).
+    trust_remote_code: bool
+        Forwarded to ``datasets.load_dataset`` when supported.
+    download_config: Optional[Any]
+        ``datasets.DownloadConfig`` forwarded to ``datasets.load_dataset``.
+    **kwargs: Any
+        Additional keyword arguments for ``datasets.load_dataset``.
+    """
     _, ds_mod = _ensure_hf_imports()
     if ds_mod is None:
         raise RuntimeError("datasets is not installed. Please install 'datasets'.")
@@ -165,6 +187,8 @@ def load_hf_streaming_dataset(
         "streaming": streaming,
         **kwargs,
     }
+    if download_config is not None:
+        ds_kwargs["download_config"] = download_config
     if "trust_remote_code" in inspect.signature(ds_mod.load_dataset).parameters:
         ds_kwargs["trust_remote_code"] = trust_remote_code
     ds = ds_mod.load_dataset(**ds_kwargs)
