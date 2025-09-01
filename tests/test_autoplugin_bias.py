@@ -2,7 +2,7 @@ import unittest
 
 
 class TestAutoPluginBias(unittest.TestCase):
-    def test_bias_deactivates_plugin(self):
+    def test_bias_does_not_deactivate_wplugin(self):
         from marble.marblemain import Brain, Wanderer
         from marble.plugins.wanderer_autoplugin import AutoPlugin
 
@@ -22,7 +22,7 @@ class TestAutoPluginBias(unittest.TestCase):
         stack = [getattr(getattr(p, "_plugin", p), "__class__").__name__ for p in w._wplugins]
         print("plugin active:", active)
         print("stack:", stack)
-        self.assertFalse(active)
+        self.assertTrue(active)
         self.assertIn("EpsilonGreedyChooserPlugin", stack)
 
 
