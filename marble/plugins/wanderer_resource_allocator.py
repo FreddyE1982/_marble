@@ -15,12 +15,15 @@ from ..wanderer import expose_learnable_params
 
 
 class ResourceAllocatorPlugin:
-    """Adaptive resource allocator for Wanderer paths.
+    """Adaptive resource allocator for Wanderer.
 
-    Tracks system metrics (CPU, RAM, disk, GPU/VRAM if available) along with
-    training statistics such as loss trends and hit frequencies. A large set of
-    learnable parameters combines these metrics to decide which synapse to
-    follow and whether tensors should be moved across devices.
+    Monitors system metrics (CPU, RAM, disk, GPU/VRAM if available) together
+    with training statistics such as loss trends and hit frequencies. The
+    collected signals drive heuristics that decide **where tensors should live**
+    (GPU, CPU or disk) but the plugin deliberately keeps its hands off path
+    selection. Whatever other wanderer plugins or default logic pick as the
+    next synapse, this allocator merely shuffles the data to keep memory
+    balanced.
     """
 
     @staticmethod
@@ -221,6 +224,13 @@ class ResourceAllocatorPlugin:
 
     # Core logic ---------------------------------------------------------
     def choose_next(self, wanderer, current, choices: List[Tuple["Synapse", str]]):
+        """Rebalance tensors without steering the walk.
+
+        The allocator inspects system and training metrics to guess whether
+        tensors should migrate between devices. It iterates over the current
+        neuron and all candidate synapses, moving their tensors as needed, then
+        returns ``None`` so the previously chosen path remains untouched.
+        """
         if not choices:
             return None, "forward"
         params = self._params(wanderer)
@@ -261,7 +271,7 @@ class ResourceAllocatorPlugin:
         ) = params
         # detach parameter values
         to_val = lambda t: float(t.detach().to("cpu").item()) if hasattr(t, "detach") else float(t)
-        gpu_w, vram_w, cpu_w, ram_w, disk_w, usage_w, train_speed_w, model_speed_w, hit_freq_w, loss_w, loss_speed_w, loss_accel_w, reserve_ratio, move_thr, syn_move, neu_move, gpu_b, vram_b, cpu_b, ram_b, disk_b, usage_b, train_speed_b, model_speed_b, hit_freq_b, loss_b, loss_speed_b, loss_accel_b, temp, decay, smooth, storage_w, storage_b = map(to_val, [
+        (
             gpu_w,
             vram_w,
             cpu_w,
@@ -295,7 +305,44 @@ class ResourceAllocatorPlugin:
             smooth,
             storage_w,
             storage_b,
-        ])
+        ) = map(
+            to_val,
+            [
+                gpu_w,
+                vram_w,
+                cpu_w,
+                ram_w,
+                disk_w,
+                usage_w,
+                train_speed_w,
+                model_speed_w,
+                hit_freq_w,
+                loss_w,
+                loss_speed_w,
+                loss_accel_w,
+                reserve_ratio,
+                move_thr,
+                syn_move,
+                neu_move,
+                gpu_b,
+                vram_b,
+                cpu_b,
+                ram_b,
+                disk_b,
+                usage_b,
+                train_speed_b,
+                model_speed_b,
+                hit_freq_b,
+                loss_b,
+                loss_speed_b,
+                loss_accel_b,
+                temp,
+                decay,
+                smooth,
+                storage_w,
+                storage_b,
+            ],
+        )
 
         sysm = self._system_metrics()
         trainm = self._training_metrics(wanderer)
@@ -310,26 +357,22 @@ class ResourceAllocatorPlugin:
             + loss_speed_w * (trainm["loss_speed"] + loss_speed_b)
             + loss_accel_w * (trainm["loss_accel"] + loss_accel_b)
         )
-        scores = []
-        for syn, dir_str in choices:
-            hits = self._hit_freq(wanderer, syn)
-            weight = float(getattr(syn, "weight", 1.0))
-            syn_score = base_score + hit_freq_w * (hits + hit_freq_b) + usage_w * (weight + usage_b)
-            scores.append((syn_score, syn, dir_str))
-        scores.sort(key=lambda x: x[0], reverse=True)
-        chosen_score, syn, dir_str = scores[0]
-        # Device movement heuristic
+
         target_device = "cpu"
         if torch.cuda.is_available() and sysm["gpu"] < reserve_ratio:
-            if chosen_score > move_thr:
+            if base_score > move_thr:
                 target_device = "cuda"
-        # Move tensor attributes if possible
-        for obj in (syn, current):
-            for attr, coef in (("weight", syn_move), ("tensor", neu_move)):
-                t = getattr(obj, attr, None)
-                if torch.is_tensor(t):
-                    self._safe_transfer(obj, attr, t, target_device)
-        return syn, dir_str
+
+        for syn, _ in choices:
+            t = getattr(syn, "weight", None)
+            if torch.is_tensor(t):
+                self._safe_transfer(syn, "weight", t, target_device)
+
+        t = getattr(current, "tensor", None)
+        if torch.is_tensor(t):
+            self._safe_transfer(current, "tensor", t, target_device)
+
+        return None, "forward"
 
 
 __all__ = ["ResourceAllocatorPlugin"]
