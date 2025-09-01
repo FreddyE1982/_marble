@@ -50,7 +50,13 @@ class Reporter:
     def _set_item(self, group_path: Tuple[str, ...], itemname: str, value: Any) -> None:
         with self._lock:
             node = self._ensure_group_path(group_path)
-            node["_items"][str(itemname)] = value
+            key = str(itemname)
+            existing = node["_items"].get(key)
+            if isinstance(existing, dict) and isinstance(value, dict):
+                # merge dictionaries in place instead of replacing
+                existing.update(value)
+            else:
+                node["_items"][key] = value
 
     def get_item(self, group_path: Tuple[str, ...], itemname: str) -> Any:
         with self._lock:
