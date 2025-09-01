@@ -1,4 +1,6 @@
 2025-09-01
+- Compress repeating byte sequences in `UniversalTensorCodec` via on-the-fly
+  dictionary to reduce token counts and VRAM usage.
 - Track per-neuron loss differences with rolling history and mean value.
 - Add support for `train_type` kwarg to `marble.training.run_training_with_datapairs` to match `marble.marblemain` API.
 - Wire Brain-train plugin lifecycle (`on_init`/`on_end`) and merge returned summaries.

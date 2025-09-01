@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import pickle
-import os
 from typing import Any, Dict, Iterable, List, Sequence, Union
 
 TensorLike = Union[List[int], "_TorchTensor"]
@@ -18,17 +17,19 @@ def _safe_report(groupname: str, itemname: str, data: Any, *subgroups: str) -> N
 
 class UniversalTensorCodec:
     def __init__(self) -> None:
-        self._byte_to_token: Dict[int, int] = {}
-        self._token_to_byte: List[int] = []
+        self._seq_to_token: Dict[bytes, int] = {}
+        self._token_to_seq: List[bytes] = []
         self._torch = self._try_import_torch()
         self._device = self._select_device()
+        self._ensure_base_vocab()
 
     def reset_vocab(self) -> None:
-        self._byte_to_token.clear()
-        self._token_to_byte.clear()
+        self._seq_to_token.clear()
+        self._token_to_seq.clear()
+        self._ensure_base_vocab()
 
     def vocab_size(self) -> int:
-        return len(self._token_to_byte)
+        return len(self._token_to_seq)
 
     def encode(self, obj: Any) -> TensorLike:
         data = pickle.dumps(obj, protocol=pickle.HIGHEST_PROTOCOL)
@@ -49,7 +50,7 @@ class UniversalTensorCodec:
         return obj
 
     def export_vocab(self, path: str) -> None:
-        payload = {"token_to_byte": self._token_to_byte}
+        payload = {"token_to_seq": [list(seq) for seq in self._token_to_seq]}
         with open(path, "w", encoding="utf-8") as f:
             json.dump(payload, f)
         _safe_report("codec", "export_vocab", {"path": path, "size": self.vocab_size()}, "io")
@@ -57,24 +58,47 @@ class UniversalTensorCodec:
     def import_vocab(self, path: str) -> None:
         with open(path, "r", encoding="utf-8") as f:
             payload = json.load(f)
-        token_to_byte = payload.get("token_to_byte")
-        if not isinstance(token_to_byte, list) or not all(isinstance(x, int) and 0 <= x <= 255 for x in token_to_byte):
+        token_to_seq = payload.get("token_to_seq")
+        if not isinstance(token_to_seq, list) or not all(
+            isinstance(seq, list) and all(isinstance(x, int) and 0 <= x <= 255 for x in seq)
+            for seq in token_to_seq
+        ):
             raise ValueError("Invalid vocabulary file format")
-        self._token_to_byte = list(token_to_byte)
-        self._byte_to_token = {b: i for i, b in enumerate(self._token_to_byte)}
+        self._token_to_seq = [bytes(seq) for seq in token_to_seq]
+        self._seq_to_token = {seq: i for i, seq in enumerate(self._token_to_seq)}
         _safe_report("codec", "import_vocab", {"path": path, "size": self.vocab_size()}, "io")
 
     # Internal helpers
+    def _ensure_base_vocab(self) -> None:
+        if not self._token_to_seq:
+            for i in range(256):
+                seq = bytes([i])
+                self._seq_to_token[seq] = i
+                self._token_to_seq.append(seq)
+
     def _bytes_to_tokens(self, data: bytes) -> List[int]:
-        for b in data:
-            if b not in self._byte_to_token:
-                self._byte_to_token[b] = len(self._token_to_byte)
-                self._token_to_byte.append(b)
-        return [self._byte_to_token[b] for b in data]
+        self._ensure_base_vocab()
+        dict_ = self._seq_to_token
+        tokens: List[int] = []
+        if not data:
+            return tokens
+        w = bytes([data[0]])
+        for b in data[1:]:
+            c = bytes([b])
+            wc = w + c
+            if wc in dict_:
+                w = wc
+            else:
+                tokens.append(dict_[w])
+                dict_[wc] = len(self._token_to_seq)
+                self._token_to_seq.append(wc)
+                w = c
+        tokens.append(dict_[w])
+        return tokens
 
     def _tokens_to_bytes(self, tokens: Iterable[int]) -> bytes:
         try:
-            return bytes(self._token_to_byte[t] for t in tokens)
+            return b"".join(self._token_to_seq[t] for t in tokens)
         except (IndexError, TypeError) as e:
             raise ValueError("Token id out of range for current vocabulary") from e
 
