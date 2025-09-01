@@ -14,3 +14,6 @@
 - resource_allocator.max_disk_mb (int, default: 20480)
   Limits total size in MB of tensors offloaded to disk by the resource allocator.
   Must be positive. When exceeded, tensors are cleared instead of offloaded.
+- resource_allocator.compress_offload (bool, default: true)
+  When true, tensors moved to CPU or disk are converted to ``float16`` to save
+  space. They are restored to their original dtype when reloaded.

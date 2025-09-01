@@ -6,7 +6,7 @@ import time
 import threading
 from typing import List, Tuple, Any, Dict
 import weakref
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 
 import torch
 try:
@@ -40,22 +40,32 @@ class TensorRegistry:
         self._entries[key] = weakref.ref(obj, lambda _r, k=key: self._entries.pop(k, None))
 
     def iter_tensors(self):
-        """Yield ``(obj, attr, tensor)`` triples for valid registrations."""
+        """Yield ``(obj, attr, tensor, hits)`` for valid registrations.
+
+        Each time a tensor is yielded the access counter for ``obj.attr`` is
+        incremented. Callers can use the ``hits`` value to prioritize which
+        tensors should stay on fast devices.
+        """
 
         for (oid, attr), ref in list(self._entries.items()):
             obj = ref()
             if obj is None:
                 continue
-            t = None
-            if hasattr(obj, attr):
+            try:
                 t = getattr(obj, attr)
-            else:
+            except AttributeError:
                 try:
                     t = obj[attr]  # type: ignore[index]
                 except Exception:
                     continue
+            except Exception:
+                continue
             if torch.is_tensor(t):
-                yield obj, attr, t
+                info = getattr(obj, "_tensor_hits", {})
+                hits = info.get(attr, 0) + 1
+                info[attr] = hits
+                setattr(obj, "_tensor_hits", info)
+                yield obj, attr, t, hits
 
 
 TENSOR_REGISTRY = TensorRegistry()
@@ -139,9 +149,11 @@ class ResourceAllocatorPlugin:
     def __init__(self) -> None:
         cfg = _load_resource_cfg()
         self.max_disk_mb = float(cfg.get("max_disk_mb", 20480))
+        self.compress_offload = bool(cfg.get("compress_offload", True))
         self._disk_used_mb = 0.0
         self._rebalance_thread: threading.Thread | None = None
         self._rebalance_stop = threading.Event()
+        self._transfer_stream = torch.cuda.Stream() if torch.cuda.is_available() else None
 
     @staticmethod
     @expose_learnable_params
@@ -300,14 +312,19 @@ class ResourceAllocatorPlugin:
     def _offload_to_disk(self, tensor: torch.Tensor) -> str | None:
         """Persist ``tensor`` to a temporary file and return its path.
 
+        Tensor data is stored using a raw ``float16`` memory-mapped file so
+        that reloading can avoid reading the entire buffer into RAM at once.
         Offloading is skipped when it would exceed the configured disk budget.
         """
-        size_mb = tensor.element_size() * tensor.nelement() / (1024 * 1024)
+
+        arr = tensor.detach().to("cpu", dtype=torch.float16, pin_memory=True).contiguous()
+        size_mb = arr.element_size() * arr.nelement() / (1024 * 1024)
         if self._disk_used_mb + size_mb > self.max_disk_mb:
             return None
-        fd, path = tempfile.mkstemp(prefix="marble_offload_", suffix=".pt")
+        fd, path = tempfile.mkstemp(prefix="marble_offload_", suffix=".bin")
         os.close(fd)
-        torch.save(tensor, path)
+        with open(path, "wb") as fh:
+            fh.write(arr.numpy().tobytes())
         self._disk_used_mb += size_mb
         return path
 
@@ -321,10 +338,25 @@ class ResourceAllocatorPlugin:
         """
 
         off_attr = f"_{attr}_offload"
+        meta_attr = f"_{attr}_offmeta"
+        dtype_attr = f"_{attr}_origdtype"
         off_path = getattr(obj, off_attr, None)
-        if isinstance(off_path, str):
+        meta = getattr(obj, meta_attr, None)
+        if isinstance(off_path, str) and isinstance(meta, tuple):
+            shape, dtype = meta
             try:
-                tensor.data = torch.load(off_path, map_location=device)
+                numel = int(torch.tensor(shape).prod().item())
+                mapped = torch.from_file(off_path, size=numel, dtype=torch.float16).view(*shape)
+                if dtype != torch.float16:
+                    mapped = mapped.to(dtype)
+                if device == "cuda" and torch.cuda.is_available():
+                    stream = self._transfer_stream
+                    with torch.cuda.stream(stream) if stream else nullcontext():
+                        tensor.data = mapped.to(device, non_blocking=True)
+                    if dtype != torch.float16:
+                        tensor.data = tensor.data.to(dtype)
+                else:
+                    tensor.data = mapped.to(device)
                 try:
                     size_mb = os.path.getsize(off_path) / (1024 * 1024)
                     self._disk_used_mb = max(0.0, self._disk_used_mb - size_mb)
@@ -332,12 +364,29 @@ class ResourceAllocatorPlugin:
                     pass
                 os.remove(off_path)
                 setattr(obj, off_attr, None)
+                setattr(obj, meta_attr, None)
             except Exception:
                 return
             return
 
         try:
-            tensor.data = tensor.data.to(device)
+            if device == "cuda" and torch.cuda.is_available():
+                stream = self._transfer_stream
+                with torch.cuda.stream(stream) if stream else nullcontext():
+                    tensor.data = tensor.data.to(device, non_blocking=True)
+                orig_dtype = getattr(obj, dtype_attr, None)
+                if orig_dtype is not None:
+                    tensor.data = tensor.data.to(orig_dtype)
+                    setattr(obj, dtype_attr, None)
+            else:
+                dtype = (
+                    torch.float16
+                    if self.compress_offload and tensor.dtype == torch.float32 and device == "cpu"
+                    else tensor.dtype
+                )
+                if dtype != tensor.dtype:
+                    setattr(obj, dtype_attr, tensor.dtype)
+                tensor.data = tensor.detach().to(device, dtype=dtype, pin_memory=True)
             return
         except torch.cuda.OutOfMemoryError:
             pass
@@ -346,13 +395,17 @@ class ResourceAllocatorPlugin:
 
         # CUDA OOM: try CPU first, then disk
         try:
-            cpu_tensor = tensor.detach().to("cpu")
+            cpu_dtype = torch.float16 if self.compress_offload and tensor.dtype == torch.float32 else tensor.dtype
+            if cpu_dtype != tensor.dtype:
+                setattr(obj, dtype_attr, tensor.dtype)
+            cpu_tensor = tensor.detach().to("cpu", dtype=cpu_dtype, pin_memory=True)
             avail = psutil.virtual_memory().available if psutil else float("inf")
             needed = cpu_tensor.element_size() * cpu_tensor.nelement()
             if avail < needed:
                 path = self._offload_to_disk(cpu_tensor)
                 if path is not None:
                     setattr(obj, off_attr, path)
+                    setattr(obj, meta_attr, (tensor.shape, getattr(obj, dtype_attr, tensor.dtype)))
                 tensor.data = torch.empty(0)
             else:
                 tensor.data = cpu_tensor
@@ -413,12 +466,12 @@ class ResourceAllocatorPlugin:
             + loss_accel_w * (trainm["loss_accel"] + loss_accel_b)
         )
 
-        target_device = "cpu"
-        if torch.cuda.is_available() and sysm["gpu"] < reserve_ratio:
-            if base_score > move_thr:
+        for obj, attr, t, hits in TENSOR_REGISTRY.iter_tensors():
+            size_mb = t.element_size() * t.nelement() / (1024 * 1024)
+            score = base_score + hit_freq_w * (hits + hit_freq_b) - storage_w * (size_mb + storage_b)
+            target_device = "cpu"
+            if torch.cuda.is_available() and sysm["gpu"] < reserve_ratio and score > move_thr:
                 target_device = "cuda"
-
-        for obj, attr, t in TENSOR_REGISTRY.iter_tensors():
             self._safe_transfer(obj, attr, t, target_device)
 
     def start_auto_rebalance(self, wanderer, interval: float = 5.0) -> None:
