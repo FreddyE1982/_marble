@@ -516,6 +516,12 @@ class Wanderer(_DeviceHelper):
             loss_speed = -(delta / dt) if dt and delta is not None and dt != 0 else 0.0
             mean_delta = mean_loss - (prev_mean if prev_mean is not None else mean_loss)
             mean_loss_speed = -(mean_delta / dt) if dt and dt != 0 else 0.0
+            try:
+                from .dashboard import update_metrics, dashboard_active
+                if dashboard_active():
+                    update_metrics(self.brain, self, steps, max_steps, cur_loss, mean_loss, loss_speed, mean_loss_speed)
+            except Exception:
+                pass
             cur_size, cap = (0, None)
             try:
                 cur_size, cap = self.brain.size_stats()  # type: ignore[attr-defined]

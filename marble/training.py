@@ -32,6 +32,7 @@ def run_wanderer_training(
     lobe: Optional[Lobe] = None,
     optimizer: Optional[Union[str, Any]] = None,
     mixedprecision: bool = True,
+    dashboard: bool = False,
 ) -> Dict[str, Any]:
     from .marblemain import Wanderer  # lazy to avoid import cycle
     def _inner() -> Dict[str, Any]:
@@ -85,6 +86,12 @@ def run_wanderer_training(
     if not isinstance(lock, LockType):
         lock = Lock()
         setattr(brain, "_train_lock", lock)
+    if dashboard:
+        try:
+            from .dashboard import start_dashboard
+            start_dashboard()
+        except Exception:
+            pass
     with lock:
         return _inner()
 
@@ -128,6 +135,7 @@ def run_training_with_datapairs(
     streaming: bool = True,
     optimizer: Optional[Union[str, Any]] = None,
     mixedprecision: bool = True,
+    dashboard: bool = False,
 ) -> Dict[str, Any]:
     from .marblemain import Wanderer  # lazy import
     def _inner() -> Dict[str, Any]:
@@ -308,6 +316,12 @@ def run_training_with_datapairs(
     if not isinstance(lock, LockType):
         lock = Lock()
         setattr(brain, "_train_lock", lock)
+    if dashboard:
+        try:
+            from .dashboard import start_dashboard
+            start_dashboard()
+        except Exception:
+            pass
     with lock:
         return _inner()
 
@@ -329,6 +343,7 @@ def run_wanderer_epochs_with_datapairs(
     streaming: bool = True,
     optimizer: Optional[Union[str, Any]] = None,
     mixedprecision: bool = True,
+    dashboard: bool = False,
 ) -> Dict[str, Any]:
     def _inner() -> Dict[str, Any]:
         dataset: List[DataPair] = []
@@ -361,6 +376,7 @@ def run_wanderer_epochs_with_datapairs(
                 streaming=streaming,
                 optimizer=optimizer,
                 mixedprecision=mixedprecision,
+                dashboard=dashboard,
             )
             final_loss = res.get("final_loss", 0.0)
             delta = None if prev_final is None else (final_loss - prev_final)
@@ -382,6 +398,12 @@ def run_wanderer_epochs_with_datapairs(
     if not isinstance(lock, LockType):
         lock = Lock()
         setattr(brain, "_train_lock", lock)
+    if dashboard:
+        try:
+            from .dashboard import start_dashboard
+            start_dashboard()
+        except Exception:
+            pass
     with lock:
         return _inner()
 
