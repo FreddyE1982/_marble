@@ -4,6 +4,7 @@ from typing import Any, Deque, Dict, List, Optional, Sequence, Tuple, Union, TYP
 from collections import deque
 
 import torch
+import numpy as np
 
 from .codec import TensorLike
 from .reporter import report
@@ -35,12 +36,14 @@ class _DeviceHelper:
 
     def _ensure_tensor(self, value: Union[TensorLike, Sequence[float], float, int]) -> TensorLike:
         if self._torch is None:
+            if isinstance(value, np.ndarray):
+                return value.astype(np.float32)
             if isinstance(value, (list, tuple)):
-                return [float(x) for x in value]
+                return np.asarray(value, dtype=np.float32)
             elif isinstance(value, (int, float)):
-                return [float(value)]
+                return np.asarray([value], dtype=np.float32)
             else:
-                return list(value)  # type: ignore[arg-type]
+                return np.asarray(list(value), dtype=np.float32)  # type: ignore[arg-type]
         else:
             if self._is_torch_tensor(value):
                 return value  # type: ignore[return-value]
@@ -177,10 +180,16 @@ class Neuron(_DeviceHelper):
         if self._torch is not None and self._is_torch_tensor(x):
             out = x * self.weight + self.bias
         else:
-            xl = x if isinstance(x, list) else list(x)  # type: ignore[arg-type]
-            out = [self.weight * float(v) + self.bias for v in xl]
+            xl = np.asarray(x, dtype=np.float32)
+            out = xl * self.weight + self.bias
         try:
-            out_len = int(out.numel()) if (self._torch is not None and self._is_torch_tensor(out)) else (len(out) if isinstance(out, list) else 1)
+            if self._torch is not None and self._is_torch_tensor(out):
+                out_len = int(out.numel())
+            else:
+                try:
+                    out_len = len(out)
+                except Exception:
+                    out_len = 1
             def _wb_val(v):
                 try:
                     if hasattr(v, "detach"):
@@ -303,8 +312,8 @@ class Synapse(_DeviceHelper):
         if self._torch is not None and self._is_torch_tensor(val):
             val = val * float(self.weight) + float(self.bias)
         else:
-            vl = val if isinstance(val, list) else list(val)  # type: ignore[arg-type]
-            val = [float(self.weight) * float(v) + float(self.bias) for v in vl]
+            vl = np.asarray(val, dtype=np.float32)
+            val = vl * float(self.weight) + float(self.bias)
 
         if direction == "forward":
             if self.direction not in ("uni", "bi"):
