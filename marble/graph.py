@@ -8,6 +8,14 @@ import torch
 from .codec import TensorLike
 from .reporter import report
 
+def _register_tensor(obj: Any, attr: str) -> None:
+    """Register tensors with the global allocator registry if available."""
+    try:
+        from .plugins.wanderer_resource_allocator import TENSOR_REGISTRY  # type: ignore
+        TENSOR_REGISTRY.register(obj, attr)
+    except Exception:
+        pass
+
 if TYPE_CHECKING:
     from .selfattention import SelfAttention
 
@@ -113,6 +121,8 @@ class Neuron(_DeviceHelper):
         self.incoming: List["Synapse"] = []
         self.outgoing: List["Synapse"] = []
 
+        _register_tensor(self, "tensor")
+
         plugin = _NEURON_TYPES.get(self.type_name) if self.type_name else None
         if plugin is not None and hasattr(plugin, "on_init"):
             plugin.on_init(self)  # type: ignore[attr-defined]
@@ -142,6 +152,7 @@ class Neuron(_DeviceHelper):
             plugin.receive(self, value)  # type: ignore[attr-defined]
             return
         self.tensor = self._ensure_tensor(value)
+        _register_tensor(self, "tensor")
         try:
             report("neuron", "receive", {"len": int(self.tensor.numel()) if hasattr(self.tensor, "numel") else (len(self.tensor) if isinstance(self.tensor, list) else 1)}, "events")
         except Exception:
@@ -243,6 +254,9 @@ class Synapse(_DeviceHelper):
 
         self.incoming_synapses: List["Synapse"] = []
         self.outgoing_synapses: List["Synapse"] = []
+
+        _register_tensor(self, "weight")
+        _register_tensor(self, "bias")
 
         if isinstance(self.source, Neuron):
             self.source.outgoing.append(self)

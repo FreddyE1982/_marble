@@ -4,6 +4,7 @@ import os
 import tempfile
 import time
 from typing import List, Tuple, Any, Dict
+import weakref
 
 import torch
 try:
@@ -12,6 +13,43 @@ except Exception:  # pragma: no cover
     psutil = None  # type: ignore
 
 from ..wanderer import expose_learnable_params
+
+
+class TensorRegistry:
+    """Track objects that own tensors.
+
+    Objects are stored via weak references so entries disappear once the
+    owning object is garbage collected. Only attributes that currently hold
+    actual torch tensors are yielded when iterating.
+    """
+
+    def __init__(self) -> None:
+        self._entries: Dict[Tuple[int, str], weakref.ref] = {}
+
+    def register(self, obj: Any, attr: str) -> None:
+        """Register ``obj.attr`` as a tensor to be balanced.
+
+        Duplicate registrations are ignored automatically.
+        """
+
+        key = (id(obj), attr)
+        if key in self._entries:
+            return
+        self._entries[key] = weakref.ref(obj, lambda _r, k=key: self._entries.pop(k, None))
+
+    def iter_tensors(self):
+        """Yield ``(obj, attr, tensor)`` triples for valid registrations."""
+
+        for (oid, attr), ref in list(self._entries.items()):
+            obj = ref()
+            if obj is None or not hasattr(obj, attr):
+                continue
+            t = getattr(obj, attr)
+            if torch.is_tensor(t):
+                yield obj, attr, t
+
+
+TENSOR_REGISTRY = TensorRegistry()
 
 
 def _load_resource_cfg() -> Dict[str, Any]:
@@ -421,17 +459,11 @@ class ResourceAllocatorPlugin:
             if base_score > move_thr:
                 target_device = "cuda"
 
-        for syn, _ in choices:
-            t = getattr(syn, "weight", None)
-            if torch.is_tensor(t):
-                self._safe_transfer(syn, "weight", t, target_device)
-
-        t = getattr(current, "tensor", None)
-        if torch.is_tensor(t):
-            self._safe_transfer(current, "tensor", t, target_device)
+        for obj, attr, t in TENSOR_REGISTRY.iter_tensors():
+            self._safe_transfer(obj, attr, t, target_device)
 
         return None, "forward"
 
 
-__all__ = ["ResourceAllocatorPlugin"]
+__all__ = ["ResourceAllocatorPlugin", "TensorRegistry", "TENSOR_REGISTRY"]
 PLUGIN_NAME = "resourceallocator"
