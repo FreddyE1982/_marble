@@ -1766,6 +1766,11 @@ class Brain:
                     "weight": syn.weight,
                 }
             )
+        if getattr(self, "codec", None) is not None:
+            try:
+                data["codec_vocab"] = self.codec.dump_vocab()
+            except Exception:
+                pass
         with open(target, "wb") as f:
             pickle.dump(data, f)
         # Retention: keep only the newest N snapshots if configured
@@ -1833,6 +1838,14 @@ class Brain:
                 type_name=syn.get("type_name"),
                 weight=syn.get("weight", 1.0),
             )
+        vocab = data.get("codec_vocab")
+        if vocab is not None:
+            try:
+                codec = UniversalTensorCodec()
+                codec.load_vocab(vocab)
+                brain.codec = codec
+            except Exception:
+                pass
         return brain
 
     # --- Occupancy/grid helpers ---
