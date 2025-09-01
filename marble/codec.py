@@ -68,6 +68,22 @@ class UniversalTensorCodec:
         self._seq_to_token = {seq: i for i, seq in enumerate(self._token_to_seq)}
         _safe_report("codec", "import_vocab", {"path": path, "size": self.vocab_size()}, "io")
 
+    # In-memory vocabulary helpers
+    def dump_vocab(self) -> List[List[int]]:
+        """Return the vocabulary as list-of-byte sequences."""
+        return [list(seq) for seq in self._token_to_seq]
+
+    def load_vocab(self, token_to_seq: Sequence[Sequence[int]]) -> None:
+        """Initialize vocabulary from list-of-byte sequences."""
+        if not isinstance(token_to_seq, Sequence) or not all(
+            isinstance(seq, Sequence) and all(isinstance(x, int) and 0 <= x <= 255 for x in seq)
+            for seq in token_to_seq
+        ):
+            raise ValueError("Invalid vocabulary format")
+        self._token_to_seq = [bytes(seq) for seq in token_to_seq]
+        self._seq_to_token = {seq: i for i, seq in enumerate(self._token_to_seq)}
+        _safe_report("codec", "load_vocab", {"size": self.vocab_size()}, "io")
+
     # Internal helpers
     def _ensure_base_vocab(self) -> None:
         if not self._token_to_seq:
