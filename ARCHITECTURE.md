@@ -185,7 +185,15 @@ Hugging Face Integration
 
 - Login: `hf_login(token=None, add_to_git_credential=False, endpoint=None)` logs in via `huggingface_hub`. When `token` is `None`, reads `HF_TOKEN` or `HUGGINGFACE_TOKEN`. Logs events under `huggingface/auth`.
 - Logout: `hf_logout()` best-effort logout via `huggingface_hub.logout`.
-- Streaming datasets: `load_hf_streaming_dataset(path, name=None, split="train", codec=None, streaming=True, trust_remote_code=False, download_config=None, cache_images=True, cache_size=20, **kwargs)` wraps `datasets.load_dataset` with streaming enabled by default. It returns an `HFStreamingDatasetWrapper` that yields `HFEncodedExample` objects and exposes an image-cache for on-demand downloads. When `streaming=False` the dataset is fully materialized but image fields store only URLs.
+- Streaming datasets: `load_hf_streaming_dataset(path, name=None, split="train", codec=None, streaming="memory", trust_remote_code=False, download_config=None, cache_images=True, cache_size=20, **kwargs)` wraps `datasets.load_dataset` and supports multiple materialization modes. The `streaming` argument accepts
+  - `"memory"` (default): stream data directly into memory,
+  - `"memory_lazy_images"`: like `"memory"` but store only image URLs until accessed,
+  - `"disk"`: store data on disk and stream from there,
+  - `"disk_lazy_images"`: disk-backed with image URLs only,
+  - `"memory_full"`: materialize the entire dataset in memory,
+  - `"memory_full_lazy_images"`: full materialization with image URLs,
+  - `"disk_full_lazy_image"`: full materialization on disk with image URLs.
+  It returns an `HFStreamingDatasetWrapper` that yields `HFEncodedExample` objects and exposes an image-cache for on-demand downloads.
   - Auto-encoding policy: Accessing any field from an `HFEncodedExample` automatically encodes the value using `UniversalTensorCodec` and returns a tensor/list matching the codec’s device policy (CUDA when available, else CPU).
   - Raw access: `HFEncodedExample.get_raw(key)` retrieves the underlying unencoded value; `HFStreamingDatasetWrapper.raw()` returns the original datasets object.
   - Reporting: Dataset loads are logged under `huggingface/dataset`, including `{path, name, split, streaming}`. Each encoded field access reports `{field, tokens}`.
