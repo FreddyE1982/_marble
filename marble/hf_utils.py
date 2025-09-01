@@ -4,7 +4,7 @@ import importlib
 import os
 import hashlib
 from collections import OrderedDict
-from typing import Any, Dict, Optional, Sequence, Tuple, Union
+from typing import Any, Dict, Optional, Sequence, Tuple, Union, Set
 
 # We intentionally import from marble.marblemain for the reporter when available.
 try:
@@ -131,16 +131,26 @@ TensorLike = Union[list, "_TorchTensor"]  # runtime-only typing aid
 
 
 class HFEncodedExample:
-    def __init__(self, data: Dict[str, Any], codec) -> None:
+    def __init__(
+        self,
+        data: Dict[str, Any],
+        codec,
+        parent: Optional["HFStreamingDatasetWrapper"] = None,
+    ) -> None:
         self._data = data
         self._codec = codec
+        self._parent = parent
 
     def get_raw(self, key: str) -> Any:
         return self._data[key]
 
     def __getitem__(self, key: str) -> TensorLike:
         val = self._data[key]
-        enc = self._codec.encode(val)
+        if self._parent is not None and key in self._parent.image_fields:
+            enc = self._parent._get_or_download_image(val)
+            self._data[key] = enc
+        else:
+            enc = self._codec.encode(val)
         try:
             ln = int(enc.numel()) if hasattr(enc, "numel") else len(enc)
         except Exception:
@@ -183,23 +193,25 @@ class HFStreamingDatasetWrapper:
         *,
         cache_size: int = 20,
         cache_enabled: bool = True,
+        image_fields: Optional[Sequence[str]] = None,
     ) -> None:
         self._ds = raw_dataset
         self._codec = codec
         self._cache = _ImageEncodingLRUCache(max_items=cache_size, enabled=cache_enabled)
+        self._image_fields = set(image_fields or [])
 
     def __iter__(self):
         for ex in self._ds:
             if isinstance(ex, dict):
-                yield HFEncodedExample(ex, self._codec)
+                yield HFEncodedExample(ex, self._codec, self)
             else:
-                yield HFEncodedExample({"value": ex}, self._codec)
+                yield HFEncodedExample({"value": ex}, self._codec, self)
 
     def __getitem__(self, idx):
         ex = self._ds[idx]
         if isinstance(ex, list):
-            return [HFEncodedExample(e, self._codec) if isinstance(e, dict) else HFEncodedExample({"value": e}, self._codec) for e in ex]
-        return HFEncodedExample(ex, self._codec) if isinstance(ex, dict) else HFEncodedExample({"value": ex}, self._codec)
+            return [HFEncodedExample(e, self._codec, self) if isinstance(e, dict) else HFEncodedExample({"value": e}, self._codec, self) for e in ex]
+        return HFEncodedExample(ex, self._codec, self) if isinstance(ex, dict) else HFEncodedExample({"value": ex}, self._codec, self)
 
     def __len__(self) -> int:
         try:
@@ -220,6 +232,38 @@ class HFStreamingDatasetWrapper:
         """Retrieve an already encoded image by ``key`` if present."""
 
         return self._cache.get(key)
+
+    # Lazy image handling -------------------------------------------------
+    @property
+    def image_fields(self) -> Set[str]:
+        return self._image_fields
+
+    def _download_image(self, url: str) -> bytes:
+        from urllib.parse import urlparse
+        import urllib.request
+
+        parsed = urlparse(url)
+        path = url
+        if parsed.scheme in {"http", "https"}:
+            with urllib.request.urlopen(url) as r:
+                return r.read()
+        if parsed.scheme == "file":
+            path = parsed.path
+        with open(path, "rb") as f:
+            return f.read()
+
+    def _get_or_download_image(self, ref: Any) -> Any:
+        if isinstance(ref, str):
+            key = f"url:{ref}"
+            cached = self._cache.get(key)
+            if cached is not None:
+                return cached
+            data = self._download_image(ref)
+            enc = self._codec.encode(data)
+            self._cache.put(key, enc)
+            return enc
+        key, enc = self.cache_image(ref)
+        return enc
 
 
 def load_hf_streaming_dataset(
@@ -306,6 +350,15 @@ def load_hf_streaming_dataset(
 
     ds_stream = ds_mod.load_dataset(**ds_kwargs)
 
+    image_fields: Set[str] = set()
+    try:
+        feats = getattr(ds_stream, "features", {})
+        for fname, ftype in getattr(feats, "items", lambda: [])():
+            if getattr(ftype, "__class__", None) and ftype.__class__.__name__ == "Image":
+                image_fields.add(str(fname))
+    except Exception:
+        pass
+
     def _extract_image_url(obj: Any) -> Any:
         try:
             if isinstance(obj, dict):
@@ -354,7 +407,13 @@ def load_hf_streaming_dataset(
         )
     except Exception:
         pass
-    return HFStreamingDatasetWrapper(ds, used_codec, cache_size=cache_size, cache_enabled=cache_images)
+    return HFStreamingDatasetWrapper(
+        ds,
+        used_codec,
+        cache_size=cache_size,
+        cache_enabled=cache_images,
+        image_fields=image_fields,
+    )
 
 
 __all__ = [
