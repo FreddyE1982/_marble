@@ -104,11 +104,7 @@ _NEURO_TYPES = NEURO_TYPES_REGISTRY
 
 def _tqdm_factory():
     try:
-        from IPython import get_ipython  # type: ignore
-        if get_ipython() is not None:  # pragma: no cover - runtime check
-            from tqdm.notebook import tqdm  # type: ignore
-        else:  # pragma: no cover
-            from tqdm import tqdm  # type: ignore
+        from tqdm.auto import tqdm  # type: ignore
     except Exception:  # pragma: no cover
         from tqdm import tqdm  # type: ignore
     return tqdm
