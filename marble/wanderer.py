@@ -258,6 +258,12 @@ class Wanderer(_DeviceHelper):
                     plug.on_init(self)  # type: ignore[attr-defined]
             except Exception:
                 pass
+        for plug in self._wplugins:
+            try:
+                if hasattr(plug, "rebalance_all"):
+                    plug.rebalance_all(self)  # type: ignore[attr-defined]
+            except Exception:
+                pass
         # Resolve stacked neuroplasticity plugins
         self._neuro_type = neuroplasticity_type
         self._neuro_plugins: List[Any] = []
@@ -390,6 +396,12 @@ class Wanderer(_DeviceHelper):
             neuron_iter = (
                 getattr(lobe, "neurons", None) if lobe is not None else self.brain.neurons.values()
             )
+            for plug in getattr(self, "_wplugins", []) or []:
+                try:
+                    if hasattr(plug, "rebalance_all"):
+                        plug.rebalance_all(self)  # type: ignore[attr-defined]
+                except Exception:
+                    pass
             for n in neuron_iter:  # type: ignore[union-attr]
                 lock_ctx = None
                 try:
