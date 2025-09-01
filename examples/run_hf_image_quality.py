@@ -251,7 +251,7 @@ def main(epochs: int = 1) -> None:
 
     for _ in range(int(epochs)):
         pairs = _sample_pairs(ds, codec, cache)
-        run_training_with_datapairs(
+        res = run_training_with_datapairs(
             brain,
             pairs,
             codec,
@@ -266,6 +266,10 @@ def main(epochs: int = 1) -> None:
             left_to_start=_start_neuron,
             dashboard=True,
         )
+        cnt = res.get("count", 0)
+        print(f"processed datapairs: {cnt}")
+        if cnt == 0:
+            raise RuntimeError("run_training_with_datapairs returned count=0")
     print("streamed quality training complete")
 
 
