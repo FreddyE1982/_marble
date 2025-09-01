@@ -157,6 +157,8 @@ class Wanderer(_DeviceHelper):
         gradient_clip: Optional[Dict[str, Any]] = None,
         optimizer: Optional[Union[str, Any]] = "Adam",
         mixedprecision: bool = True,
+        tiling: bool = False,
+        tile_size: int = 32,
     ) -> None:
         super().__init__()
         # Mandatory autograd requirement
@@ -212,6 +214,8 @@ class Wanderer(_DeviceHelper):
         #   norm_type: float (for norm; default 2.0)
         #   clip_value: float (for value)
         self._grad_clip: Dict[str, Any] = dict(gradient_clip or {})
+        self.tiling = bool(tiling)
+        self.tile_size = int(tile_size)
 
         try:
             report("wanderer", "init", {"plugin": self.type_name}, "events")
@@ -370,6 +374,9 @@ class Wanderer(_DeviceHelper):
             except Exception:
                 scaler = None
             self._amp_scaler = scaler
+        if self.tiling:
+            amp_enabled = False
+            scaler = None
 
         tqdm_cls = _tqdm_factory()
         # Allow callers to control whether the tqdm line is left on screen after completion.
@@ -769,13 +776,33 @@ class Wanderer(_DeviceHelper):
                 outputs.append(out_tail)
         except Exception:
             pass
-        with (torch.autocast(device_type=amp_device, dtype=amp_dtype) if amp_enabled else contextlib.nullcontext()):
-            if self._finish_stats is not None and "loss_tensor" in self._finish_stats:
-                loss = self._finish_stats["loss_tensor"]
-            else:
-                loss = self._compute_loss(outputs, override_loss=loss_fn)
 
-        if amp_enabled and scaler is not None:
+        if self.tiling:
+            losses = []
+            total = len(outputs)
+            for i in range(0, total, self.tile_size):
+                chunk = outputs[i : i + self.tile_size]
+                with (
+                    torch.autocast(device_type=amp_device, dtype=amp_dtype)
+                    if amp_enabled
+                    else contextlib.nullcontext()
+                ):
+                    chunk_loss = self._compute_loss(chunk, override_loss=loss_fn)
+                chunk_loss.backward(retain_graph=i + self.tile_size < total)
+                losses.append(chunk_loss.detach())
+            loss = sum(losses)
+        else:
+            with (
+                torch.autocast(device_type=amp_device, dtype=amp_dtype)
+                if amp_enabled
+                else contextlib.nullcontext()
+            ):
+                if self._finish_stats is not None and "loss_tensor" in self._finish_stats:
+                    loss = self._finish_stats["loss_tensor"]
+                else:
+                    loss = self._compute_loss(outputs, override_loss=loss_fn)
+
+        if amp_enabled and scaler is not None and not self.tiling:
             scaler.scale(loss).backward()
             scale = scaler.get_scale()
             params = []
@@ -788,7 +815,7 @@ class Wanderer(_DeviceHelper):
                 if p.grad is not None:
                     p.grad.data = p.grad.data / scale
             scaler.update()
-        else:
+        elif not self.tiling:
             if not getattr(loss, "requires_grad", False):
                 torch = self._torch
                 if torch is not None:
