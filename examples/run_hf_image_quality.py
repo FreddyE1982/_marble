@@ -14,7 +14,12 @@ Usage:
 
 from __future__ import annotations
 
+from collections import OrderedDict
+from io import BytesIO
 from typing import Iterator
+import urllib.request
+
+from PIL import Image
 
 from marble.marblemain import (
     Brain,
@@ -58,11 +63,35 @@ class QualityAwareRoutine:
         return {"lr_override": float(new_lr)}
 
 
-def _sample_pairs(ds) -> Iterator:
+class ImageCache:
+    """Simple in-memory LRU cache for image downloads."""
+
+    def __init__(self, max_images: int = 64) -> None:
+        self.max_images = int(max_images)
+        self._store: OrderedDict[str, Image.Image] = OrderedDict()
+
+    def get(self, url: str) -> Image.Image:
+        if url in self._store:
+            self._store.move_to_end(url)
+            return self._store[url]
+        with urllib.request.urlopen(url) as resp:
+            data = resp.read()
+        img = Image.open(BytesIO(data)).convert("RGB")
+        self._store[url] = img
+        if len(self._store) > self.max_images:
+            self._store.popitem(last=False)
+        return img
+
+
+def _sample_pairs(ds, cache: ImageCache) -> Iterator:
     for ex in ds:
         prompt = ex.get_raw("prompt")
-        img1 = ex.get_raw("image1")
-        img2 = ex.get_raw("image2")
+        img1_info = ex.get_raw("image1")
+        img2_info = ex.get_raw("image2")
+        url1 = img1_info.get("path") if isinstance(img1_info, dict) else str(img1_info)
+        url2 = img2_info.get("path") if isinstance(img2_info, dict) else str(img2_info)
+        img1 = cache.get(url1)
+        img2 = cache.get(url2)
         pref1 = float(ex.get_raw("weighted_results_image1_preference"))
         pref2 = float(ex.get_raw("weighted_results_image2_preference"))
         al1 = float(ex.get_raw("weighted_results_image1_alignment"))
@@ -73,7 +102,7 @@ def _sample_pairs(ds) -> Iterator:
         yield make_datapair({"prompt": prompt, "image": img2}, q2)
 
 
-def main(epochs: int = 1) -> None:
+def main(epochs: int = 1, cache_size: int = 64) -> None:
     codec = UniversalTensorCodec()
     ds = load_hf_streaming_dataset(
         "Rapidata/Imagen-4-ultra-24-7-25_t2i_human_preference",
@@ -81,6 +110,7 @@ def main(epochs: int = 1) -> None:
         streaming=True,
         codec=codec,
     )
+    cache = ImageCache(max_images=cache_size)
     # Consumed fields: prompt, image1, image2, weighted_results_image1_preference,
     # weighted_results_image2_preference, weighted_results_image1_alignment,
     # weighted_results_image2_alignment
@@ -142,7 +172,7 @@ def main(epochs: int = 1) -> None:
         return n
 
     for _ in range(int(epochs)):
-        pairs = _sample_pairs(ds)
+        pairs = _sample_pairs(ds, cache)
         run_training_with_datapairs(
             brain,
             pairs,
