@@ -8,14 +8,6 @@ import torch
 from .codec import TensorLike
 from .reporter import report
 
-def _register_tensor(obj: Any, attr: str) -> None:
-    """Register tensors with the global allocator registry if available."""
-    try:
-        from .plugins.wanderer_resource_allocator import TENSOR_REGISTRY  # type: ignore
-        TENSOR_REGISTRY.register(obj, attr)
-    except Exception:
-        pass
-
 if TYPE_CHECKING:
     from .selfattention import SelfAttention
 
@@ -107,7 +99,7 @@ class Neuron(_DeviceHelper):
         loss_diff_window: int = 10,
     ) -> None:
         super().__init__()
-        self.tensor: TensorLike = self._ensure_tensor(tensor)
+        self.tensor = tensor
         self.weight: float = float(weight)
         self.bias: float = float(bias)
         self.age: int = int(age)
@@ -121,8 +113,6 @@ class Neuron(_DeviceHelper):
         self.incoming: List["Synapse"] = []
         self.outgoing: List["Synapse"] = []
 
-        _register_tensor(self, "tensor")
-
         plugin = _NEURON_TYPES.get(self.type_name) if self.type_name else None
         if plugin is not None and hasattr(plugin, "on_init"):
             plugin.on_init(self)  # type: ignore[attr-defined]
@@ -130,6 +120,20 @@ class Neuron(_DeviceHelper):
             report("neuron", "create", {"weight": self.weight, "bias": self.bias, "age": self.age, "type": self.type_name}, "events")
         except Exception:
             pass
+
+    @property
+    def tensor(self) -> TensorLike:
+        return self._tensor
+
+    @tensor.setter
+    def tensor(self, value: Union[TensorLike, Sequence[float], float, int]) -> None:
+        val = self._ensure_tensor(value)
+        try:
+            from .plugins.wanderer_resource_allocator import track_tensor as _tt
+            with _tt(self, "_tensor"):
+                self._tensor = val
+        except Exception:
+            self._tensor = val
 
     # Disallow copying to maintain graph immutability during training
     def __copy__(self):
@@ -151,8 +155,7 @@ class Neuron(_DeviceHelper):
         if plugin is not None and hasattr(plugin, "receive"):
             plugin.receive(self, value)  # type: ignore[attr-defined]
             return
-        self.tensor = self._ensure_tensor(value)
-        _register_tensor(self, "tensor")
+        self.tensor = value
         try:
             report("neuron", "receive", {"len": int(self.tensor.numel()) if hasattr(self.tensor, "numel") else (len(self.tensor) if isinstance(self.tensor, list) else 1)}, "events")
         except Exception:
@@ -254,9 +257,6 @@ class Synapse(_DeviceHelper):
 
         self.incoming_synapses: List["Synapse"] = []
         self.outgoing_synapses: List["Synapse"] = []
-
-        _register_tensor(self, "weight")
-        _register_tensor(self, "bias")
 
         if isinstance(self.source, Neuron):
             self.source.outgoing.append(self)
