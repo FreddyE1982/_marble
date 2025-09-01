@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import tempfile
 import time
+import threading
 from typing import List, Tuple, Any, Dict
 import weakref
 
@@ -105,6 +106,8 @@ class ResourceAllocatorPlugin:
         cfg = _load_resource_cfg()
         self.max_disk_mb = float(cfg.get("max_disk_mb", 20480))
         self._disk_used_mb = 0.0
+        self._rebalance_thread: threading.Thread | None = None
+        self._rebalance_stop = threading.Event()
 
     @staticmethod
     @expose_learnable_params
@@ -198,6 +201,10 @@ class ResourceAllocatorPlugin:
         after = set(getattr(wanderer, "_learnables", {}))
         for name in after - before:
             wanderer.set_param_optimization(name, enabled=True)
+        try:
+            self.start_auto_rebalance(wanderer)
+        except Exception:
+            pass
         cfg = _load_resource_cfg()
         self.max_disk_mb = float(cfg.get("max_disk_mb", 20480))
         self._disk_used_mb = 0.0
@@ -318,54 +325,9 @@ class ResourceAllocatorPlugin:
         except Exception:
             tensor.data = torch.empty(0)
 
-    # Core logic ---------------------------------------------------------
-    def choose_next(self, wanderer, current, choices: List[Tuple["Synapse", str]]):
-        """Rebalance tensors without steering the walk.
-
-        The allocator inspects system and training metrics to guess whether
-        tensors should migrate between devices. It iterates over the current
-        neuron and all candidate synapses, moving their tensors as needed, then
-        returns ``None`` so the previously chosen path remains untouched.
-        """
-        if not choices:
-            return None, "forward"
+    def rebalance_all(self, wanderer) -> None:
+        """Evaluate system metrics and rebalance every registered tensor."""
         params = self._params(wanderer)
-        (
-            gpu_w,
-            vram_w,
-            cpu_w,
-            ram_w,
-            disk_w,
-            usage_w,
-            train_speed_w,
-            model_speed_w,
-            hit_freq_w,
-            loss_w,
-            loss_speed_w,
-            loss_accel_w,
-            reserve_ratio,
-            move_thr,
-            syn_move,
-            neu_move,
-            gpu_b,
-            vram_b,
-            cpu_b,
-            ram_b,
-            disk_b,
-            usage_b,
-            train_speed_b,
-            model_speed_b,
-            hit_freq_b,
-            loss_b,
-            loss_speed_b,
-            loss_accel_b,
-            temp,
-            decay,
-            smooth,
-            storage_w,
-            storage_b,
-        ) = params
-        # detach parameter values
         to_val = lambda t: float(t.detach().to("cpu").item()) if hasattr(t, "detach") else float(t)
         (
             gpu_w,
@@ -401,44 +363,7 @@ class ResourceAllocatorPlugin:
             smooth,
             storage_w,
             storage_b,
-        ) = map(
-            to_val,
-            [
-                gpu_w,
-                vram_w,
-                cpu_w,
-                ram_w,
-                disk_w,
-                usage_w,
-                train_speed_w,
-                model_speed_w,
-                hit_freq_w,
-                loss_w,
-                loss_speed_w,
-                loss_accel_w,
-                reserve_ratio,
-                move_thr,
-                syn_move,
-                neu_move,
-                gpu_b,
-                vram_b,
-                cpu_b,
-                ram_b,
-                disk_b,
-                usage_b,
-                train_speed_b,
-                model_speed_b,
-                hit_freq_b,
-                loss_b,
-                loss_speed_b,
-                loss_accel_b,
-                temp,
-                decay,
-                smooth,
-                storage_w,
-                storage_b,
-            ],
-        )
+        ) = map(to_val, params)
 
         sysm = self._system_metrics()
         trainm = self._training_metrics(wanderer)
@@ -462,6 +387,36 @@ class ResourceAllocatorPlugin:
         for obj, attr, t in TENSOR_REGISTRY.iter_tensors():
             self._safe_transfer(obj, attr, t, target_device)
 
+    def start_auto_rebalance(self, wanderer, interval: float = 5.0) -> None:
+        if self._rebalance_thread and self._rebalance_thread.is_alive():
+            return
+        self._rebalance_stop.clear()
+        wref = weakref.ref(wanderer)
+
+        def _loop() -> None:
+            while not self._rebalance_stop.wait(interval):
+                w = wref()
+                if w is None:
+                    break
+                try:
+                    self.rebalance_all(w)
+                except Exception:
+                    pass
+
+        self._rebalance_thread = threading.Thread(target=_loop, daemon=True)
+        self._rebalance_thread.start()
+
+    def stop_auto_rebalance(self) -> None:
+        self._rebalance_stop.set()
+        thr = self._rebalance_thread
+        if thr is not None and thr.is_alive():
+            thr.join(timeout=0)
+        self._rebalance_thread = None
+
+    # Core logic ---------------------------------------------------------
+    def choose_next(self, wanderer, current, choices: List[Tuple["Synapse", str]]):
+        """Rebalance tensors without steering the walk."""
+        self.rebalance_all(wanderer)
         return None, "forward"
 
 
