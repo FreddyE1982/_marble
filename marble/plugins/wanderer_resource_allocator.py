@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 import tempfile
 import time
-from typing import List, Tuple, Any
+from typing import List, Tuple, Any, Dict
 
 import torch
 try:
@@ -12,6 +12,43 @@ except Exception:  # pragma: no cover
     psutil = None  # type: ignore
 
 from ..wanderer import expose_learnable_params
+
+
+def _load_resource_cfg() -> Dict[str, Any]:
+    """Load resource allocator configuration from ``config.yaml``.
+
+    The parser is intentionally tiny and only understands the structure used
+    in this project::
+
+        resource_allocator:
+          max_disk_mb: 20480
+
+    Missing files or malformed entries are treated as empty configuration.
+    """
+
+    cfg: Dict[str, Any] = {}
+    try:
+        base = os.path.dirname(os.path.dirname(__file__))
+        with open(os.path.join(base, "config.yaml"), "r", encoding="utf-8") as fh:
+            section = None
+            for raw in fh:
+                line = raw.split("#", 1)[0].rstrip()
+                if not line:
+                    continue
+                if not line.startswith(" ") and line.endswith(":"):
+                    section = line[:-1].strip()
+                    cfg[section] = {}
+                    continue
+                if section and ":" in line:
+                    k, v = line.split(":", 1)
+                    try:
+                        val: Any = float(v.strip())
+                    except Exception:
+                        val = v.strip()
+                    cfg[section][k.strip()] = val
+    except Exception:
+        return {}
+    return cfg.get("resource_allocator", {})
 
 
 class ResourceAllocatorPlugin:
@@ -25,6 +62,11 @@ class ResourceAllocatorPlugin:
     next synapse, this allocator merely shuffles the data to keep memory
     balanced.
     """
+
+    def __init__(self) -> None:
+        cfg = _load_resource_cfg()
+        self.max_disk_mb = float(cfg.get("max_disk_mb", 20480))
+        self._disk_used_mb = 0.0
 
     @staticmethod
     @expose_learnable_params
@@ -118,6 +160,9 @@ class ResourceAllocatorPlugin:
         after = set(getattr(wanderer, "_learnables", {}))
         for name in after - before:
             wanderer.set_param_optimization(name, enabled=True)
+        cfg = _load_resource_cfg()
+        self.max_disk_mb = float(cfg.get("max_disk_mb", 20480))
+        self._disk_used_mb = 0.0
 
     # Helper metrics -----------------------------------------------------
     def _system_metrics(self) -> dict:
@@ -173,11 +218,18 @@ class ResourceAllocatorPlugin:
         return float(st[pos])
 
     # Device management -------------------------------------------------
-    def _offload_to_disk(self, tensor: torch.Tensor) -> str:
-        """Persist *tensor* to a temporary file and return its path."""
+    def _offload_to_disk(self, tensor: torch.Tensor) -> str | None:
+        """Persist ``tensor`` to a temporary file and return its path.
+
+        Offloading is skipped when it would exceed the configured disk budget.
+        """
+        size_mb = tensor.element_size() * tensor.nelement() / (1024 * 1024)
+        if self._disk_used_mb + size_mb > self.max_disk_mb:
+            return None
         fd, path = tempfile.mkstemp(prefix="marble_offload_", suffix=".pt")
         os.close(fd)
         torch.save(tensor, path)
+        self._disk_used_mb += size_mb
         return path
 
     def _safe_transfer(self, obj: Any, attr: str, tensor: torch.Tensor, device: str) -> None:
@@ -194,6 +246,11 @@ class ResourceAllocatorPlugin:
         if isinstance(off_path, str):
             try:
                 tensor.data = torch.load(off_path, map_location=device)
+                try:
+                    size_mb = os.path.getsize(off_path) / (1024 * 1024)
+                    self._disk_used_mb = max(0.0, self._disk_used_mb - size_mb)
+                except Exception:
+                    pass
                 os.remove(off_path)
                 setattr(obj, off_attr, None)
             except Exception:
@@ -215,7 +272,8 @@ class ResourceAllocatorPlugin:
             needed = cpu_tensor.element_size() * cpu_tensor.nelement()
             if avail < needed:
                 path = self._offload_to_disk(cpu_tensor)
-                setattr(obj, off_attr, path)
+                if path is not None:
+                    setattr(obj, off_attr, path)
                 tensor.data = torch.empty(0)
             else:
                 tensor.data = cpu_tensor
