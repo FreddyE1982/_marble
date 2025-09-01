@@ -1,0 +1,2 @@
+resource_allocator:
+  max_disk_mb: 20480  # maximum MB for disk offload (20 GB)

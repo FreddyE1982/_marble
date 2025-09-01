@@ -8,3 +8,9 @@
   Required when aggressive_starting_neuroplasticity is true. Minimum neurons to grow per step during the aggressive phase.
 - aggressive_phase_steps (int)
   Required when aggressive_starting_neuroplasticity is true. Number of steps to keep aggressive growth before reverting to normal behaviour.
+
+## Resource Allocator Settings
+
+- resource_allocator.max_disk_mb (int, default: 20480)
+  Limits total size in MB of tensors offloaded to disk by the resource allocator.
+  Must be positive. When exceeded, tensors are cleared instead of offloaded.
