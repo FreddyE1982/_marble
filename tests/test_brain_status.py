@@ -31,6 +31,9 @@ class TestBrainStatus(unittest.TestCase):
         print("training status:", res.get("status"))
         self.assertIn("status", res)
         self.assertIn("plugins_active", res["status"])
+        # ensure new counters are exposed through training status
+        self.assertIn("neurons_added", res["status"])
+        self.assertGreaterEqual(res["status"]["neurons_added"], 1)
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
