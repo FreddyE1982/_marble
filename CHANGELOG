@@ -1,0 +1,9 @@
+2025-09-01
+- Add support for `train_type` kwarg to `marble.training.run_training_with_datapairs` to match `marble.marblemain` API.
+- Wire Brain-train plugin lifecycle (`on_init`/`on_end`) and merge returned summaries.
+- Apply learning paradigms to the Wanderer in the lock-based datapair helper for consistent behavior.
+
+- Keep tqdm progress lines visible when training via `run_training_with_datapairs`:
+  - Added `Wanderer.pbar_leave` public attribute (default False).
+  - The datapair and wanderer-training helpers set `w.pbar_leave = True` so the status line isn’t suppressed.
+  - Added `Wanderer.pbar_verbose` to emit explicit per-walk start/end messages; enabled by both helpers.

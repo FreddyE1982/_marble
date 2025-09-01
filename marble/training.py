@@ -50,6 +50,11 @@ def run_wanderer_training(
             optimizer=optimizer,
             mixedprecision=mixedprecision,
         )
+        try:
+            setattr(w, "pbar_leave", True)
+            setattr(w, "pbar_verbose", True)
+        except Exception:
+            pass
         history: List[Dict[str, Any]] = []
         brain._progress_total_epochs = 1  # type: ignore[attr-defined]
         brain._progress_epoch = 0  # type: ignore[attr-defined]
@@ -111,6 +116,7 @@ def run_training_with_datapairs(
     steps_per_pair: int = 5,
     lr: float = 1e-2,
     wanderer_type: Optional[str] = None,
+    train_type: Optional[Union[str, Sequence[str]]] = None,
     seed: Optional[int] = None,
     loss: Optional[Union[str, Callable[..., Any], Any]] = "nn.MSELoss",
     left_to_start: Optional[Callable[[Any, "Brain"], Optional["Neuron"]]] = None,
@@ -204,10 +210,59 @@ def run_training_with_datapairs(
             optimizer=optimizer,
             mixedprecision=mixedprecision,
         )
+        # Ensure progress bars remain visible and emit walk boundary lines under this helper
+        try:
+            setattr(w, "pbar_leave", True)
+            setattr(w, "pbar_verbose", True)
+        except Exception:
+            pass
         if selfattention is not None:
             try:
                 from .selfattention import attach_selfattention
                 attach_selfattention(w, selfattention)
+            except Exception:
+                pass
+        # Allow any enabled learning paradigms to configure the Wanderer
+        try:
+            from .marblemain import apply_paradigms_to_wanderer  # lazy to avoid cycles
+            apply_paradigms_to_wanderer(brain, w)
+        except Exception:
+            pass
+
+        # Resolve Brain-train plugins (comma-separated or list) and initialize
+        train_plugins: List[Any] = []
+        try:
+            from .marblemain import _BRAIN_TRAIN_TYPES, _on_init_train, _on_end_train, _merge_dict_safe
+            if isinstance(train_type, str):
+                names = [s.strip() for s in train_type.split(",") if s.strip()]
+                for nm in names:
+                    p = _BRAIN_TRAIN_TYPES.get(nm)
+                    if p is not None:
+                        train_plugins.append(p)
+            elif isinstance(train_type, (list, tuple)):
+                for nm in train_type:
+                    p = _BRAIN_TRAIN_TYPES.get(str(nm))
+                    if p is not None:
+                        train_plugins.append(p)
+        except Exception:
+            # If registry not available, continue without brain-train plugins
+            _BRAIN_TRAIN_TYPES = {}
+            def _on_init_train(*args, **kwargs):
+                return None
+            def _on_end_train(*args, **kwargs):
+                return None
+            def _merge_dict_safe(base, extra):
+                return base
+
+        init_cfg = {
+            "num_walks": None,
+            "max_steps": steps_per_pair,
+            "lr": lr,
+            "type_name": train_type,
+        }
+        for p in train_plugins:
+            try:
+                _on_init_train(p, brain, w, init_cfg)
             except Exception:
                 pass
 
@@ -232,6 +287,13 @@ def run_training_with_datapairs(
 
         final_loss = history[-1]["loss"] if history else 0.0
         out = {"history": history, "final_loss": final_loss, "count": count}
+        # Allow train plugins to contribute summary fields
+        for p in train_plugins:
+            try:
+                extra = _on_end_train(p, brain, w, history)
+                out = _merge_dict_safe(out, extra)
+            except Exception:
+                pass
         try:
             report("training", "datapair_summary", {"count": count, "final_loss": final_loss}, "datapair")
         except Exception:
@@ -473,4 +535,3 @@ __all__ = [
     "make_default_codec",
     "quick_train_on_pairs",
 ]
-
