@@ -44,15 +44,13 @@ def update_metrics(
     mean_loss: float,
     loss_speed: float,
     mean_loss_speed: float,
+    *,
+    cuda_available: bool,
+    available_plugins: int,
+    neuron_types_available: int,
 ) -> None:
     """Write latest training metrics to the shared metrics file."""
     global _plugin_actions
-    try:
-        from .graph import _NEURON_TYPES
-        from .wanderer import WANDERER_TYPES_REGISTRY, NEURO_TYPES_REGISTRY
-        import torch
-    except Exception:
-        return
 
     plugin_names = [p.__class__.__name__ for p in getattr(wanderer, "_wplugins", []) or []]
     plugin_names += [p.__class__.__name__ for p in getattr(wanderer, "_neuro_plugins", []) or []]
@@ -62,7 +60,6 @@ def update_metrics(
     most_active = max(_plugin_actions.items(), key=lambda x: x[1])[0] if _plugin_actions else None
 
     active_plugins = len(plugin_names)
-    available_plugins = len(WANDERER_TYPES_REGISTRY) + len(NEURO_TYPES_REGISTRY)
 
     used_neuron_types = {
         getattr(n, "type_name", None)
@@ -70,7 +67,6 @@ def update_metrics(
         if getattr(n, "type_name", None)
     }
     neuron_types_used = len(used_neuron_types)
-    neuron_types_available = len(_NEURON_TYPES)
 
     paths = len(getattr(brain, "synapses", []))
 
@@ -97,7 +93,7 @@ def update_metrics(
         "neurons_removed": int(getattr(brain, "neurons_pruned", 0)),
         "synapses_added": int(getattr(brain, "synapses_added", 0)),
         "synapses_removed": int(getattr(brain, "synapses_pruned", 0)),
-        "cuda": bool(torch.cuda.is_available()),
+        "cuda": bool(cuda_available),
         "last_snapshot_time": snapshot_time,
         "last_snapshot_size_mb": snapshot_size,
     }

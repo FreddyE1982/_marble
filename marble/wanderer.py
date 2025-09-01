@@ -10,7 +10,7 @@ import random
 import contextlib
 import inspect
 
-from .graph import _DeviceHelper, Neuron, Synapse
+from .graph import _DeviceHelper, Neuron, Synapse, _NEURON_TYPES
 from .lobe import Lobe
 from .reporter import report
 from .learnable_param import LearnableParam
@@ -545,7 +545,20 @@ class Wanderer(_DeviceHelper):
             try:
                 from .dashboard import update_metrics, dashboard_active
                 if dashboard_active():
-                    update_metrics(self.brain, self, steps, max_steps, cur_loss, mean_loss, loss_speed, mean_loss_speed)
+                    import torch
+                    update_metrics(
+                        self.brain,
+                        self,
+                        steps,
+                        max_steps,
+                        cur_loss,
+                        mean_loss,
+                        loss_speed,
+                        mean_loss_speed,
+                        cuda_available=torch.cuda.is_available(),
+                        available_plugins=len(WANDERER_TYPES_REGISTRY) + len(NEURO_TYPES_REGISTRY),
+                        neuron_types_available=len(_NEURON_TYPES),
+                    )
             except Exception:
                 pass
             cur_size, cap = (0, None)
