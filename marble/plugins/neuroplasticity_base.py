@@ -10,6 +10,12 @@ class BaseNeuroplasticityPlugin:
     def on_init(self, wanderer: "Wanderer") -> None:
         try:
             report("neuroplasticity", "init", {"type": "base"}, "events")
+            cfg = getattr(wanderer, "_neuro_cfg", {}) or {}
+            if cfg.get("aggressive_starting_neuroplasticity"):
+                steps = int(cfg.get("aggressive_phase_steps", 0))
+                min_new = int(cfg.get("add_min_new_neurons_per_step", 0))
+                wanderer._plugin_state["aggressive_steps_left"] = steps
+                wanderer._plugin_state["aggressive_min_new"] = min_new
         except Exception:
             pass
 
@@ -28,6 +34,42 @@ class BaseNeuroplasticityPlugin:
             pass
         try:
             cfg = getattr(wanderer, "_neuro_cfg", {}) or {}
+            steps_left = int(wanderer._plugin_state.get("aggressive_steps_left", 0))
+            min_new = int(wanderer._plugin_state.get("aggressive_min_new", 0))
+            brain = wanderer.brain
+            if steps_left > 0 and min_new > 0:
+                try:
+                    avail = list(brain.available_indices())
+                except Exception:
+                    avail = []
+                last_pos = getattr(current, "position", None)
+                added = 0
+                for _ in range(min_new):
+                    if not avail:
+                        break
+                    cand = avail.pop(0)
+                    try:
+                        if cand == last_pos or brain.get_neuron(cand) is not None:
+                            continue
+                        brain.add_neuron(cand, tensor=0.0)
+                        brain.connect(last_pos, cand, direction="uni")
+                        added += 1
+                    except Exception:
+                        continue
+                if added:
+                    cur_new = int(wanderer._plugin_state.get("neuro_new_added", 0))
+                    wanderer._plugin_state["neuro_new_added"] = cur_new + added
+                    try:
+                        report(
+                            "neuroplasticity",
+                            "aggressive_grow",
+                            {"from": last_pos, "added": added},
+                            "events",
+                        )
+                    except Exception:
+                        pass
+                wanderer._plugin_state["aggressive_steps_left"] = steps_left - 1
+                return
             grow_on_step = bool(cfg.get("grow_on_step_when_stuck", False))
             max_new = int(cfg.get("max_new_per_walk", 1))
             if not grow_on_step or getattr(current, "outgoing", None):
@@ -35,7 +77,6 @@ class BaseNeuroplasticityPlugin:
             cur_new = int(wanderer._plugin_state.get("neuro_new_added", 0))
             if cur_new >= max_new:
                 return
-            brain = wanderer.brain
             try:
                 avail = brain.available_indices()
             except Exception:
