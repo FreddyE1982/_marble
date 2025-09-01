@@ -30,8 +30,10 @@ class ResourceAllocatorDiskLimitTests(unittest.TestCase):
 
         with patch.object(torch.Tensor, "to", fake_to):
             plug._safe_transfer(obj, "weight", obj.weight, "cuda")
-
-        self.assertFalse(isinstance(getattr(obj, "_weight_offload", None), str))
+        off_attr = getattr(obj, "_weight_offload", None)
+        print("offload attr", off_attr)
+        self.assertFalse(isinstance(off_attr, str))
+        print("tensor size", obj.weight.numel())
         self.assertEqual(obj.weight.numel(), 0)
 
 
