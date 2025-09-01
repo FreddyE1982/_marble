@@ -91,6 +91,7 @@ from .buildingblock import (
     register_buildingblock_type,
     get_buildingblock_type,
     BuildingBlock,
+    _BUILDINGBLOCK_TYPES,
 )
 
 from .lobe import Lobe
@@ -857,6 +858,11 @@ class Brain:
 
         # Shared storage for both modes
         self.synapses: List[Synapse] = []
+        # Lifetime mutation counters
+        self.neurons_added = 0
+        self.neurons_pruned = 0
+        self.synapses_added = 0
+        self.synapses_pruned = 0
 
         if self.mode == "grid":
             self.dynamic = size is None
@@ -1105,6 +1111,7 @@ class Brain:
                 self._kuzu_add_neuron(self.world_coords(idx))
             except Exception:
                 pass
+            self.neurons_added += 1
             return neuron
         else:
             coords = tuple(float(v) for v in index)
@@ -1123,6 +1130,7 @@ class Brain:
                 self._kuzu_add_neuron(coords)
             except Exception:
                 pass
+            self.neurons_added += 1
             return neuron
 
     def get_neuron(self, index: Sequence[int]) -> Optional[Neuron]:
@@ -1144,6 +1152,7 @@ class Brain:
             raise ValueError("Both source and target neurons must exist to connect")
         syn = Synapse(src, dst, direction=direction, **kwargs)
         self.synapses.append(syn)
+        self.synapses_added += 1
         try:
             report("brain", "connect", {"direction": direction}, "events")
         except Exception:
@@ -1280,6 +1289,7 @@ class Brain:
     def remove_synapse(self, synapse: "Synapse") -> None:
         if synapse in self.synapses:
             self.synapses.remove(synapse)
+            self.synapses_pruned += 1
         try:
             src = synapse.source
             if isinstance(src, Synapse):
@@ -1355,10 +1365,51 @@ class Brain:
             report("brain", "remove_neuron", {"position": pos}, "events")
         except Exception:
             pass
+        self.neurons_pruned += 1
         try:
             self._kuzu_rebuild_all()
         except Exception:
             pass
+
+    def status(self) -> Dict[str, Any]:
+        """Return a snapshot of training/runtime stats."""
+        try:
+            import torch  # type: ignore
+            cuda_active = bool(torch.cuda.is_available())
+        except Exception:
+            cuda_active = False
+        plugin_used: set = set()
+        for syn in self.synapses:
+            tn = getattr(syn, "type_name", None)
+            if tn:
+                plugin_used.add(str(tn))
+        for p in self.active_paradigms():
+            plugin_used.add(p.__class__.__name__)
+        total_plugins = (
+            len(_SYNAPSE_TYPES)
+            + len(_WANDERER_TYPES)
+            + len(_BRAIN_TRAIN_TYPES)
+            + len(_SELFA_TYPES)
+            + len(_NEURO_TYPES)
+            + len(_BUILDINGBLOCK_TYPES)
+        )
+        ntypes_used = {n.type_name for n in self.neurons.values() if getattr(n, "type_name", None)}
+        status = {
+            "cuda": "active" if cuda_active else "inactive",
+            "plugins_active": len(plugin_used),
+            "plugins_total": total_plugins,
+            "neuron_types_used": len(ntypes_used),
+            "neuron_types_total": len(_NEURON_TYPES),
+            "neurons_added": self.neurons_added,
+            "neurons_pruned": self.neurons_pruned,
+            "synapses_added": self.synapses_added,
+            "synapses_pruned": self.synapses_pruned,
+        }
+        try:
+            report("brain", "status", status, "metrics")
+        except Exception:
+            pass
+        return status
     # --- Learnable parameter management (global) ---
     def ensure_learnable_param(
         self,
@@ -2157,7 +2208,7 @@ __all__ += [
 # -----------------------------
 # SelfAttention (moved to its own module)
 # -----------------------------
-from .selfattention import SelfAttention, register_selfattention_type, attach_selfattention
+from .selfattention import SelfAttention, register_selfattention_type, attach_selfattention, _SELFA_TYPES
 from .plugins.selfattention_conv1d_inserter import Conv1DRandomInsertionRoutine
 
 __all__ += ["SelfAttention", "register_selfattention_type", "attach_selfattention"]

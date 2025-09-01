@@ -294,8 +294,14 @@ def run_training_with_datapairs(
                 out = _merge_dict_safe(out, extra)
             except Exception:
                 pass
+        status = getattr(brain, "status", lambda: {})()
+        out["status"] = status
         try:
             report("training", "datapair_summary", {"count": count, "final_loss": final_loss}, "datapair")
+        except Exception:
+            pass
+        try:
+            report("training", "status", status, "datapair")
         except Exception:
             pass
         return out
