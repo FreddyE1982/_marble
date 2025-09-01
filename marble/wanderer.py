@@ -103,17 +103,16 @@ _NEURO_TYPES = NEURO_TYPES_REGISTRY
 
 
 def _tqdm_factory():
-    try:
-        # Prefer notebook widget when running inside IPython to avoid
-        # newline spam from the plain tqdm variant.
-        from IPython import get_ipython  # type: ignore
-        ip = get_ipython()
-        if ip is not None and getattr(ip, "kernel", None) is not None:
-            from tqdm.notebook import tqdm  # type: ignore
-        else:  # pragma: no cover - fallback path
-            from tqdm import tqdm  # type: ignore
-    except Exception:  # pragma: no cover - minimal environments
-        from tqdm import tqdm  # type: ignore
+    """Return a tqdm variant suited for the current environment.
+
+    ``tqdm.auto`` automatically picks ``tqdm.notebook`` when running inside
+    IPython notebooks and falls back to the standard tqdm otherwise. This
+    keeps progress reporting to a single updating line regardless of the
+    front end.
+    """
+
+    from tqdm.auto import tqdm  # type: ignore
+
     return tqdm
 
 
@@ -539,11 +538,11 @@ class Wanderer(_DeviceHelper):
                     loss_speed=f"{loss_speed:.4f}",
                     mean_loss_speed=f"{mean_loss_speed:.4f}",
                     neurons=cur_size,
-                    neurons_added=status.get("neurons_added"),
+                    neurons_added=status.get("neurons_added", 0),
                     synapses=len(getattr(self.brain, "synapses", [])),
-                    synapses_added=status.get("synapses_added"),
-                    neurons_pruned=status.get("neurons_pruned"),
-                    synapses_pruned=status.get("synapses_pruned"),
+                    synapses_added=status.get("synapses_added", 0),
+                    neurons_pruned=status.get("neurons_pruned", 0),
+                    synapses_pruned=status.get("synapses_pruned", 0),
                     paths=len(getattr(self.brain, "synapses", [])),
                     speed=f"{mean_speed:.2f}",
                 )

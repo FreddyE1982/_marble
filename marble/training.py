@@ -52,7 +52,6 @@ def run_wanderer_training(
         )
         try:
             setattr(w, "pbar_leave", True)
-            setattr(w, "pbar_verbose", True)
         except Exception:
             pass
         history: List[Dict[str, Any]] = []
@@ -210,10 +209,9 @@ def run_training_with_datapairs(
             optimizer=optimizer,
             mixedprecision=mixedprecision,
         )
-        # Ensure progress bars remain visible and emit walk boundary lines under this helper
+        # Ensure progress bars remain visible for the datapair helper
         try:
             setattr(w, "pbar_leave", True)
-            setattr(w, "pbar_verbose", True)
         except Exception:
             pass
         if selfattention is not None:
