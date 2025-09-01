@@ -1,4 +1,5 @@
 2025-09-01
+- Track per-neuron loss differences with rolling history and mean value.
 - Add support for `train_type` kwarg to `marble.training.run_training_with_datapairs` to match `marble.marblemain` API.
 - Wire Brain-train plugin lifecycle (`on_init`/`on_end`) and merge returned summaries.
 - Apply learning paradigms to the Wanderer in the lock-based datapair helper for consistent behavior.

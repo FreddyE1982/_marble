@@ -492,6 +492,10 @@ class Wanderer(_DeviceHelper):
             cur_loss = float(step_loss_t.detach().to("cpu").item())
             prev_loss = step_metrics[-1]["loss"] if step_metrics else None
             delta = cur_loss - prev_loss if prev_loss is not None else 0.0
+            try:
+                current.record_loss_diff(delta)
+            except Exception:
+                pass
 
             now = time.time()
             dt = None
