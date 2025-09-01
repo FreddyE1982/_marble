@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional, Sequence, Tuple, Union, TYPE_CHECKING
+from typing import Any, Deque, Dict, List, Optional, Sequence, Tuple, Union, TYPE_CHECKING
+from collections import deque
 
 import torch
 
@@ -95,6 +96,7 @@ class Neuron(_DeviceHelper):
         bias: float = 0.0,
         age: int = 0,
         type_name: Optional[str] = None,
+        loss_diff_window: int = 10,
     ) -> None:
         super().__init__()
         self.tensor: TensorLike = self._ensure_tensor(tensor)
@@ -102,6 +104,9 @@ class Neuron(_DeviceHelper):
         self.bias: float = float(bias)
         self.age: int = int(age)
         self.type_name: Optional[str] = type_name
+        self.loss_diff_window: int = int(loss_diff_window)
+        self.loss_diffs: Deque[float] = deque(maxlen=self.loss_diff_window)
+        self.mean_loss_diff: float = 0.0
         self._plugin_state: Dict[str, Any] = {}
         if 'learnable_params' not in self._plugin_state:
             self._plugin_state['learnable_params'] = {}
@@ -141,6 +146,13 @@ class Neuron(_DeviceHelper):
             report("neuron", "receive", {"len": int(self.tensor.numel()) if hasattr(self.tensor, "numel") else (len(self.tensor) if isinstance(self.tensor, list) else 1)}, "events")
         except Exception:
             pass
+
+    def record_loss_diff(self, diff: float) -> None:
+        self.loss_diffs.append(float(diff))
+        if self.loss_diffs:
+            self.mean_loss_diff = sum(self.loss_diffs) / len(self.loss_diffs)
+        else:
+            self.mean_loss_diff = 0.0
 
     def forward(self, input_value: Optional[Union[TensorLike, Sequence[float], float, int]] = None) -> TensorLike:
         plugin = _NEURON_TYPES.get(self.type_name) if self.type_name else None
