@@ -890,10 +890,12 @@ class Brain:
             else:
                 self.size = None
                 self.bounds = None  # type: ignore
-                self.formula = None
+                self.formula = formula
                 self.max_iters = int(max_iters)
                 self.escape_radius = float(escape_radius)
                 self.occupancy: Dict[Tuple[int, ...], bool] = {}
+                if formula is not None:
+                    self._eval_env = self._build_eval_env()
             self.neurons: Dict[Tuple[int, ...], Neuron] = {}
             self._dyn_min: List[int] = [0] * self.n
             self._dyn_max: List[int] = [-1] * self.n
@@ -1049,7 +1051,10 @@ class Brain:
     def is_inside(self, index: Sequence[int]) -> bool:
         if self.mode == "grid":
             if getattr(self, "dynamic", False):
-                return True
+                if self.formula is None:
+                    return True
+                coords = tuple(float(i) for i in index)
+                return bool(self._eval_formula(coords))
             key = tuple(int(i) for i in index)
             return bool(self.occupancy.get(key, False))
         else:
@@ -1086,7 +1091,12 @@ class Brain:
     def add_neuron(self, index: Sequence[int], *, tensor: Union[TensorLike, Sequence[float], float, int] = 0.0, **kwargs: Any) -> Neuron:
         if self.mode == "grid":
             idx = tuple(int(i) for i in index)
-            if not getattr(self, "dynamic", False):
+            if getattr(self, "dynamic", False):
+                if self.formula is not None and not self.is_inside(idx):
+                    raise ValueError("Neuron index is outside the brain shape")
+                if idx in self.neurons:
+                    raise ValueError("Neuron already exists at this index")
+            else:
                 if not self.is_inside(idx):
                     raise ValueError("Neuron index is outside the brain shape")
                 if idx in self.neurons:

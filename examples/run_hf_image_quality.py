@@ -17,6 +17,7 @@ from __future__ import annotations
 from typing import Iterator, Any, Dict, Optional
 import os
 import hashlib
+import re
 from collections import OrderedDict
 
 from marble.marblemain import (
@@ -26,12 +27,14 @@ from marble.marblemain import (
     run_training_with_datapairs,
     load_hf_streaming_dataset,
     SelfAttention,
+    register_wanderer_type,
 )
 import marble.plugins  # ensure plugin discovery
 from marble.plugins.selfattention_adaptive_grad_clip import AdaptiveGradClipRoutine
 from marble.plugins.selfattention_findbestneurontype import FindBestNeuronTypeRoutine
 from marble.plugins.selfattention_noise_profiler import ContextAwareNoiseRoutine
 from marble.dashboard import start_dashboard
+from marble.plugins.wanderer_autoplugin import AutoPlugin
 
 
 class QualityAwareRoutine:
@@ -166,11 +169,16 @@ def main(epochs: int = 1) -> None:
     # Consumed fields: prompt, image1, image2, weighted_results_image1_preference,
     # weighted_results_image2_preference, weighted_results_image1_alignment,
     # weighted_results_image2_alignment
+    formula = "n1 >= 0 and n2 >= 0"
+    dims = (
+        max(int(m.group(1)) for m in re.finditer(r"n(\d+)", formula))
+        if re.search(r"n(\d+)", formula)
+        else 1
+    )
     brain = Brain(
-        2,
-        size=32,
-        bounds=((0, 31), (0, 31)),
-        formula="abs(n1 - n2) <= 2",
+        dims,
+        size=None,
+        formula=formula,
         store_snapshots=True,
         snapshot_path=".",
         snapshot_freq=100,
@@ -185,6 +193,7 @@ def main(epochs: int = 1) -> None:
             ContextAwareNoiseRoutine(),
         ]
     )
+    register_wanderer_type("autoplugin_logger", AutoPlugin(log_path="autoplugin.log"))
     wplugins = [
         "batchtrainer",
         "qualityweightedloss",
@@ -196,7 +205,7 @@ def main(epochs: int = 1) -> None:
         "distillation",
         "wanderalongsynapseweights",
         "dynamicdimensions",
-        "autoplugin",
+        "autoplugin_logger",
     ]
     neuro_cfg = {
         "grow_on_step_when_stuck": True,

@@ -17,8 +17,10 @@ class TestAutoPluginLogging(unittest.TestCase):
         n = b.add_neuron(idx, tensor=[1.0], type_name="autoneuron")
         w = Wanderer(b, type_name="autoplugin_logger", neuroplasticity_type="base", seed=0)
         auto = next(p for p in w._wplugins if isinstance(p, AutoPlugin))
-        for _ in range(4):
-            w.walk(max_steps=20, start=n, lr=0.01)
+        w.walk(max_steps=20, start=n, lr=0.01)
+        with open(tmp.name, "r", encoding="utf-8") as fh:
+            pre_data = fh.read()
+        self.assertTrue(pre_data.strip())
         auto.finalize_logs(w)
         with open(tmp.name, "r", encoding="utf-8") as fh:
             data = fh.read()
