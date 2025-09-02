@@ -176,14 +176,18 @@ class AutoNeuronPlugin:
         """Self-attention score over loss, speed and model size."""
 
         torch = getattr(wanderer, "_torch", None)
-        loss = float(getattr(wanderer, "_last_walk_mean_loss", 0.0) or 0.0)
-        steps = float(getattr(wanderer, "_walk_step_count", 0.0))
+        loss_raw = float(getattr(wanderer, "_last_walk_mean_loss", 0.0) or 0.0)
+        steps_raw = float(getattr(wanderer, "_walk_step_count", 0.0))
         brain = getattr(wanderer, "brain", None)
-        complexity = float(
+        complexity_raw = float(
             len(getattr(brain, "neurons", {})) + len(getattr(brain, "synapses", []))
             if brain is not None
             else 0.0
         )
+        # scale metrics with log1p to keep values in a reasonable range
+        loss = math.log1p(loss_raw)
+        steps = math.log1p(steps_raw)
+        complexity = math.log1p(complexity_raw)
         if torch is None:
             scores = [
                 q_loss * k_loss * loss,
@@ -194,10 +198,16 @@ class AutoNeuronPlugin:
             exps = [math.exp(s - m) for s in scores]
             denom = sum(exps) or 1.0
             weights = [e / denom for e in exps]
-            vals = [v_loss * loss, v_speed * steps, v_complexity * complexity]
+            vals = [
+                v_loss * loss,
+                v_speed * steps,
+                v_complexity * complexity,
+            ]
             return sum(w * v for w, v in zip(weights, vals))
         device = getattr(q_loss, "device", getattr(wanderer, "_device", "cpu"))
-        metrics = torch.tensor([loss, steps, complexity], dtype=torch.float32, device=device)
+        metrics = torch.log1p(
+            torch.tensor([loss_raw, steps_raw, complexity_raw], dtype=torch.float32, device=device)
+        )
 
         def _to_tensor(val: Any) -> Any:
             if hasattr(val, "to"):

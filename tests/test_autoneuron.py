@@ -1,4 +1,5 @@
 import unittest
+import math
 
 
 class TestAutoNeuron(unittest.TestCase):
@@ -58,6 +59,19 @@ class TestAutoNeuron(unittest.TestCase):
         print("walk result:", res, "fail calls:", fail_impl.calls)
         self.assertIn("loss", res)
         self.assertEqual(fail_impl.calls, 0)
+
+    def test_attention_score_handles_large_metrics(self):
+        from marble.plugins.autoneuron import AutoNeuronPlugin
+
+        class Dummy:
+            _last_walk_mean_loss = 1.0
+            _walk_step_count = 10 ** 9
+            brain = type("B", (), {"neurons": list(range(10 ** 6)), "synapses": []})()
+
+        plug = AutoNeuronPlugin()
+        score = plug._attention_score(Dummy())
+        self.assertTrue(math.isfinite(float(score)))
+        self.assertLess(float(score), 1e3)
 
 
 if __name__ == "__main__":
