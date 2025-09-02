@@ -22,6 +22,7 @@ evaluation walk happens to trigger further neuron additions.
 """
 
 from typing import Any, Dict, Optional
+import math
 
 from ..wanderer import expose_learnable_params
 from ..graph import _NEURON_TYPES
@@ -56,7 +57,13 @@ class FindBestNeuronTypeRoutine:
             limit = max(1, int(max_t.detach().to("cpu").item()))
         except Exception:
             limit = 10
-        limit = max(1, int(limit * self._limit_factor))
+        scaled = limit * float(self._limit_factor)
+        if not math.isfinite(scaled):
+            scaled = limit
+        try:
+            limit = max(1, int(scaled))
+        except Exception:
+            limit = max(1, int(limit))
         types = ["base"]
         try:
             types += list(_NEURON_TYPES.keys())
