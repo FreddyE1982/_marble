@@ -185,18 +185,19 @@ def run_training_with_datapairs(
                 h.update(chunk(enc_l)); h.update(chunk(enc_r))
             return h.hexdigest()
 
-        if getattr(brain, "_dataset_signature", None) is None:
-            try:
-                brain._dataset_signature = _dataset_sig(datapairs)
-            except Exception:
-                brain._dataset_signature = None
-        else:
-            if not getattr(brain, "allow_dissimilar_datasets_in_wanderers", False):
+        if not streaming:
+            if getattr(brain, "_dataset_signature", None) is None:
                 try:
-                    if brain._dataset_signature != _dataset_sig(datapairs):
-                        raise ValueError("Dataset signature differs from the first-run signature for this Brain")
+                    brain._dataset_signature = _dataset_sig(datapairs)
                 except Exception:
-                    pass
+                    brain._dataset_signature = None
+            else:
+                if not getattr(brain, "allow_dissimilar_datasets_in_wanderers", False):
+                    try:
+                        if brain._dataset_signature != _dataset_sig(datapairs):
+                            raise ValueError("Dataset signature differs from the first-run signature for this Brain")
+                    except Exception:
+                        pass
 
         cfg = neuro_config
         wtype = wanderer_type
