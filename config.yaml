@@ -6,3 +6,4 @@ resource_allocator:
   vram_offload_threshold: 0.9  # move tensors off GPU when VRAM usage exceeds this ratio
   disk_usage_threshold: 0.95  # stop offloading when disk usage exceeds this ratio
 max_flat_steps: 5  # consecutive zero-delta steps before pruning/connection
+auto_scale_targets: false  # scale tiny targets to match output magnitude

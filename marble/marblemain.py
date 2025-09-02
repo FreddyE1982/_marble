@@ -2408,6 +2408,20 @@ __all__ += [
 
 from .training import create_start_neuron
 
+
+def _auto_scale_targets_enabled() -> bool:
+    try:
+        base = os.path.dirname(os.path.dirname(__file__))
+        with open(os.path.join(base, "config.yaml"), "r", encoding="utf-8") as fh:
+            for raw in fh:
+                line = raw.split("#", 1)[0].strip().lower()
+                if line.startswith("auto_scale_targets:"):
+                    val = line.split(":", 1)[1].strip()
+                    return val in ("true", "1", "yes")
+    except Exception:
+        pass
+    return False
+
 def create_start_neuron_old(brain: "Brain", encoded_input: Union[TensorLike, Sequence[float], float, int]) -> "Neuron":
     """Create and return a start neuron in the brain and inject encoded input.
 
@@ -2557,6 +2571,16 @@ def run_training_with_datapairs(
         gradient_clip=gradient_clip,
         mixedprecision=mixedprecision,
     )
+    if _auto_scale_targets_enabled():
+        try:
+            from .plugins.auto_target_scaler import AutoTargetScalerPlugin
+
+            scaler = AutoTargetScalerPlugin()
+            w._wplugins = (getattr(w, "_wplugins", []) or []) + [scaler]
+            if hasattr(scaler, "on_init"):
+                scaler.on_init(w)
+        except Exception:
+            pass
     batch_sz = int(batch_size if batch_size is not None else getattr(w, "_batch_size", 1))
     if batch_sz > 1 and (wanderer_type is None or "batchtrainer" not in str(wanderer_type)):
         raise ValueError("batch_size>1 requires 'batchtrainer' wanderer plugin")

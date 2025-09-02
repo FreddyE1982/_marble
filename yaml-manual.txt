@@ -14,6 +14,12 @@
   ``0.0`` before it is marked for pruning or a new synaptic connection is
   forced via plugin. Must be non-negative.
 
+- auto_scale_targets (bool, default: false)
+  When enabled, ``run_training_with_datapairs`` attaches the AutoTargetScaler
+  plugin which observes early training steps and rescales targets so their
+  magnitude roughly matches model outputs. This stabilizes loss when targets
+  are orders of magnitude smaller than predictions.
+
 ## Resource Allocator Settings
 
  - resource_allocator.max_disk_mb (int, default: 30720)
