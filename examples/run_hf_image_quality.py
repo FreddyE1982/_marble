@@ -1,7 +1,7 @@
 """Example: Streamed quality training on a Hugging Face dataset.
 
 This script demonstrates how to:
-- Load the Rapidata Imagen preference dataset in streaming mode
+- Load the Rapidata Imagen preference dataset via memory streaming (one shard at a time)
 - Derive quality quotients from human preference and alignment scores
 - Train a small Brain with stacked Wanderer plugins and neuroplasticity
 - Employ a custom SelfAttention routine combined with adaptive grad clipping
@@ -108,7 +108,7 @@ def main(epochs: int = 1) -> None:
     ds = load_hf_streaming_dataset(
         "Rapidata/Imagen-4-ultra-24-7-25_t2i_human_preference",
         split="train",
-        streaming="disk_lazy_images",  # disk-backed dataset; images downloaded lazily per sample
+        streaming="memory",  # stream shards into memory and encode images immediately
         codec=codec,
         download_config=DownloadConfig(max_retries=hf_retries),
         cache_images=cache_enabled,
