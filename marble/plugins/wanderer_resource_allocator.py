@@ -73,6 +73,7 @@ class TensorRegistry:
 
 
 TENSOR_REGISTRY = TensorRegistry()
+ALLOCATORS: List[weakref.ref] = []
 
 
 @contextmanager
@@ -152,15 +153,17 @@ class ResourceAllocatorPlugin:
 
     def __init__(self) -> None:
         cfg = _load_resource_cfg()
-        self.max_disk_mb = float(cfg.get("max_disk_mb", 20480))
+        self.max_disk_mb = float(cfg.get("max_disk_mb", 30720))
         self.compress_offload = bool(cfg.get("compress_offload", True))
         self.min_gpu_tensor_mb = float(cfg.get("min_gpu_tensor_mb", 1.0))
         self.ram_offload_threshold = float(cfg.get("ram_offload_threshold", 0.9))
+        self.vram_offload_threshold = float(cfg.get("vram_offload_threshold", 0.9))
         self.disk_usage_threshold = float(cfg.get("disk_usage_threshold", 0.95))
         self._disk_used_mb = 0.0
         self._rebalance_thread: threading.Thread | None = None
         self._rebalance_stop = threading.Event()
         self._transfer_stream = torch.cuda.Stream() if torch.cuda.is_available() else None
+        ALLOCATORS.append(weakref.ref(self))
 
     @staticmethod
     @expose_learnable_params
@@ -260,7 +263,8 @@ class ResourceAllocatorPlugin:
         except Exception:
             pass
         cfg = _load_resource_cfg()
-        self.max_disk_mb = float(cfg.get("max_disk_mb", 20480))
+        self.max_disk_mb = float(cfg.get("max_disk_mb", 30720))
+        self.vram_offload_threshold = float(cfg.get("vram_offload_threshold", 0.9))
         self._disk_used_mb = 0.0
 
     # Helper metrics -----------------------------------------------------
@@ -496,6 +500,8 @@ class ResourceAllocatorPlugin:
                 and score > move_thr
             ):
                 target_device = "cuda"
+            elif t.device.type == "cuda" and sysm["gpu"] > self.vram_offload_threshold:
+                target_device = "cpu"
             elif (
                 sysm["ram"] > self.ram_offload_threshold
                 and self._disk_used_mb < self.max_disk_mb
@@ -531,6 +537,33 @@ class ResourceAllocatorPlugin:
             thr.join(timeout=0)
         self._rebalance_thread = None
 
+    def clear(self) -> None:
+        for obj, attr, _t, _ in list(TENSOR_REGISTRY.iter_tensors(decay_rate=0.0)):
+            off_attr = f"_{attr}_offload"
+            meta_attr = f"_{attr}_offmeta"
+            off_path = getattr(obj, off_attr, None)
+            if isinstance(off_path, str):
+                try:
+                    size_mb = os.path.getsize(off_path) / (1024 * 1024)
+                    self._disk_used_mb = max(0.0, self._disk_used_mb - size_mb)
+                except Exception:
+                    pass
+                try:
+                    os.remove(off_path)
+                except Exception:
+                    pass
+                setattr(obj, off_attr, None)
+                setattr(obj, meta_attr, None)
+            try:
+                setattr(obj, attr, torch.empty(0))
+            except Exception:
+                pass
+        TENSOR_REGISTRY._entries.clear()
+        try:
+            torch.cuda.empty_cache()
+        except Exception:
+            pass
+
     # Core logic ---------------------------------------------------------
     def choose_next(self, wanderer, current, choices: List[Tuple["Synapse", str]]):
         """Rebalance tensors without steering the walk."""
@@ -538,10 +571,18 @@ class ResourceAllocatorPlugin:
         return None, "forward"
 
 
+def clear() -> None:
+    for ref in list(ALLOCATORS):
+        alloc = ref()
+        if alloc is not None:
+            alloc.clear()
+
+
 __all__ = [
     "ResourceAllocatorPlugin",
     "TensorRegistry",
     "TENSOR_REGISTRY",
     "track_tensor",
+    "clear",
 ]
 PLUGIN_NAME = "resourceallocator"

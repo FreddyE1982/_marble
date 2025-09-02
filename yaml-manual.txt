@@ -11,7 +11,7 @@
 
 ## Resource Allocator Settings
 
-- resource_allocator.max_disk_mb (int, default: 20480)
+ - resource_allocator.max_disk_mb (int, default: 30720)
   Limits total size in MB of tensors offloaded to disk by the resource allocator.
   Must be positive. When exceeded, tensors are cleared instead of offloaded.
 - resource_allocator.compress_offload (bool, default: true)
@@ -23,6 +23,9 @@
 - resource_allocator.ram_offload_threshold (float, default: 0.9)
   RAM usage ratio beyond which rarely accessed tensors are proactively
   offloaded to disk. Value must be between 0 and 1.
+- resource_allocator.vram_offload_threshold (float, default: 0.9)
+  VRAM usage ratio beyond which tensors are moved off the GPU to CPU or disk.
+  Value must be between 0 and 1.
 - resource_allocator.disk_usage_threshold (float, default: 0.95)
   Maximum allowed disk usage ratio before tensors are offloaded. Prevents disk
   exhaustion; value must be between 0 and 1.
