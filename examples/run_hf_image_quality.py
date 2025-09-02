@@ -21,6 +21,7 @@ import types
 import subprocess
 import threading
 import shutil
+import time
 from pathlib import Path
 from datasets import DownloadConfig
 
@@ -71,14 +72,19 @@ class QualityAwareRoutine:
 
 
 
-def _sample_pairs(ds) -> Iterator:
+def _sample_pairs(ds, max_pairs: int | None = None) -> Iterator:
     """Yield datapairs of (prompt, image) with quality scores.
 
     The HFStreamingDatasetWrapper handles all retry and caching logic, so we
-    simply access fields directly without custom wrappers.
+    simply access fields directly without custom wrappers.  When ``max_pairs``
+    is provided, only that many datapairs are yielded to keep example runs
+    snappy.
     """
 
+    count = 0
     for ex in ds:
+        if max_pairs is not None and count >= max_pairs:
+            break
         try:
             prompt = ex.get_raw("prompt")
             img1 = ex["image1"]
@@ -95,6 +101,7 @@ def _sample_pairs(ds) -> Iterator:
 
         yield make_datapair({"prompt": prompt, "image": img1}, q1)
         yield make_datapair({"prompt": prompt, "image": img2}, q2)
+        count += 2
 
 
 def _enable_auto_scale_targets() -> callable:
@@ -141,7 +148,12 @@ def _enable_auto_scale_targets() -> callable:
     return _restore
 
 
-def main(epochs: int = 1) -> None:
+def main(
+    epochs: int = 1,
+    max_pairs: int | None = 100,
+    batch_size: int = 10,
+    launch_kuzu: bool | None = None,
+) -> None:
     restore_cfg = _enable_auto_scale_targets()
     # Image-cache configuration (defaults: enabled=True, size=20); allow env overrides.
     cache_enabled = os.environ.get("MARBLE_IMG_CACHE_ENABLED", "1").strip() not in ("0", "false", "False")
@@ -266,7 +278,7 @@ def main(epochs: int = 1) -> None:
         "rl_alpha": 0.05,
         "rl_gamma": 0.95,
         "l2_lambda": 1e-4,
-        "batch_size": 5,
+        "batch_size": batch_size,
         "aggressive_starting_neuroplasticity": True,
         "add_min_new_neurons_per_step": 5,
         "aggressive_phase_steps": 100,
@@ -297,12 +309,15 @@ def main(epochs: int = 1) -> None:
         threading.Thread(target=_run_cmd, daemon=True).start()
         return f"http://localhost:{port}"
 
-    kuzu_port = 8000
-    kuzu_url = _run_kuzu_explorer(kuzu_db, kuzu_port)
-    if kuzu_url:
-        print(f"Kuzu Explorer running at {kuzu_url}")
-    else:
-        print("Kuzu Explorer could not be started")
+    if launch_kuzu is None:
+        launch_kuzu = os.environ.get("MARBLE_ENABLE_KUZU", "0") not in ("0", "false", "False")
+    if launch_kuzu:
+        kuzu_port = 8000
+        kuzu_url = _run_kuzu_explorer(kuzu_db, kuzu_port)
+        if kuzu_url:
+            print(f"Kuzu Explorer running at {kuzu_url}")
+        else:
+            print("Kuzu Explorer could not be started")
 
     def _start_neuron(left: Dict[str, Any], br):
         # Combine the raw prompt with the already encoded image
@@ -320,7 +335,8 @@ def main(epochs: int = 1) -> None:
         return n
 
     for _ in range(int(epochs)):
-        pairs = _sample_pairs(ds)
+        pairs = _sample_pairs(ds, max_pairs=max_pairs)
+        start_time = time.perf_counter()
         res = run_training_with_datapairs(
             brain,
             pairs,
@@ -332,12 +348,14 @@ def main(epochs: int = 1) -> None:
             neuro_config=neuro_cfg,
             selfattention=sa,
             streaming=True,
-            batch_size=5,
+            batch_size=batch_size,
             left_to_start=_start_neuron,
             dashboard=False,
         )
+        duration = time.perf_counter() - start_time
         cnt = res.get("count", 0)
-        print(f"processed datapairs: {cnt}")
+        walks = len(res.get("history", [])) or 1
+        print(f"processed datapairs: {cnt} in {duration:.2f}s ({duration/walks:.2f}s per walk)")
         if cnt == 0:
             raise RuntimeError("run_training_with_datapairs returned count=0")
         clear_resources()
