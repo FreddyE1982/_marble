@@ -20,6 +20,7 @@ import re
 import types
 import subprocess
 import threading
+import shutil
 from pathlib import Path
 from datasets import DownloadConfig
 
@@ -226,47 +227,37 @@ def main(epochs: int = 1) -> None:
         "aggressive_phase_steps": 100,
     }
     def _run_kuzu_explorer(db_file: str, port: int = 8000) -> str:
+        """Launch Kuzu Explorer in a background thread without Docker.
+
+        Returns the local URL if the ``kuzu_explorer`` binary is available.
+        """
+
         db_path = Path(db_file).resolve()
         db_path.parent.mkdir(parents=True, exist_ok=True)
-        cmd = [
-            "docker",
-            "run",
-            "-p",
-            f"{port}:8000",
-            "-v",
-            f"{db_path.parent}:/database",
-            "-e",
-            f"KUZU_FILE={db_path.name}",
-            "--rm",
-            "kuzudb/explorer:latest",
-        ]
+        cmd = ["kuzu_explorer", "--db", str(db_path), "--port", str(port)]
+        if shutil.which(cmd[0]) is None:
+            return ""
 
-        def _run_docker():
+        def _run_cmd():
             try:
-                subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                subprocess.Popen(
+                    cmd,
+                    cwd=db_path.parent,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
             except Exception:
                 pass
 
-        public_url = None
-        threading.Thread(target=_run_docker, daemon=True).start()
-
-        try:
-            from pyngrok import ngrok
-
-            ngrok.set_auth_token("2o9DgUKuP2W8vjV7cZFq0sDiM3A_2d1gWrkXqvy5APpUn2QNS")
-            tunnel = ngrok.connect(port, "http", bind_tls=False)
-            public_url = tunnel.public_url
-        except Exception:
-            pass
-
-        return public_url or ""
+        threading.Thread(target=_run_cmd, daemon=True).start()
+        return f"http://localhost:{port}"
 
     kuzu_port = 8000
     kuzu_url = _run_kuzu_explorer(kuzu_db, kuzu_port)
     if kuzu_url:
-        print(f"Kuzu Explorer available at {kuzu_url}")
+        print(f"Kuzu Explorer running at {kuzu_url}")
     else:
-        print("Kuzu Explorer tunnel could not be established")
+        print("Kuzu Explorer could not be started")
 
     def _start_neuron(left: Dict[str, Any], br):
         # Combine the raw prompt with the already encoded image
