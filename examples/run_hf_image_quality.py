@@ -97,7 +97,52 @@ def _sample_pairs(ds) -> Iterator:
         yield make_datapair({"prompt": prompt, "image": img2}, q2)
 
 
+def _enable_auto_scale_targets() -> callable:
+    """Temporarily enable ``auto_scale_targets`` in ``config.yaml``.
+
+    Returns a callable that restores the previous configuration. This avoids
+    permanently altering repository defaults while allowing the example to
+    leverage the AutoTargetScaler plugin.
+    """
+
+    cfg_path = Path(__file__).resolve().parent.parent / "config.yaml"
+    try:
+        original = cfg_path.read_text(encoding="utf-8")
+    except Exception as err:  # pragma: no cover - best effort only
+        print(f"could not read config.yaml: {err}")
+        return lambda: None
+
+    lines = []
+    found = False
+    for raw in original.splitlines():
+        if raw.strip().startswith("auto_scale_targets:"):
+            lines.append(
+                "auto_scale_targets: true  # scale tiny targets to match output magnitude"
+            )
+            found = True
+        else:
+            lines.append(raw)
+    if not found:
+        lines.append(
+            "auto_scale_targets: true  # scale tiny targets to match output magnitude"
+        )
+    try:
+        cfg_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    except Exception as err:  # pragma: no cover - best effort only
+        print(f"could not write config.yaml: {err}")
+        return lambda: None
+
+    def _restore() -> None:
+        try:  # pragma: no cover - restoration is best effort
+            cfg_path.write_text(original, encoding="utf-8")
+        except Exception:
+            pass
+
+    return _restore
+
+
 def main(epochs: int = 1) -> None:
+    restore_cfg = _enable_auto_scale_targets()
     # Image-cache configuration (defaults: enabled=True, size=20); allow env overrides.
     cache_enabled = os.environ.get("MARBLE_IMG_CACHE_ENABLED", "1").strip() not in ("0", "false", "False")
     try:
@@ -298,6 +343,7 @@ def main(epochs: int = 1) -> None:
         clear_resources()
     print("streamed quality training complete")
     clear_resources()
+    restore_cfg()
 
 
 if __name__ == "__main__":
