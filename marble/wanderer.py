@@ -418,7 +418,7 @@ class Wanderer(_DeviceHelper):
                 lock_ctx = None
                 try:
                     if hasattr(self.brain, "lock_neuron"):
-                        lock_ctx = self.brain.lock_neuron(n, timeout=0.5)
+                        lock_ctx = self.brain.lock_neuron(n, timeout=0.0)
                 except Exception:
                     lock_ctx = None
                 if lock_ctx is not None:
