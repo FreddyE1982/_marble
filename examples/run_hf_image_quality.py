@@ -136,7 +136,20 @@ def main(epochs: int = 1) -> None:
     # Ensure every newly added neuron defaults to the autoneuron type
     _orig_add = brain.add_neuron
 
-    def _add_autoneuron(index, *, tensor=0.0, **kwargs):
+    def _add_autoneuron(self, index, *, tensor=0.0, **kwargs):
+        """Proxy ``Brain.add_neuron`` to default to ``autoneuron`` type.
+
+        The original implementation defined this helper without a ``self``
+        parameter and relied on ``types.MethodType`` to bind it.  Plugins such
+        as :class:`FindBestNeuronTypeRoutine` capture ``brain.add_neuron`` and
+        forward positional arguments, which led to a ``TypeError`` because the
+        bound method implicitly injected the ``Brain`` instance as the first
+        argument.
+
+        Explicitly accepting ``self`` keeps the signature compatible with the
+        intercepted calls while still delegating to the original method.
+        """
+
         kwargs.setdefault("type_name", "autoneuron")
         return _orig_add(index, tensor=tensor, **kwargs)
 
