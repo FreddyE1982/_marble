@@ -18,6 +18,9 @@ from typing import Iterator, Any, Dict
 import os
 import re
 import types
+import subprocess
+import threading
+from pathlib import Path
 from datasets import DownloadConfig
 
 from marble.marblemain import (
@@ -33,7 +36,6 @@ import marble.plugins  # ensure plugin discovery
 from marble.plugins.selfattention_adaptive_grad_clip import AdaptiveGradClipRoutine
 from marble.plugins.selfattention_findbestneurontype import FindBestNeuronTypeRoutine
 from marble.plugins.selfattention_noise_profiler import ContextAwareNoiseRoutine
-from marble.dashboard import start_dashboard
 from marble.plugins.wanderer_autoplugin import AutoPlugin
 from marble.plugins.wanderer_resource_allocator import clear as clear_resources
 
@@ -124,6 +126,7 @@ def main(epochs: int = 1) -> None:
         if re.search(r"n(\d+)", formula)
         else 1
     )
+    kuzu_db = os.environ.get("MARBLE_KUZU_DB", "brain_topology.db")
     brain = Brain(
         dims,
         size=None,
@@ -132,6 +135,7 @@ def main(epochs: int = 1) -> None:
         snapshot_path=".",
         snapshot_freq=100,
         snapshot_keep=10,
+        kuzu_path=kuzu_db,
     )
     # Ensure every newly added neuron defaults to the autoneuron type
     _orig_add = brain.add_neuron
@@ -221,9 +225,44 @@ def main(epochs: int = 1) -> None:
         "add_min_new_neurons_per_step": 5,
         "aggressive_phase_steps": 100,
     }
-    port = 8501
-    start_dashboard(port)
-    print(f"Dashboard available at https://alpaca-model-easily.ngrok-free.app:{port}")
+    def _run_kuzu_explorer(db_file: str, port: int = 8000) -> None:
+        db_path = Path(db_file).resolve()
+        db_path.parent.mkdir(parents=True, exist_ok=True)
+        cmd = [
+            "docker",
+            "run",
+            "-p",
+            f"{port}:8000",
+            "-v",
+            f"{db_path.parent}:/database",
+            "-e",
+            f"KUZU_FILE={db_path.name}",
+            "--rm",
+            "kuzudb/explorer:latest",
+        ]
+
+        def _run_docker():
+            try:
+                subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            except Exception:
+                pass
+
+        def _run_ngrok():
+            try:
+                from pyngrok import ngrok
+                ngrok.set_auth_token("2o9DgUKuP2W8vjV7cZFq0sDiM3A_2d1gWrkXqvy5APpUn2QNS")
+                ngrok.connect(port, "http", hostname="alpaca-model-easily.ngrok-free.app")
+            except Exception:
+                pass
+
+        threading.Thread(target=_run_docker, daemon=True).start()
+        threading.Thread(target=_run_ngrok, daemon=True).start()
+
+    kuzu_port = 8000
+    _run_kuzu_explorer(kuzu_db, kuzu_port)
+    print(
+        f"Kuzu Explorer available at https://alpaca-model-easily.ngrok-free.app:{kuzu_port}"
+    )
 
     def _start_neuron(left: Dict[str, Any], br):
         # Combine the raw prompt with the already encoded image
@@ -255,7 +294,7 @@ def main(epochs: int = 1) -> None:
             streaming=True,
             batch_size=5,
             left_to_start=_start_neuron,
-            dashboard=True,
+            dashboard=False,
         )
         cnt = res.get("count", 0)
         print(f"processed datapairs: {cnt}")
