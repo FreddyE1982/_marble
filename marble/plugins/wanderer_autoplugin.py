@@ -19,7 +19,12 @@ import math
 import time
 from typing import Any, Dict, List, Tuple, Optional
 
-from ..wanderer import expose_learnable_params
+from ..wanderer import (
+    expose_learnable_params,
+    WANDERER_TYPES_REGISTRY as _WANDERER_TYPES,
+    NEURO_TYPES_REGISTRY as _NEURO_TYPES,
+)
+from ..selfattention import _SELFA_TYPES
 from ..buildingblock import get_buildingblock_type, _BUILDINGBLOCK_TYPES
 
 
@@ -54,17 +59,27 @@ class AutoPlugin:
 
         wplugins = getattr(wanderer, "_wplugins", [])
         new_stack: List[Any] = []
+        existing = set()
         for p in list(wplugins):
             if p is self:
                 new_stack.append(p)
+                existing.add(p.__class__.__name__)
                 continue
             name = p.__class__.__name__
+            existing.add(name)
             if name in self._disabled:
                 continue
             self._protected.add(name)
             wanderer.ensure_learnable_param(f"autoplugin_bias_{name}", 0.0)
             wanderer.ensure_learnable_param(f"autoplugin_gain_{name}", 1.0)
             new_stack.append(_GatedPlugin(p, name, self))
+        for plug in _WANDERER_TYPES.values():
+            name = plug.__class__.__name__
+            if plug is self or name in existing or name in self._disabled:
+                continue
+            wanderer.ensure_learnable_param(f"autoplugin_bias_{name}", 0.0)
+            wanderer.ensure_learnable_param(f"autoplugin_gain_{name}", 1.0)
+            new_stack.append(_GatedPlugin(plug, name, self))
         wanderer._wplugins = new_stack
         for bb_name in _BUILDINGBLOCK_TYPES.keys():
             wanderer.ensure_learnable_param(f"autoplugin_bias_{bb_name}", 0.0)
@@ -76,13 +91,22 @@ class AutoPlugin:
         if not self._neuro_wrapped:
             nplugins = getattr(wanderer, "_neuro_plugins", [])
             new_stack: List[Any] = []
+            existing = set()
             for p in list(nplugins):
                 name = p.__class__.__name__
+                existing.add(name)
                 if name in self._disabled:
                     continue
                 wanderer.ensure_learnable_param(f"autoplugin_bias_{name}", 0.0)
                 wanderer.ensure_learnable_param(f"autoplugin_gain_{name}", 1.0)
                 new_stack.append(_GatedPlugin(p, name, self))
+            for plug in _NEURO_TYPES.values():
+                name = plug.__class__.__name__
+                if name in existing or name in self._disabled:
+                    continue
+                wanderer.ensure_learnable_param(f"autoplugin_bias_{name}", 0.0)
+                wanderer.ensure_learnable_param(f"autoplugin_gain_{name}", 1.0)
+                new_stack.append(_GatedPlugin(plug, name, self))
             wanderer._neuro_plugins = new_stack
             self._neuro_wrapped = True
 
@@ -90,16 +114,25 @@ class AutoPlugin:
             for sa in getattr(wanderer, "_selfattentions", []) or []:
                 routines = getattr(sa, "_routines", [])
                 new_routines: List[Any] = []
+                existing_r = {r.__class__.__name__ for r in routines}
                 for r in list(routines):
                     if isinstance(r, _GatedSARoutine):
                         new_routines.append(r)
                         continue
                     name = r.__class__.__name__
+                    existing_r.add(name)
                     if name in self._disabled:
                         continue
                     wanderer.ensure_learnable_param(f"autoplugin_bias_{name}", 0.0)
                     wanderer.ensure_learnable_param(f"autoplugin_gain_{name}", 1.0)
                     new_routines.append(_GatedSARoutine(r, name, self))
+                for plug in _SELFA_TYPES.values():
+                    name = plug.__class__.__name__
+                    if name in existing_r or name in self._disabled:
+                        continue
+                    wanderer.ensure_learnable_param(f"autoplugin_bias_{name}", 0.0)
+                    wanderer.ensure_learnable_param(f"autoplugin_gain_{name}", 1.0)
+                    new_routines.append(_GatedSARoutine(plug, name, self))
                 sa._routines = new_routines
             self._sa_wrapped = True
 
