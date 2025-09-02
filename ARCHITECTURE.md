@@ -186,8 +186,8 @@ Hugging Face Integration
 
 - Login: `hf_login(token=None, add_to_git_credential=False, endpoint=None)` logs in via `huggingface_hub`. When `token` is `None`, reads `HF_TOKEN` or `HUGGINGFACE_TOKEN`. Logs events under `huggingface/auth`.
 - Logout: `hf_logout()` best-effort logout via `huggingface_hub.logout`.
-- Streaming datasets: `load_hf_streaming_dataset(path, name=None, split="train", codec=None, streaming="memory", trust_remote_code=False, download_config=None, cache_images=True, cache_size=20, **kwargs)` wraps `datasets.load_dataset` and supports multiple materialization modes. The `streaming` argument accepts
-  - `"memory"` (default): stream data directly into memory,
+- Streaming datasets: `load_hf_streaming_dataset(path, name=None, split="train", codec=None, streaming="memory", trust_remote_code=False, download_config=None, cache_images=True, cache_size=20, **kwargs)` wraps `datasets.load_dataset` and supports multiple materialization modes. Unlike the native `datasets` streaming, the `"memory"` and `"memory_lazy_images"` modes manually download one parquet shard at a time, yield its samples, and delete the shard before proceeding to the next. The `streaming` argument accepts
+  - `"memory"` (default): incremental in-memory streaming via sequential parquet downloads,
   - `"memory_lazy_images"`: like `"memory"` but store only image URLs until accessed,
   - `"disk"`: store data on disk and stream from there,
   - `"disk_lazy_images"`: disk-backed with image URLs only,

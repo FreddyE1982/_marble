@@ -327,7 +327,8 @@ def load_hf_streaming_dataset(
         Codec used for automatic tensor encoding.
     streaming: str
         Select how the dataset is materialized. Options are:
-        ``"memory"`` (default) – stream directly into memory,
+        ``"memory"`` (default) – download one parquet shard at a time and
+        stream it directly into memory,
         ``"memory_lazy_images"`` – like ``"memory"`` but replace image objects
         with their URL so they are downloaded on demand,
         ``"disk"`` – store the dataset on disk and stream examples from there,
@@ -349,11 +350,12 @@ def load_hf_streaming_dataset(
     **kwargs: Any
         Additional keyword arguments for ``datasets.load_dataset``.
     """
-    _, ds_mod = _ensure_hf_imports()
+    hf_hub, ds_mod = _ensure_hf_imports()
     if ds_mod is None:
         raise RuntimeError("datasets is not installed. Please install 'datasets'.")
     used_codec = codec if codec is not None else make_default_codec()
     import inspect
+    import tempfile
 
     streaming_mode = str(streaming).lower()
     valid_modes = {
@@ -368,30 +370,122 @@ def load_hf_streaming_dataset(
     if streaming_mode not in valid_modes:
         raise ValueError(f"streaming must be one of {sorted(valid_modes)}")
 
-    ds_kwargs: Dict[str, Any] = {
-        "path": path,
-        "name": name,
-        "split": split,
-        "streaming": streaming_mode.startswith("memory"),
-        **kwargs,
-    }
-    if not streaming_mode.startswith("memory"):
-        ds_kwargs["keep_in_memory"] = False
-    if download_config is not None:
-        ds_kwargs["download_config"] = download_config
-    if "trust_remote_code" in inspect.signature(ds_mod.load_dataset).parameters:
-        ds_kwargs["trust_remote_code"] = trust_remote_code
+    # ------------------------------------------------------------------
+    # Manual parquet file streaming
+    # ------------------------------------------------------------------
+    def _iter_parquet_files() -> Tuple[Any, Set[str]]:
+        if hf_hub is None:
+            return None, set()
+        api = hf_hub.HfApi()
+        prefix_parts = []
+        if name:
+            prefix_parts.append(str(name))
+        if split:
+            prefix_parts.append(str(split))
+        prefix = "/".join(prefix_parts)
+        files = [
+            f
+            for f in api.list_repo_files(path, repo_type="dataset")
+            if f.endswith(".parquet")
+        ]
+        if prefix:
+            files = [f for f in files if f.startswith(prefix)]
+        files.sort()
+        if not files:
+            return None, set()
 
-    ds_stream = ds_mod.load_dataset(**ds_kwargs)
+        # Determine image fields from first shard
+        tmpdir_first = tempfile.mkdtemp(prefix="hfds_")
+        local_first = hf_hub.hf_hub_download(
+            path,
+            files[0],
+            repo_type="dataset",
+            local_dir=tmpdir_first,
+            local_dir_use_symlinks=False,
+        )
+        ds_first = ds_mod.load_dataset(
+            "parquet",
+            data_files=[local_first],
+            split="train",
+            keep_in_memory=False,
+            download_config=download_config,
+        )
+        image_fields: Set[str] = set()
+        try:
+            feats = getattr(ds_first, "features", {})
+            for fname, ftype in getattr(feats, "items", lambda: [])():
+                if getattr(ftype, "__class__", None) and ftype.__class__.__name__ == "Image":
+                    image_fields.add(str(fname))
+        except Exception:
+            pass
 
-    image_fields: Set[str] = set()
-    try:
-        feats = getattr(ds_stream, "features", {})
-        for fname, ftype in getattr(feats, "items", lambda: [])():
-            if getattr(ftype, "__class__", None) and ftype.__class__.__name__ == "Image":
-                image_fields.add(str(fname))
-    except Exception:
-        pass
+        def generator() -> Any:
+            for ex in ds_first:
+                yield ex
+            try:
+                os.remove(local_first)
+            except Exception:
+                pass
+            try:
+                os.rmdir(tmpdir_first)
+            except Exception:
+                pass
+            for fname in files[1:]:
+                tmpdir = tempfile.mkdtemp(prefix="hfds_")
+                local = hf_hub.hf_hub_download(
+                    path,
+                    fname,
+                    repo_type="dataset",
+                    local_dir=tmpdir,
+                    local_dir_use_symlinks=False,
+                )
+                ds_local = ds_mod.load_dataset(
+                    "parquet",
+                    data_files=[local],
+                    split="train",
+                    keep_in_memory=False,
+                    download_config=download_config,
+                )
+                for ex in ds_local:
+                    yield ex
+                try:
+                    os.remove(local)
+                except Exception:
+                    pass
+                try:
+                    os.rmdir(tmpdir)
+                except Exception:
+                    pass
+
+        return generator(), image_fields
+
+    manual_stream, image_fields = _iter_parquet_files()
+
+    # ------------------------------------------------------------------
+    # Fallback to regular dataset loading when manual streaming unavailable
+    # ------------------------------------------------------------------
+    if manual_stream is not None:
+        ds_stream = manual_stream
+    else:
+        ds_kwargs: Dict[str, Any] = {
+            "path": path,
+            "name": name,
+            "split": split,
+            **kwargs,
+        }
+        if download_config is not None:
+            ds_kwargs["download_config"] = download_config
+        if "trust_remote_code" in inspect.signature(ds_mod.load_dataset).parameters:
+            ds_kwargs["trust_remote_code"] = trust_remote_code
+        ds_stream = ds_mod.load_dataset(**ds_kwargs)
+        image_fields = set()
+        try:
+            feats = getattr(ds_stream, "features", {})
+            for fname, ftype in getattr(feats, "items", lambda: [])():
+                if getattr(ftype, "__class__", None) and ftype.__class__.__name__ == "Image":
+                    image_fields.add(str(fname))
+        except Exception:
+            pass
 
     def _extract_image_url(obj: Any) -> Any:
         try:
