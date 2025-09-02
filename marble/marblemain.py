@@ -1445,7 +1445,17 @@ class Brain:
         device = "cuda" if torch is not None and torch.cuda.is_available() else "cpu"
         if torch is not None:
             try:
-                t = torch.tensor(init_value, dtype=torch.float32, device=device, requires_grad=requires_grad)
+                if torch.is_tensor(init_value):
+                    t = init_value.clone().detach().to(device=device, dtype=torch.float32)
+                    if requires_grad:
+                        t.requires_grad_()
+                else:
+                    t = torch.tensor(
+                        init_value,
+                        dtype=torch.float32,
+                        device=device,
+                        requires_grad=requires_grad,
+                    )
             except Exception:
                 t = torch.tensor([float(init_value)], dtype=torch.float32, device=device, requires_grad=requires_grad)
         else:
