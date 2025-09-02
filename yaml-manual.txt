@@ -20,3 +20,6 @@
 - resource_allocator.min_gpu_tensor_mb (float, default: 1.0)
   Minimum tensor size in megabytes required before the allocator considers
   moving it to GPU. Smaller tensors stay on CPU to avoid transfer overhead.
+- resource_allocator.ram_offload_threshold (float, default: 0.9)
+  RAM usage ratio beyond which rarely accessed tensors are proactively
+  offloaded to disk. Value must be between 0 and 1.

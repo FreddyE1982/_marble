@@ -151,6 +151,7 @@ class ResourceAllocatorPlugin:
         self.max_disk_mb = float(cfg.get("max_disk_mb", 20480))
         self.compress_offload = bool(cfg.get("compress_offload", True))
         self.min_gpu_tensor_mb = float(cfg.get("min_gpu_tensor_mb", 1.0))
+        self.ram_offload_threshold = float(cfg.get("ram_offload_threshold", 0.9))
         self._disk_used_mb = 0.0
         self._rebalance_thread: threading.Thread | None = None
         self._rebalance_stop = threading.Event()
@@ -371,6 +372,13 @@ class ResourceAllocatorPlugin:
             return
 
         try:
+            if device == "disk":
+                path = self._offload_to_disk(tensor)
+                if path is not None:
+                    setattr(obj, off_attr, path)
+                    setattr(obj, meta_attr, (tensor.shape, getattr(obj, dtype_attr, tensor.dtype)))
+                    tensor.data = torch.empty(0)
+                return
             if device == "cuda" and torch.cuda.is_available():
                 stream = self._transfer_stream
                 with torch.cuda.stream(stream) if stream else nullcontext():
@@ -478,6 +486,12 @@ class ResourceAllocatorPlugin:
                 and score > move_thr
             ):
                 target_device = "cuda"
+            elif (
+                sysm["ram"] > self.ram_offload_threshold
+                and self._disk_used_mb < self.max_disk_mb
+                and score < -move_thr
+            ):
+                target_device = "disk"
             self._safe_transfer(obj, attr, t, target_device)
 
     def start_auto_rebalance(self, wanderer, interval: float = 5.0) -> None:
