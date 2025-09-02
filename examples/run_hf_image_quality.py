@@ -105,16 +105,12 @@ def main(epochs: int = 1) -> None:
         hf_retries = int(os.environ.get("MARBLE_IMG_RETRY", "5"))
     except Exception:
         hf_retries = 5
-    try:
-        hf_timeout = float(os.environ.get("MARBLE_IMG_TIMEOUT", "60"))
-    except Exception:
-        hf_timeout = 60.0
     ds = load_hf_streaming_dataset(
         "Rapidata/Imagen-4-ultra-24-7-25_t2i_human_preference",
         split="train",
         streaming="disk_lazy_images",  # disk-backed dataset; images downloaded lazily per sample
         codec=codec,
-        download_config=DownloadConfig(max_retries=hf_retries, timeout=hf_timeout),
+        download_config=DownloadConfig(max_retries=hf_retries),
         cache_images=cache_enabled,
         cache_size=cache_size,
     )
