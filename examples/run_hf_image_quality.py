@@ -14,10 +14,9 @@ Usage:
 
 from __future__ import annotations
 
-from typing import Iterator, Any, Dict, Optional
+from typing import Iterator, Any, Dict
 import os
 import re
-import time
 from datasets import DownloadConfig
 
 from marble.marblemain import (
@@ -69,51 +68,29 @@ class QualityAwareRoutine:
 
 
 def _sample_pairs(ds) -> Iterator:
-    n_retries = int(os.environ.get("MARBLE_IMG_RETRY", "3"))
-    timeout = float(os.environ.get("MARBLE_IMG_TIMEOUT", "0"))
+    """Yield datapairs of (prompt, image) with quality scores.
+
+    The HFStreamingDatasetWrapper handles all retry and caching logic, so we
+    simply access fields directly without custom wrappers.
+    """
 
     for ex in ds:
         try:
-            def _raw(field: str):
-                for attempt in range(n_retries):
-                    try:
-                        return ex.get_raw(field)
-                    except Exception as err:
-                        print(f"get_raw failed for {field} attempt {attempt + 1}/{n_retries}: {err}; example={ex}")
-                        if timeout:
-                            time.sleep(timeout)
-                raise RuntimeError(f"unable to fetch {field}")
-
-            prompt = _raw("prompt")
-            img1 = _raw("image1")
-            img2 = _raw("image2")
-            pref1 = float(_raw("weighted_results_image1_preference"))
-            pref2 = float(_raw("weighted_results_image2_preference"))
-            al1 = float(_raw("weighted_results_image1_alignment"))
-            al2 = float(_raw("weighted_results_image2_alignment"))
+            prompt = ex.get_raw("prompt")
+            img1 = ex["image1"]
+            img2 = ex["image2"]
+            pref1 = float(ex.get_raw("weighted_results_image1_preference"))
+            pref2 = float(ex.get_raw("weighted_results_image2_preference"))
+            al1 = float(ex.get_raw("weighted_results_image1_alignment"))
+            al2 = float(ex.get_raw("weighted_results_image2_alignment"))
             q1 = (pref1 + al1) / 2.0
             q2 = (pref2 + al2) / 2.0
-
-            def _enc(img: Any, label: str):
-                for attempt in range(n_retries):
-                    try:
-                        return ds.cache_image(img)
-                    except Exception as err:
-                        print(f"cache_image failed for {label} attempt {attempt + 1}/{n_retries}: {err}; example={ex}")
-                        if timeout:
-                            time.sleep(timeout)
-                raise RuntimeError(f"unable to cache {label}")
-
-            # Cache image encodings once; store only the cache key.
-            key1, _ = _enc(img1, "image1")
-            key2, _ = _enc(img2, "image2")
         except Exception as err:
-            print(f"skipping example after retries due to: {err}; example={ex}")
+            print(f"skipping example due to: {err}; example={ex}")
             continue
 
-        # Pass lightweight keys in the datapair to avoid triggering downloads on encode.
-        yield make_datapair({"prompt": prompt, "image_key": key1}, q1)
-        yield make_datapair({"prompt": prompt, "image_key": key2}, q2)
+        yield make_datapair({"prompt": prompt, "image": img1}, q1)
+        yield make_datapair({"prompt": prompt, "image": img2}, q2)
 
 
 def main(epochs: int = 1) -> None:
@@ -202,13 +179,8 @@ def main(epochs: int = 1) -> None:
     print(f"Dashboard available at https://alpaca-model-easily.ngrok-free.app:{port}")
 
     def _start_neuron(left: Dict[str, Any], br):
-        # Compose a compact input using the cached image encoding whenever available
-        key = left.get("image_key")
-        enc_img = None
-        if isinstance(key, str):
-            enc_img = ds.get_cached_image(key)
-        # Build a tuple combining the raw prompt and cached image tokens (or the key if missing)
-        payload = (left.get("prompt"), enc_img if enc_img is not None else key)
+        # Combine the raw prompt with the already encoded image
+        payload = (left.get("prompt"), left.get("image"))
         enc = codec.encode(payload)
         try:
             idx = br.available_indices()[0]
