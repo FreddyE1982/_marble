@@ -390,45 +390,43 @@ def load_hf_streaming_dataset(
             if f.path.endswith(".parquet")
         ]
         if prefix:
-            files = [f for f in files if f.startswith(prefix)]
+            files = [f for f in files if f.startswith(prefix) or f.startswith(f"data/{prefix}")]
         files.sort()
         if not files:
             return None, set()
 
-        # Determine image fields from first shard
-        tmpdir_first = tempfile.mkdtemp(prefix="hfds_")
-        local_first = hf_hub.hf_hub_download(
-            repo_id=path,
-            filename=files[0],
-            repo_type="dataset",
-            cache_dir=tmpdir_first,
-            force_download=True,
-        )
-        ds_first = ds_mod.load_dataset(
-            "parquet",
-            data_files=[local_first],
-            split="train",
-            keep_in_memory=False,
-            download_config=download_config,
-            cache_dir=tmpdir_first,
-        )
-        image_fields: Set[str] = set()
-        try:
-            feats = getattr(ds_first, "features", {})
-            for fname, ftype in getattr(feats, "items", lambda: [])():
-                if getattr(ftype, "__class__", None) and ftype.__class__.__name__ == "Image":
-                    image_fields.add(str(fname))
-        except Exception:
-            pass
+        # Determine image fields from metadata to avoid pre-downloading shards
+        import json
+
+        def _get_image_fields() -> Set[str]:
+            info_files = ["dataset_info.json", "dataset_infos.json"]
+            for info_name in info_files:
+                try:
+                    info_path = hf_hub.hf_hub_download(
+                        repo_id=path,
+                        filename=info_name,
+                        repo_type="dataset",
+                    )
+                    with open(info_path, "r", encoding="utf-8") as rf:
+                        info_data = json.load(rf)
+                    if info_name == "dataset_info.json":
+                        feats = info_data.get("features", {})
+                    else:  # dataset_infos.json
+                        cfg = name or next(iter(info_data.keys()), None)
+                        feats = info_data.get(cfg, {}).get("features", {}) if cfg else {}
+                    out: Set[str] = set()
+                    for fname, ftype in getattr(feats, "items", lambda: [])():
+                        if isinstance(ftype, dict) and ftype.get("_type") == "Image":
+                            out.add(str(fname))
+                    return out
+                except Exception:
+                    continue
+            return set()
+
+        image_fields: Set[str] = _get_image_fields()
 
         def generator() -> Any:
-            for ex in ds_first:
-                yield ex
-            try:
-                shutil.rmtree(tmpdir_first)
-            except Exception:
-                pass
-            for fname in files[1:]:
+            for fname in files:
                 tmpdir = tempfile.mkdtemp(prefix="hfds_")
                 local = hf_hub.hf_hub_download(
                     repo_id=path,
