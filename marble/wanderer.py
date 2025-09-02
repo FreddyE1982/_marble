@@ -552,19 +552,19 @@ class Wanderer(_DeviceHelper):
             except Exception:
                 mdiff = 0.0
             try:
-                marks = getattr(self.brain, "_prune_marks", None)
-                thresh = int(getattr(self.brain, "prune_hit_count", 2))
-                if marks is not None:
-                    hits = marks.get(current, 0)
-                    if mdiff > walk_mean_loss_diff:
-                        hits += 1
-                        if hits >= thresh:
-                            self.brain.remove_neuron(current)
-                            marks.pop(current, None)
-                        else:
-                            marks[current] = hits
-                    elif hits:
-                        marks.pop(current, None)
+                  marks = getattr(self.brain, "_prune_marks", None)
+                  thresh = int(getattr(self.brain, "prune_hit_count", 2))
+                  if marks is not None and len(getattr(self.brain, "neurons", {})) > 1:
+                      hits = marks.get(current, 0)
+                      if mdiff > walk_mean_loss_diff:
+                          hits += 1
+                          if hits >= thresh:
+                              self.brain.remove_neuron(current)
+                              marks.pop(current, None)
+                          else:
+                              marks[current] = hits
+                      elif hits:
+                          marks.pop(current, None)
             except Exception:
                 pass
 
