@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib
 import os
 import hashlib
+import shutil
 from collections import OrderedDict
 from typing import Any, Dict, Optional, Sequence, Tuple, Union, Set
 
@@ -384,9 +385,9 @@ def load_hf_streaming_dataset(
             prefix_parts.append(str(split))
         prefix = "/".join(prefix_parts)
         files = [
-            f
-            for f in api.list_repo_files(path, repo_type="dataset")
-            if f.endswith(".parquet")
+            f.path
+            for f in api.list_repo_tree(repo_id=path, repo_type="dataset", recursive=True)
+            if f.path.endswith(".parquet")
         ]
         if prefix:
             files = [f for f in files if f.startswith(prefix)]
@@ -397,11 +398,11 @@ def load_hf_streaming_dataset(
         # Determine image fields from first shard
         tmpdir_first = tempfile.mkdtemp(prefix="hfds_")
         local_first = hf_hub.hf_hub_download(
-            path,
-            files[0],
+            repo_id=path,
+            filename=files[0],
             repo_type="dataset",
-            local_dir=tmpdir_first,
-            local_dir_use_symlinks=False,
+            cache_dir=tmpdir_first,
+            force_download=True,
         )
         ds_first = ds_mod.load_dataset(
             "parquet",
@@ -409,6 +410,7 @@ def load_hf_streaming_dataset(
             split="train",
             keep_in_memory=False,
             download_config=download_config,
+            cache_dir=tmpdir_first,
         )
         image_fields: Set[str] = set()
         try:
@@ -423,21 +425,17 @@ def load_hf_streaming_dataset(
             for ex in ds_first:
                 yield ex
             try:
-                os.remove(local_first)
-            except Exception:
-                pass
-            try:
-                os.rmdir(tmpdir_first)
+                shutil.rmtree(tmpdir_first)
             except Exception:
                 pass
             for fname in files[1:]:
                 tmpdir = tempfile.mkdtemp(prefix="hfds_")
                 local = hf_hub.hf_hub_download(
-                    path,
-                    fname,
+                    repo_id=path,
+                    filename=fname,
                     repo_type="dataset",
-                    local_dir=tmpdir,
-                    local_dir_use_symlinks=False,
+                    cache_dir=tmpdir,
+                    force_download=True,
                 )
                 ds_local = ds_mod.load_dataset(
                     "parquet",
@@ -445,15 +443,12 @@ def load_hf_streaming_dataset(
                     split="train",
                     keep_in_memory=False,
                     download_config=download_config,
+                    cache_dir=tmpdir,
                 )
                 for ex in ds_local:
                     yield ex
                 try:
-                    os.remove(local)
-                except Exception:
-                    pass
-                try:
-                    os.rmdir(tmpdir)
+                    shutil.rmtree(tmpdir)
                 except Exception:
                     pass
 

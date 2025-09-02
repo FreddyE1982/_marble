@@ -22,16 +22,26 @@ class HFManualStreamingTest(unittest.TestCase):
         pq.write_table(pa.table({"txt": ["b"]}), os.path.join(train_dir, "0001.parquet"))
         downloaded = []
 
-        class HfApi:
-            def list_repo_files(self, repo_id, repo_type="dataset"):
-                return ["train/0000.parquet", "train/0001.parquet"]
+        class TreeFile:
+            def __init__(self, path):
+                self.path = path
 
-        def hf_hub_download(repo_id, filename, repo_type="dataset", local_dir=None, local_dir_use_symlinks=False):
+        class HfApi:
+            def list_repo_tree(self, repo_id, repo_type="dataset", recursive=True):
+                return [TreeFile("train/0000.parquet"), TreeFile("train/0001.parquet")]
+
+        def hf_hub_download(
+            repo_id,
+            filename,
+            repo_type="dataset",
+            cache_dir=None,
+            force_download=False,
+        ):
             src = os.path.join(repo_dir, filename)
-            if local_dir is None:
-                local_dir = tempfile.mkdtemp(dir=tmpdir)
-            os.makedirs(local_dir, exist_ok=True)
-            dst = os.path.join(local_dir, os.path.basename(filename))
+            if cache_dir is None:
+                cache_dir = tempfile.mkdtemp(dir=tmpdir)
+            os.makedirs(cache_dir, exist_ok=True)
+            dst = os.path.join(cache_dir, os.path.basename(filename))
             shutil.copy(src, dst)
             downloaded.append(dst)
             return dst
