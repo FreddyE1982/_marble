@@ -225,7 +225,7 @@ def main(epochs: int = 1) -> None:
         "add_min_new_neurons_per_step": 5,
         "aggressive_phase_steps": 100,
     }
-    def _run_kuzu_explorer(db_file: str, port: int = 8000) -> None:
+    def _run_kuzu_explorer(db_file: str, port: int = 8000) -> str:
         db_path = Path(db_file).resolve()
         db_path.parent.mkdir(parents=True, exist_ok=True)
         cmd = [
@@ -247,22 +247,26 @@ def main(epochs: int = 1) -> None:
             except Exception:
                 pass
 
-        def _run_ngrok():
-            try:
-                from pyngrok import ngrok
-                ngrok.set_auth_token("2o9DgUKuP2W8vjV7cZFq0sDiM3A_2d1gWrkXqvy5APpUn2QNS")
-                ngrok.connect(port, "http", hostname="alpaca-model-easily.ngrok-free.app")
-            except Exception:
-                pass
-
+        public_url = None
         threading.Thread(target=_run_docker, daemon=True).start()
-        threading.Thread(target=_run_ngrok, daemon=True).start()
+
+        try:
+            from pyngrok import ngrok
+
+            ngrok.set_auth_token("2o9DgUKuP2W8vjV7cZFq0sDiM3A_2d1gWrkXqvy5APpUn2QNS")
+            tunnel = ngrok.connect(port, "http", bind_tls=False)
+            public_url = tunnel.public_url
+        except Exception:
+            pass
+
+        return public_url or ""
 
     kuzu_port = 8000
-    _run_kuzu_explorer(kuzu_db, kuzu_port)
-    print(
-        f"Kuzu Explorer available at https://alpaca-model-easily.ngrok-free.app:{kuzu_port}"
-    )
+    kuzu_url = _run_kuzu_explorer(kuzu_db, kuzu_port)
+    if kuzu_url:
+        print(f"Kuzu Explorer available at {kuzu_url}")
+    else:
+        print("Kuzu Explorer tunnel could not be established")
 
     def _start_neuron(left: Dict[str, Any], br):
         # Combine the raw prompt with the already encoded image
