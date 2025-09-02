@@ -277,8 +277,19 @@ def run_training_with_datapairs(
             brain._progress_walk = count  # type: ignore[attr-defined]
             dp = _normalize_pair(item)
             enc_l, enc_r = dp.encode(codec)
+
+            if enc_r is not None:
+                def _tp(_y, target=enc_r):
+                    return target
+                w._target_provider = _tp
+            else:
+                w._target_provider = None
+
             start = left_to_start(dp.left, brain) if left_to_start is not None else create_start_neuron(brain, enc_l)
             stats = w.walk(max_steps=steps_per_pair, start=start, lr=lr, lobe=lobe)
+            finish_loss, delta = w.walkfinish()
+            stats["loss"] = finish_loss
+            stats["delta"] = delta
             stats["plugins"] = [p.__class__.__name__ for p in getattr(w, "_wplugins", []) or []]
             history.append(stats)
             count += 1
