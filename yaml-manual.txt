@@ -9,6 +9,11 @@
 - aggressive_phase_steps (int)
   Required when aggressive_starting_neuroplasticity is true. Number of steps to keep aggressive growth before reverting to normal behaviour.
 
+- max_flat_steps (int, default: 5)
+  Maximum number of consecutive walk steps a neuron can report a ``delta`` of
+  ``0.0`` before it is marked for pruning or a new synaptic connection is
+  forced via plugin. Must be non-negative.
+
 ## Resource Allocator Settings
 
  - resource_allocator.max_disk_mb (int, default: 30720)
