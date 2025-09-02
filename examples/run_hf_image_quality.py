@@ -35,6 +35,7 @@ from marble.plugins.selfattention_findbestneurontype import FindBestNeuronTypeRo
 from marble.plugins.selfattention_noise_profiler import ContextAwareNoiseRoutine
 from marble.dashboard import start_dashboard
 from marble.plugins.wanderer_autoplugin import AutoPlugin
+from marble.plugins.wanderer_resource_allocator import clear as clear_resources
 
 
 class QualityAwareRoutine:
@@ -241,7 +242,9 @@ def main(epochs: int = 1) -> None:
         print(f"processed datapairs: {cnt}")
         if cnt == 0:
             raise RuntimeError("run_training_with_datapairs returned count=0")
+        clear_resources()
     print("streamed quality training complete")
+    clear_resources()
 
 
 if __name__ == "__main__":
