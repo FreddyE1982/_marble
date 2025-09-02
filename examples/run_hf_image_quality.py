@@ -17,6 +17,7 @@ from __future__ import annotations
 from typing import Iterator, Any, Dict
 import os
 import re
+import types
 from datasets import DownloadConfig
 
 from marble.marblemain import (
@@ -132,6 +133,14 @@ def main(epochs: int = 1) -> None:
         snapshot_freq=100,
         snapshot_keep=10,
     )
+    # Ensure every newly added neuron defaults to the autoneuron type
+    _orig_add = brain.add_neuron
+
+    def _add_autoneuron(index, *, tensor=0.0, **kwargs):
+        kwargs.setdefault("type_name", "autoneuron")
+        return _orig_add(index, tensor=tensor, **kwargs)
+
+    brain.add_neuron = types.MethodType(_add_autoneuron, brain)
     # Include Brain-training plugins to adjust learning rate and step schedule
     sa = SelfAttention(
         routines=[
@@ -141,7 +150,26 @@ def main(epochs: int = 1) -> None:
             ContextAwareNoiseRoutine(),
         ]
     )
-    register_wanderer_type("autoplugin_logger", AutoPlugin(log_path="autoplugin.log"))
+    mandatory_plugins = [
+        "BatchTrainingPlugin",
+        "QualityWeightedLossPlugin",
+        "EpsilonGreedyChooserPlugin",
+        "TDQLearningPlugin",
+        "BestLossPathPlugin",
+        "AlternatePathsCreatorPlugin",
+        "L2WeightPenaltyPlugin",
+        "DistillationPlugin",
+        "WanderAlongSynapseWeightsPlugin",
+        "DynamicDimensionsPlugin",
+        "QualityAwareRoutine",
+        "AdaptiveGradClipRoutine",
+        "FindBestNeuronTypeRoutine",
+        "ContextAwareNoiseRoutine",
+    ]
+    register_wanderer_type(
+        "autoplugin_logger",
+        AutoPlugin(log_path="autoplugin.log", mandatory_plugins=mandatory_plugins),
+    )
     wplugins = [
         "batchtrainer",
         "qualityweightedloss",

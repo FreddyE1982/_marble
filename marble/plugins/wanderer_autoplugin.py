@@ -192,7 +192,7 @@ class AutoPlugin:
 
         self._current_neuron_id = 0 if neuron is None else id(neuron)
         if name in self._mandatory:
-            self._update_log(wanderer, plugintype, name, True)
+            # Mandatory plugins are always active and excluded from logs
             return True
         if name in self._disabled:
             self._update_log(wanderer, plugintype, name, False)

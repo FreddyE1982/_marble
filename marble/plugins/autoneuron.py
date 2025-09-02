@@ -196,11 +196,13 @@ class AutoNeuronPlugin:
             weights = [e / denom for e in exps]
             vals = [v_loss * loss, v_speed * steps, v_complexity * complexity]
             return sum(w * v for w, v in zip(weights, vals))
-        device = getattr(wanderer, "_device", "cpu")
+        device = getattr(q_loss, "device", getattr(wanderer, "_device", "cpu"))
         metrics = torch.tensor([loss, steps, complexity], dtype=torch.float32, device=device)
 
         def _to_tensor(val: Any) -> Any:
-            return val if hasattr(val, "to") else torch.tensor(float(val), dtype=torch.float32, device=device)
+            if hasattr(val, "to"):
+                return val if getattr(val, "device", None) == device else val.to(device)
+            return torch.tensor(float(val), dtype=torch.float32, device=device)
 
         Q = torch.stack([_to_tensor(q_loss), _to_tensor(q_speed), _to_tensor(q_complexity)])
         K = torch.stack([_to_tensor(k_loss), _to_tensor(k_speed), _to_tensor(k_complexity)])
