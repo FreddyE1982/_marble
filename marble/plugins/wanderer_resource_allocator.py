@@ -5,6 +5,7 @@ import tempfile
 import time
 import threading
 from typing import List, Tuple, Any, Dict
+import math
 import weakref
 from contextlib import contextmanager, nullcontext
 
@@ -39,14 +40,15 @@ class TensorRegistry:
             return
         self._entries[key] = weakref.ref(obj, lambda _r, k=key: self._entries.pop(k, None))
 
-    def iter_tensors(self):
+    def iter_tensors(self, decay_rate: float):
         """Yield ``(obj, attr, tensor, hits)`` for valid registrations.
 
-        Each time a tensor is yielded the access counter for ``obj.attr`` is
-        incremented. Callers can use the ``hits`` value to prioritize which
-        tensors should stay on fast devices.
+        ``hits`` reflects a decayed access count so that long-idle tensors no
+        longer dominate the prioritisation. ``decay_rate`` controls the
+        exponential decay per second.
         """
 
+        now = time.perf_counter()
         for (oid, attr), ref in list(self._entries.items()):
             obj = ref()
             if obj is None:
@@ -62,10 +64,12 @@ class TensorRegistry:
                 continue
             if torch.is_tensor(t):
                 info = getattr(obj, "_tensor_hits", {})
-                hits = info.get(attr, 0) + 1
-                info[attr] = hits
+                count, last = info.get(attr, (0.0, now))
+                dt = max(0.0, now - last)
+                count = count * math.exp(-decay_rate * dt) + 1.0
+                info[attr] = (count, now)
                 setattr(obj, "_tensor_hits", info)
-                yield obj, attr, t, hits
+                yield obj, attr, t, count
 
 
 TENSOR_REGISTRY = TensorRegistry()
@@ -244,6 +248,7 @@ class ResourceAllocatorPlugin:
         st.setdefault("resource_hits", {})
         st.setdefault("last_loss", None)
         st.setdefault("last_time", time.perf_counter())
+        st.setdefault("base_score", 0.0)
         before = set(getattr(wanderer, "_learnables", {}))
         self._params(wanderer)
         after = set(getattr(wanderer, "_learnables", {}))
@@ -475,7 +480,11 @@ class ResourceAllocatorPlugin:
             + loss_accel_w * (trainm["loss_accel"] + loss_accel_b)
         )
 
-        for obj, attr, t, hits in TENSOR_REGISTRY.iter_tensors():
+        st = wanderer._plugin_state
+        prev = st.get("base_score", base_score)
+        base_score = smooth * prev + (1.0 - smooth) * base_score
+        st["base_score"] = base_score
+        for obj, attr, t, hits in TENSOR_REGISTRY.iter_tensors(decay):
             size_mb = t.element_size() * t.nelement() / (1024 * 1024)
             score = base_score + hit_freq_w * (hits + hit_freq_b) - storage_w * (size_mb + storage_b)
             target_device = "cpu"
