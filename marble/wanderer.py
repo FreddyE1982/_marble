@@ -159,6 +159,7 @@ class Wanderer(_DeviceHelper):
         mixedprecision: bool = True,
         tiling: bool = False,
         tile_size: int = 32,
+        pre_forward: bool = False,
     ) -> None:
         super().__init__()
         # Mandatory autograd requirement
@@ -216,6 +217,9 @@ class Wanderer(_DeviceHelper):
         self._grad_clip: Dict[str, Any] = dict(gradient_clip or {})
         self.tiling = bool(tiling)
         self.tile_size = int(tile_size)
+        self.pre_forward = bool(pre_forward)
+        self._last_pre_forward_time: float = 0.0
+        self._last_transfer_time: float = 0.0
 
         try:
             report("wanderer", "init", {"plugin": self.type_name}, "events")
@@ -702,6 +706,21 @@ class Wanderer(_DeviceHelper):
                             next_syn, dir_str = cand_syn, cand_dir
                 except Exception:
                     pass
+
+            if self.pre_forward and str(self._device).startswith("cuda"):
+                try:
+                    start_cpu = time.perf_counter()
+                    cpu_val = out.detach().to("cpu")
+                    cpu_val = cpu_val * float(getattr(next_syn, "weight", 1.0)) + float(getattr(next_syn, "bias", 0.0))
+                    cpu_time = time.perf_counter() - start_cpu
+                    start_transfer = time.perf_counter()
+                    _ = cpu_val.to(self._device)
+                    transfer_time = time.perf_counter() - start_transfer
+                    self._last_pre_forward_time = cpu_time
+                    self._last_transfer_time = transfer_time
+                except Exception:
+                    self._last_pre_forward_time = 0.0
+                    self._last_transfer_time = 0.0
 
             lock_ctx = None
             try:

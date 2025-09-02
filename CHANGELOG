@@ -1,3 +1,6 @@
+2025-09-19
+- Added optional CPU pre-forward pass for `Wanderer` via `pre_forward=True`,
+  recording CPU compute and GPU transfer times to help tune VRAM usage.
 2025-09-01
 - Compress repeating byte sequences in `UniversalTensorCodec` via on-the-fly
   dictionary to reduce token counts and VRAM usage.
