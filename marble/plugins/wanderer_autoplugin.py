@@ -2,15 +2,20 @@ from __future__ import annotations
 
 """Wanderer plugin that learns to enable or disable other plugins.
 
-The plugin wraps all existing Wanderer and neuroplasticity plugins with a
-gating function. The gating decision is driven by a self‑attention score over
-training metrics (loss, speed, model complexity) exposed via
-:func:`expose_learnable_params` and per-plugin bias/gain terms registered on the
-owning :class:`~marble.wanderer.Wanderer` instance. For every step the gate
-considers the current walk step and the active neuron.
+AutoPlugin sits at the top of the Wanderer stack and wraps every other
+plugin—including neuroplasticity plugins and building blocks—with a learnable
+gate. It respects an optional list of *mandatory* plugins which always remain
+active, while every other plugin is free to switch on and off so different
+combinations can be explored during training. The gating decision is driven by a
+self‑attention score over live training metrics (loss, speed, model complexity)
+exposed via :func:`expose_learnable_params` and per-plugin bias/gain terms
+registered on the owning :class:`~marble.wanderer.Wanderer` instance. For every
+step the gate considers the current walk step and the active neuron.
 
 Learned objective prioritizes overall accuracy, then training speed, followed by
 model size and complexity (implicitly via gradients adjusting the gate biases).
+Activation and deactivation events are written to an optional CSV log so training
+runs can be inspected later.
 """
 
 import math
@@ -30,15 +35,25 @@ class AutoPlugin:
         Optional list of plugin class names that should be fully disabled.
         Any Wanderer or neuroplasticity plugin whose class name appears in
         this list will be removed from the active plugin stacks entirely.
+    mandatory_plugins:
+        Optional list of plugin class names that must remain active. These
+        plugins are still wrapped for logging, but their gates always resolve
+        to ``True`` and they can never be disabled.
+    log_path:
+        Optional path of a CSV log file recording plugin activation events.
     """
 
     def __init__(
-        self, disabled_plugins: Optional[List[str]] = None, log_path: Optional[str] = None
+        self,
+        disabled_plugins: Optional[List[str]] = None,
+        log_path: Optional[str] = None,
+        mandatory_plugins: Optional[List[str]] = None,
     ) -> None:
         self._neuro_wrapped = False
         self._sa_wrapped = False
         self._current_neuron_id = 0
         self._disabled = set(disabled_plugins or [])
+        self._mandatory = set(mandatory_plugins or [])
         self._log_path = log_path
         if log_path:
             # Create/clear the log file so it's readable immediately during training
@@ -176,6 +191,9 @@ class AutoPlugin:
         """Return True if the named plugin should be active."""
 
         self._current_neuron_id = 0 if neuron is None else id(neuron)
+        if name in self._mandatory:
+            self._update_log(wanderer, plugintype, name, True)
+            return True
         if name in self._disabled:
             self._update_log(wanderer, plugintype, name, False)
             return False
