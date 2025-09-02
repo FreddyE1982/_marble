@@ -41,6 +41,9 @@ from marble.plugins.selfattention_noise_profiler import ContextAwareNoiseRoutine
 from marble.plugins.wanderer_autoplugin import AutoPlugin
 from marble.plugins.wanderer_resource_allocator import clear as clear_resources
 from marble.plugins.auto_target_scaler import AutoTargetScalerPlugin
+import torch
+
+torch.set_num_threads(1)
 
 
 class QualityAwareRoutine:
@@ -52,13 +55,16 @@ class QualityAwareRoutine:
         self.grow = float(grow)
 
     def after_step(self, sa: SelfAttention, ro, wanderer, step_idx: int, ctx):
-        hist = sa.history(self.window)
+        # Only the last two steps are required to decide whether the loss has
+        # improved, so limit the history lookup accordingly to avoid collecting
+        # a larger window than necessary.
+        hist = sa.history(min(self.window, 2))
         if len(hist) < 2:
             return None
-        losses = [h.get("current_loss") for h in hist if isinstance(h.get("current_loss"), (int, float))]
-        if len(losses) < 2:
+        prev = hist[-2].get("current_loss")
+        cur = hist[-1].get("current_loss")
+        if not isinstance(prev, (int, float)) or not isinstance(cur, (int, float)):
             return None
-        prev, cur = losses[-2], losses[-1]
         base_lr = sa.get_param("lr_override") or sa.get_param("current_lr") or 1e-3
         try:
             base_lr = float(base_lr)
@@ -109,6 +115,7 @@ def main(
     batch_size: int = 10,
     launch_kuzu: bool | None = None,
     min_new_neurons: int = 1,
+    steps_per_pair: int = 2,
 ) -> None:
     # Image-cache configuration (defaults: enabled=True, size=20); allow env overrides.
     cache_enabled = os.environ.get("MARBLE_IMG_CACHE_ENABLED", "1").strip() not in ("0", "false", "False")
@@ -299,7 +306,7 @@ def main(
             brain,
             pairs,
             codec,
-            steps_per_pair=2,
+            steps_per_pair=int(steps_per_pair),
             lr=1e-3,
             wanderer_type=",".join(wplugins),
             train_type="warmup_decay,curriculum,qualityaware",
