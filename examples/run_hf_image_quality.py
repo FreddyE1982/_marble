@@ -40,6 +40,7 @@ from marble.plugins.selfattention_findbestneurontype import FindBestNeuronTypeRo
 from marble.plugins.selfattention_noise_profiler import ContextAwareNoiseRoutine
 from marble.plugins.wanderer_autoplugin import AutoPlugin
 from marble.plugins.wanderer_resource_allocator import clear as clear_resources
+from marble.plugins.auto_target_scaler import AutoTargetScalerPlugin
 
 
 class QualityAwareRoutine:
@@ -102,59 +103,13 @@ def _sample_pairs(ds, max_pairs: int | None = None) -> Iterator:
         yield make_datapair({"prompt": prompt, "image": img1}, q1)
         yield make_datapair({"prompt": prompt, "image": img2}, q2)
         count += 2
-
-
-def _enable_auto_scale_targets() -> callable:
-    """Temporarily enable ``auto_scale_targets`` in ``config.yaml``.
-
-    Returns a callable that restores the previous configuration. This avoids
-    permanently altering repository defaults while allowing the example to
-    leverage the AutoTargetScaler plugin.
-    """
-
-    cfg_path = Path(__file__).resolve().parent.parent / "config.yaml"
-    try:
-        original = cfg_path.read_text(encoding="utf-8")
-    except Exception as err:  # pragma: no cover - best effort only
-        print(f"could not read config.yaml: {err}")
-        return lambda: None
-
-    lines = []
-    found = False
-    for raw in original.splitlines():
-        if raw.strip().startswith("auto_scale_targets:"):
-            lines.append(
-                "auto_scale_targets: true  # scale tiny targets to match output magnitude"
-            )
-            found = True
-        else:
-            lines.append(raw)
-    if not found:
-        lines.append(
-            "auto_scale_targets: true  # scale tiny targets to match output magnitude"
-        )
-    try:
-        cfg_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
-    except Exception as err:  # pragma: no cover - best effort only
-        print(f"could not write config.yaml: {err}")
-        return lambda: None
-
-    def _restore() -> None:
-        try:  # pragma: no cover - restoration is best effort
-            cfg_path.write_text(original, encoding="utf-8")
-        except Exception:
-            pass
-
-    return _restore
-
-
 def main(
     epochs: int = 1,
     max_pairs: int | None = 100,
     batch_size: int = 10,
     launch_kuzu: bool | None = None,
+    min_new_neurons: int = 1,
 ) -> None:
-    restore_cfg = _enable_auto_scale_targets()
     # Image-cache configuration (defaults: enabled=True, size=20); allow env overrides.
     cache_enabled = os.environ.get("MARBLE_IMG_CACHE_ENABLED", "1").strip() not in ("0", "false", "False")
     try:
@@ -255,6 +210,8 @@ def main(
         else:
             ap._mandatory = set(mandatory_plugins)
     register_wanderer_type("autoplugin_logger", ap)
+    scaler = AutoTargetScalerPlugin(observe_steps=2)
+    register_wanderer_type("auto_target_scaler", scaler)
     wplugins = [
         "batchtrainer",
         "qualityweightedloss",
@@ -267,6 +224,7 @@ def main(
         "wanderalongsynapseweights",
         "dynamicdimensions",
         "autoplugin_logger",
+        "auto_target_scaler",
     ]
     neuro_cfg = {
         "grow_on_step_when_stuck": True,
@@ -280,7 +238,7 @@ def main(
         "l2_lambda": 1e-4,
         "batch_size": batch_size,
         "aggressive_starting_neuroplasticity": True,
-        "add_min_new_neurons_per_step": 5,
+        "add_min_new_neurons_per_step": int(min_new_neurons),
         "aggressive_phase_steps": 100,
     }
     def _run_kuzu_explorer(db_file: str, port: int = 8000) -> str:
@@ -355,13 +313,21 @@ def main(
         duration = time.perf_counter() - start_time
         cnt = res.get("count", 0)
         walks = len(res.get("history", [])) or 1
-        print(f"processed datapairs: {cnt} in {duration:.2f}s ({duration/walks:.2f}s per walk)")
+        print(
+            f"processed datapairs: {cnt} in {duration:.2f}s ({duration/walks:.2f}s per walk)"
+        )
+        if hasattr(scaler, "scale"):
+            print(
+                "auto target scaler stats:",
+                f"scale={scaler.scale:.4f}",
+                f"std_out={getattr(scaler, 'std_out', 0):.4f}",
+                f"std_tgt={getattr(scaler, 'std_tgt', 0):.4f}",
+            )
         if cnt == 0:
             raise RuntimeError("run_training_with_datapairs returned count=0")
         clear_resources()
     print("streamed quality training complete")
     clear_resources()
-    restore_cfg()
 
 
 if __name__ == "__main__":
