@@ -166,10 +166,20 @@ def main(epochs: int = 1) -> None:
         "FindBestNeuronTypeRoutine",
         "ContextAwareNoiseRoutine",
     ]
-    register_wanderer_type(
-        "autoplugin_logger",
-        AutoPlugin(log_path="autoplugin.log", mandatory_plugins=mandatory_plugins),
-    )
+    # Instantiate AutoPlugin with mandatory plugin support when available.
+    try:
+        ap = AutoPlugin(
+            log_path="autoplugin.log", mandatory_plugins=mandatory_plugins
+        )
+    except TypeError:
+        # Older AutoPlugin versions do not accept ``mandatory_plugins``.
+        ap = AutoPlugin(log_path="autoplugin.log")
+        # Preserve mandatory behaviour if the attribute exists.
+        if hasattr(ap, "_mandatory"):
+            ap._mandatory.update(mandatory_plugins)
+        else:
+            ap._mandatory = set(mandatory_plugins)
+    register_wanderer_type("autoplugin_logger", ap)
     wplugins = [
         "batchtrainer",
         "qualityweightedloss",
