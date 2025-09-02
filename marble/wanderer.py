@@ -10,6 +10,8 @@ import random
 import contextlib
 import inspect
 
+from .buildingblock import get_buildingblock_type
+
 from .graph import _DeviceHelper, Neuron, Synapse, _NEURON_TYPES
 from .lobe import Lobe
 from .reporter import report
@@ -485,6 +487,8 @@ class Wanderer(_DeviceHelper):
         steps = 0
         carried_value: Optional[Any] = None
         moved_last = False
+        flat_counts: Dict[Neuron, int] = {}
+        max_flat = int(getattr(self, "_neuro_cfg", {}).get("max_flat_steps", 0))
         while steps < max_steps and current is not None:
             try:
                 if self._pending_settings:
@@ -532,6 +536,10 @@ class Wanderer(_DeviceHelper):
                 current.record_loss_diff(delta)
             except Exception:
                 pass
+            if delta == 0.0:
+                flat_counts[current] = flat_counts.get(current, 0) + 1
+            else:
+                flat_counts[current] = 0
 
             now = time.time()
             dt = None
@@ -567,6 +575,38 @@ class Wanderer(_DeviceHelper):
                           marks.pop(current, None)
             except Exception:
                 pass
+
+            if max_flat > 0 and flat_counts.get(current, 0) > max_flat:
+                try:
+                    marks = getattr(self.brain, "_prune_marks", None)
+                    if marks is not None:
+                        marks[current] = marks.get(current, 0) + 1
+                except Exception:
+                    pass
+                try:
+                    block = get_buildingblock_type("create_synapse")
+                    others = [n for n in getattr(self.brain, "neurons", {}).values() if n is not current]
+                    if block is not None and others:
+                        target = random.choice(others)
+                        block.apply(self.brain, current.position, target.position)
+                        report(
+                            "wanderer",
+                            "flat_neuron_new_synapse",
+                            {"src": getattr(current, "position", None), "dst": getattr(target, "position", None)},
+                            "events",
+                        )
+                except Exception:
+                    pass
+                try:
+                    report(
+                        "wanderer",
+                        "flat_neuron",
+                        {"neuron": getattr(current, "position", None), "flat_steps": flat_counts[current]},
+                        "events",
+                    )
+                except Exception:
+                    pass
+                flat_counts[current] = 0
 
             try:
                 cum_loss_t = self._compute_loss(outputs, override_loss=loss_fn)
