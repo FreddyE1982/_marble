@@ -156,6 +156,7 @@ class ResourceAllocatorPlugin:
         self.compress_offload = bool(cfg.get("compress_offload", True))
         self.min_gpu_tensor_mb = float(cfg.get("min_gpu_tensor_mb", 1.0))
         self.ram_offload_threshold = float(cfg.get("ram_offload_threshold", 0.9))
+        self.disk_usage_threshold = float(cfg.get("disk_usage_threshold", 0.95))
         self._disk_used_mb = 0.0
         self._rebalance_thread: threading.Thread | None = None
         self._rebalance_stop = threading.Event()
@@ -498,6 +499,7 @@ class ResourceAllocatorPlugin:
             elif (
                 sysm["ram"] > self.ram_offload_threshold
                 and self._disk_used_mb < self.max_disk_mb
+                and sysm["disk"] < self.disk_usage_threshold
                 and score < -move_thr
             ):
                 target_device = "disk"
