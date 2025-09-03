@@ -119,7 +119,7 @@ def run_training_with_datapairs(
     datapairs: Iterable[Union[DataPair, Tuple[Any, Any], Tuple[Union[TensorLike, Sequence[int]], Union[TensorLike, Sequence[int]]]]],
     codec: UniversalTensorCodec,
     *,
-    steps_per_pair: int = 5,
+    steps_per_pair: Optional[int] = None,
     lr: float = 1e-2,
     wanderer_type: Optional[str] = None,
     train_type: Optional[Union[str, Sequence[str]]] = None,
@@ -136,11 +136,13 @@ def run_training_with_datapairs(
     optimizer: Optional[Union[str, Any]] = None,
     mixedprecision: bool = True,
     dashboard: bool = False,
+    auto_max_steps_every: Optional[int] = None,
 ) -> Dict[str, Any]:
     from .marblemain import Wanderer  # lazy import
     def _inner() -> Dict[str, Any]:
         history: List[Dict[str, Any]] = []
         count = 0
+        nonlocal auto_max_steps_every
         try:
             brain._progress_total_walks = len(datapairs)  # type: ignore[attr-defined]
         except Exception:
@@ -240,6 +242,7 @@ def run_training_with_datapairs(
         train_plugins: List[Any] = []
         try:
             from .marblemain import _BRAIN_TRAIN_TYPES, _on_init_train, _on_end_train, _merge_dict_safe
+            from .marblemain import _auto_max_steps_interval
             if isinstance(train_type, str):
                 names = [s.strip() for s in train_type.split(",") if s.strip()]
                 for nm in names:
@@ -261,9 +264,15 @@ def run_training_with_datapairs(
             def _merge_dict_safe(base, extra):
                 return base
 
+        if auto_max_steps_every is None:
+            auto_max_steps_every = _auto_max_steps_interval()
+        if steps_per_pair is None or steps_per_pair <= 0:
+            current_max_steps = max(1, brain.longest_path_steps())
+        else:
+            current_max_steps = int(steps_per_pair)
         init_cfg = {
             "num_walks": None,
-            "max_steps": steps_per_pair,
+            "max_steps": current_max_steps,
             "lr": lr,
             "type_name": train_type,
         }
@@ -286,7 +295,7 @@ def run_training_with_datapairs(
                 w._target_provider = None
 
             start = left_to_start(dp.left, brain) if left_to_start is not None else create_start_neuron(brain, enc_l)
-            stats = w.walk(max_steps=steps_per_pair, start=start, lr=lr, lobe=lobe)
+            stats = w.walk(max_steps=current_max_steps, start=start, lr=lr, lobe=lobe)
             finish_loss, delta = w.walkfinish()
             stats["loss"] = finish_loss
             stats["delta"] = delta
@@ -302,6 +311,8 @@ def run_training_with_datapairs(
                     callback(count - 1, stats, dp)
                 except Exception:
                     pass
+            if (steps_per_pair is None or steps_per_pair <= 0) and auto_max_steps_every and count % auto_max_steps_every == 0:
+                current_max_steps = max(1, brain.longest_path_steps())
 
         final_loss = history[-1]["loss"] if history else 0.0
         out = {"history": history, "final_loss": final_loss, "count": count}
