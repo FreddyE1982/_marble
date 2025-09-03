@@ -51,11 +51,18 @@ class AutoTargetScalerPlugin:
                 self.std_out = std_out
                 self.std_tgt = std_tgt
                 if std_tgt > 0 and std_out > 0:
-                    self.scale = float((std_out / std_tgt).item())
+                    ratio = (std_out / std_tgt).item()
                 elif mean_tgt != 0:
-                    self.scale = float((mean_out / mean_tgt).item())
+                    ratio = (mean_out / mean_tgt).item()
                 else:
-                    self.scale = 1.0
+                    ratio = 1.0
+                # Avoid pathological scaling when the target distribution is
+                # extremely narrow or close to zero. Such cases previously
+                # produced enormous scale factors that caused the training
+                # loss to explode to ``inf``. Clamp the ratio to a reasonable
+                # range so targets remain within a numerically stable band.
+                ratio = float(max(1e-6, min(ratio, 1e6)))
+                self.scale = ratio
                 orig_tp = self._orig_tp
                 scale = self.scale
 

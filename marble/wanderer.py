@@ -1101,6 +1101,12 @@ class Wanderer(_DeviceHelper):
                         yt, tgt = yv, aligned
                 except Exception:
                     pass
+                # Sanitize values before feeding into the base loss to avoid
+                # overflow/NaN situations that were observed in example
+                # scripts. This keeps training numerically stable without
+                # altering the configured loss function.
+                yt = torch.nan_to_num(yt, nan=0.0, posinf=1e6, neginf=-1e6).clamp(-1e3, 1e3)
+                tgt = torch.nan_to_num(tgt, nan=0.0, posinf=1e6, neginf=-1e6).clamp(-1e3, 1e3)
                 terms.append(loss_mod(yt, tgt))
             base_loss = sum(terms) if terms else torch.tensor(0.0, device=self._device)
         elif callable(self._loss_spec):
