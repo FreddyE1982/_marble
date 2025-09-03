@@ -489,26 +489,17 @@ class ResourceAllocatorPlugin:
         prev = st.get("base_score", base_score)
         base_score = smooth * prev + (1.0 - smooth) * base_score
         st["base_score"] = base_score
-        for obj, attr, t, hits in TENSOR_REGISTRY.iter_tensors(decay):
-            size_mb = t.element_size() * t.nelement() / (1024 * 1024)
-            score = base_score + hit_freq_w * (hits + hit_freq_b) - storage_w * (size_mb + storage_b)
-            target_device = "cpu"
-            if (
-                size_mb > self.min_gpu_tensor_mb
-                and torch.cuda.is_available()
-                and sysm["gpu"] < reserve_ratio
-                and score > move_thr
-            ):
+        for obj, attr, t, _hits in TENSOR_REGISTRY.iter_tensors(decay):
+            if torch.cuda.is_available() and sysm["gpu"] < self.vram_offload_threshold:
                 target_device = "cuda"
-            elif t.device.type == "cuda" and sysm["gpu"] > self.vram_offload_threshold:
-                target_device = "cpu"
             elif (
                 sysm["ram"] > self.ram_offload_threshold
                 and self._disk_used_mb < self.max_disk_mb
                 and sysm["disk"] < self.disk_usage_threshold
-                and score < -move_thr
             ):
                 target_device = "disk"
+            else:
+                target_device = "cpu"
             self._safe_transfer(obj, attr, t, target_device)
 
     def start_auto_rebalance(self, wanderer, interval: float = 5.0) -> None:
