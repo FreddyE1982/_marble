@@ -2211,7 +2211,7 @@ __all__ += ["register_brain_train_type"]
 from . import plugins as _plugins  # noqa: F401
 
 # Plugin registry for Wanderer (moved). Import registry and registrar.
-from .wanderer import register_wanderer_type  # re-exported below
+from .wanderer import register_wanderer_type, expand_wplugins  # re-exported below
 from .wanderer import WANDERER_TYPES_REGISTRY as _WANDERER_TYPES
 try:
     # Ensure built-in Wanderer plugins that self-register are loaded on import
@@ -2239,6 +2239,7 @@ __all__ += [
     "Wanderer",
     "register_wanderer_type",
     "register_neuroplasticity_type",
+    "expand_wplugins",
     "expose_learnable_params",
 ]
 

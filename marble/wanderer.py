@@ -40,6 +40,33 @@ def register_neuroplasticity_type(name: str, plugin: Any) -> None:
     NEURO_TYPES_REGISTRY[str(name)] = plugin
 
 
+def expand_wplugins(names: Sequence[str], sentinel: str = "*") -> List[str]:
+    """Expand a shorthand entry to include all registered Wanderer plugins.
+
+    Parameters
+    ----------
+    names:
+        Sequence of plugin short names. If ``sentinel`` is present, it
+        represents "all remaining" plugins that are registered but not
+        explicitly listed.
+    sentinel:
+        Marker string denoting the shorthand. Defaults to ``"*"``.
+
+    Returns
+    -------
+    list[str]
+        The plugin names with the sentinel expanded, preserving the order of
+        explicitly provided names and appending the remaining plugins in
+        alphabetical order.
+    """
+
+    explicit = [n for n in names if n != sentinel]
+    if sentinel not in names:
+        return list(explicit)
+    remaining = [n for n in sorted(WANDERER_TYPES_REGISTRY) if n not in explicit]
+    return explicit + remaining
+
+
 def expose_learnable_params(fn: Callable[..., Any]) -> Callable[..., Any]:
     """Decorator: expose function parameters as Wanderer learnables.
 
@@ -1316,6 +1343,7 @@ __all__ = [
     "register_neuroplasticity_type",
     "WANDERER_TYPES_REGISTRY",
     "NEURO_TYPES_REGISTRY",
+    "expand_wplugins",
     "Wanderer",
     "push_temporary_plugins",
     "pop_temporary_plugins",

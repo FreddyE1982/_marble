@@ -33,6 +33,7 @@ from marble.marblemain import (
     load_hf_streaming_dataset,
     SelfAttention,
     register_wanderer_type,
+    expand_wplugins,
 )
 import marble.plugins  # ensure plugin discovery
 from marble.plugins.selfattention_adaptive_grad_clip import AdaptiveGradClipRoutine
@@ -225,7 +226,9 @@ def main(
         "dynamicdimensions",
         "autoplugin_logger",
         "auto_target_scaler",
+        "*",  # shorthand for all other plugins
     ]
+    wplugins = expand_wplugins(wplugins)
     neuro_cfg = {
         "grow_on_step_when_stuck": True,
         "max_new_per_walk": 1,
