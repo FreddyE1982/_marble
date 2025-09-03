@@ -9,7 +9,10 @@ class TestCurriculumAndTempPlugins(unittest.TestCase):
         it = iter(b.available_indices())
         i1 = next(it); i2 = next(it)
         n1 = b.add_neuron(i1, tensor=0.0)
-        n2 = b.add_neuron(i2, tensor=0.0)
+        n2 = b.add_neuron(i2, tensor=0.0, connect_to=i1, direction="uni")
+        for s in list(getattr(n2, "outgoing", [])):
+            if s.target is n1:
+                b.remove_synapse(s)
         b.connect(i1, i2, direction="uni")
         w = Wanderer(b)
         # Use curriculum

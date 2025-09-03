@@ -7,8 +7,12 @@ class UltraNeuroplasticityPluginSuiteTests(unittest.TestCase):
 
         b = Brain(2, size=(3, 3))
         idxs = list(b.available_indices())
-        b.add_neuron(idxs[0], tensor=[0.0])
-        b.add_neuron(idxs[1], tensor=[0.0])
+        first = b.add_neuron(idxs[0], tensor=[0.0])
+        second = b.add_neuron(idxs[1], tensor=[0.0], connect_to=idxs[0])
+        # remove auto synapse and reconnect as originally
+        for s in list(getattr(second, "outgoing", [])):
+            if s.target is first:
+                b.remove_synapse(s)
         b.connect(idxs[0], idxs[1], direction="uni")
         return b
 

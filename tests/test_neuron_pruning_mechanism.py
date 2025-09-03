@@ -9,7 +9,11 @@ class TestNeuronPruningMechanism(unittest.TestCase):
     def test_prune_after_two_hits(self) -> None:
         b = Brain(1, mode="sparse", sparse_bounds=((0.0, None),))
         n1 = b.add_neuron((0.0,), tensor=[0.0])
-        n2 = b.add_neuron((1.0,), tensor=[0.0])
+        n2 = b.add_neuron((1.0,), tensor=[0.0], connect_to=(0.0,))
+        # remove auto connection and reconnect both directions
+        for s in list(getattr(n2, "outgoing", [])):
+            if s.target is n1:
+                b.remove_synapse(s)
         b.connect((0.0,), (1.0,), direction="uni")
         b.connect((1.0,), (0.0,), direction="uni")
 

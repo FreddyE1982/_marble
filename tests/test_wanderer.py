@@ -11,7 +11,10 @@ class TestWanderer(unittest.TestCase):
         # Build a tiny sparse brain with two neurons connected bidirectionally
         b = self.Brain(2, mode="sparse", sparse_bounds=((0.0, None), (0.0, None)))
         n1 = b.add_neuron((0.0, 0.0), tensor=[1.0, 2.0], weight=1.0, bias=0.5)
-        n2 = b.add_neuron((1.0, 0.0), tensor=[0.5, 1.5], weight=0.8, bias=-0.2)
+        n2 = b.add_neuron((1.0, 0.0), tensor=[0.5, 1.5], weight=0.8, bias=-0.2, connect_to=(0.0, 0.0))
+        for s in list(getattr(n2, "outgoing", [])):
+            if s.target is n1:
+                b.remove_synapse(s)
         b.connect((0.0, 0.0), (1.0, 0.0), direction="bi")
 
         # Snapshot original weights/biases
@@ -51,7 +54,10 @@ class TestWanderer(unittest.TestCase):
 
         b = Brain(2, mode="sparse", sparse_bounds=((0.0, None), (0.0, None)))
         b.add_neuron((0.0, 0.0), tensor=[1.0], weight=1.0, bias=0.0)
-        b.add_neuron((1.0, 0.0), tensor=[1.0], weight=1.0, bias=0.0)
+        n2 = b.add_neuron((1.0, 0.0), tensor=[1.0], weight=1.0, bias=0.0, connect_to=(0.0, 0.0))
+        for s in list(getattr(n2, "outgoing", [])):
+            if s.target is b.get_neuron((0.0, 0.0)):
+                b.remove_synapse(s)
         b.connect((0.0, 0.0), (1.0, 0.0), direction="bi")
 
         w = Wanderer(b, type_name="det", seed=1)

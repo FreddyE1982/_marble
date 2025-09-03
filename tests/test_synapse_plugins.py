@@ -7,7 +7,11 @@ class TestAdvancedSynapsePlugins(unittest.TestCase):
 
         b = Brain(2, mode="sparse", sparse_bounds=((0.0, None), (0.0, None)))
         b.add_neuron((0.0, 0.0), tensor=[1.0], weight=1.0, bias=0.0)
-        b.add_neuron((1.0, 0.0), tensor=[0.0], weight=1.0, bias=0.0)
+        n2 = b.add_neuron((1.0, 0.0), tensor=[0.0], weight=1.0, bias=0.0, connect_to=(0.0, 0.0))
+        # remove auto synapse and reconnect with plugin
+        for s in list(getattr(n2, "outgoing", [])):
+            if getattr(getattr(s, "target", None), "position", None) == (0.0, 0.0):
+                b.remove_synapse(s)
         b.connect((0.0, 0.0), (1.0, 0.0), direction="uni", type_name=plugin_name)
         return b
 

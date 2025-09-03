@@ -13,7 +13,10 @@ class TestWandererHelperAndSynapse(unittest.TestCase):
 
         b = self.Brain(2, mode="sparse", sparse_bounds=((0.0, None), (0.0, None)))
         n1 = b.add_neuron((0.0, 0.0), tensor=[1.0], weight=1.0, bias=0.0)
-        n2 = b.add_neuron((1.0, 0.0), tensor=[0.0], weight=1.0, bias=0.0)
+        n2 = b.add_neuron((1.0, 0.0), tensor=[0.0], weight=1.0, bias=0.0, connect_to=(0.0, 0.0))
+        for s_tmp in list(getattr(n2, "outgoing", [])):
+            if s_tmp.target is n1:
+                b.remove_synapse(s_tmp)
         s = b.connect((0.0, 0.0), (1.0, 0.0), direction="uni")
         # Ensure synapse has weight and scaling applies
         self.assertTrue(hasattr(s, "weight"))
@@ -26,8 +29,11 @@ class TestWandererHelperAndSynapse(unittest.TestCase):
 
     def test_run_wanderer_training_history(self):
         b = self.Brain(2, mode="sparse", sparse_bounds=((0.0, None), (0.0, None)))
-        b.add_neuron((0.0, 0.0), tensor=[1.0], weight=1.0, bias=0.0)
-        b.add_neuron((1.0, 0.0), tensor=[1.0], weight=1.0, bias=0.0)
+        first = b.add_neuron((0.0, 0.0), tensor=[1.0], weight=1.0, bias=0.0)
+        second = b.add_neuron((1.0, 0.0), tensor=[1.0], weight=1.0, bias=0.0, connect_to=(0.0, 0.0))
+        for s_tmp in list(getattr(second, "outgoing", [])):
+            if s_tmp.target is first:
+                b.remove_synapse(s_tmp)
         b.connect((0.0, 0.0), (1.0, 0.0), direction="bi")
 
         pre_brain_id = id(b)

@@ -26,9 +26,20 @@ class TestConvImprovement(unittest.TestCase):
         def add_free(tensor):
             for idx in b.available_indices():
                 if b.get_neuron(idx) is None:
+                    if b.neurons:
+                        first_idx = next(iter(b.neurons.keys()))
+                        neuron = b.add_neuron(idx, tensor=tensor, connect_to=first_idx)
+                        for s in list(getattr(neuron, "outgoing", [])):
+                            if s.target is b.get_neuron(first_idx):
+                                b.remove_synapse(s)
+                        return neuron
                     return b.add_neuron(idx, tensor=tensor)
-            # As fallback use the first index (should not happen in small tests)
-            return b.add_neuron(b.available_indices()[0], tensor=tensor)
+            first_idx = next(iter(b.neurons.keys()))
+            neuron = b.add_neuron(b.available_indices()[0], tensor=tensor, connect_to=first_idx)
+            for s in list(getattr(neuron, "outgoing", [])):
+                if s.target is b.get_neuron(first_idx):
+                    b.remove_synapse(s)
+            return neuron
 
         p = []
         p.append(add_free(list(kernel_vals)))
@@ -49,10 +60,14 @@ class TestConvImprovement(unittest.TestCase):
         avail = b.available_indices()
         # Data neuron with non-zero values
         data = b.add_neuron(avail[0], tensor=[1.0, 2.0, 3.0])
-        # Destination neuron
-        dst = b.add_neuron(avail[1], tensor=[0.0])
-        # Base alternative neuron
-        base = b.add_neuron(avail[2], tensor=[0.0])
+        dst = b.add_neuron(avail[1], tensor=[0.0], connect_to=avail[0], direction="uni")
+        for s in list(getattr(dst, "outgoing", [])):
+            if s.target is data:
+                b.remove_synapse(s)
+        base = b.add_neuron(avail[2], tensor=[0.0], connect_to=avail[0], direction="uni")
+        for s in list(getattr(base, "outgoing", [])):
+            if s.target is data:
+                b.remove_synapse(s)
         # Path baseline: data -> base -> dst
         b.connect(avail[0], avail[2], direction="uni")
         b.connect(avail[2], avail[1], direction="uni")
@@ -63,10 +78,16 @@ class TestConvImprovement(unittest.TestCase):
         conv = None
         for idx in avail:
             if b.get_neuron(idx) is None:
-                conv = b.add_neuron(idx, tensor=[0.0])
+                conv = b.add_neuron(idx, tensor=[0.0], connect_to=avail[0], direction="uni")
+                for s in list(getattr(conv, "outgoing", [])):
+                    if s.target is data:
+                        b.remove_synapse(s)
                 break
         if conv is None:
-            conv = b.add_neuron(avail[3], tensor=[0.0])
+            conv = b.add_neuron(avail[3], tensor=[0.0], connect_to=avail[0], direction="uni")
+            for s in list(getattr(conv, "outgoing", [])):
+                if s.target is data:
+                    b.remove_synapse(s)
         # Wire PARAMS and DATA, then outgoing
         self.wire_params(b, conv, params)
         self.wire_data(b, conv, [data])
