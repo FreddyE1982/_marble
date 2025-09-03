@@ -104,14 +104,23 @@ class FindBestNeuronTypeRoutine:
                         # Failed to create due to unmet wiring requirements
                         continue
                     neuro_bak = getattr(w, "_neuro_plugins", [])
+                    leave_bak = getattr(w, "pbar_leave", True)
+                    verb_bak = getattr(w, "pbar_verbose", True)
                     try:
                         setattr(w, "_neuro_plugins", [])
+                        setattr(w, "pbar_leave", False)
+                        setattr(w, "pbar_verbose", False)
                         res = w.walk(max_steps=1, start=n, lr=0.0)
                         cand_loss = float(res.get("loss", baseline))
                     except Exception:
                         cand_loss = baseline
                     finally:
                         setattr(w, "_neuro_plugins", neuro_bak)
+                        try:
+                            setattr(w, "pbar_leave", leave_bak)
+                            setattr(w, "pbar_verbose", verb_bak)
+                        except Exception:
+                            pass
                         try:
                             brain.remove_neuron(n)
                         except Exception:
