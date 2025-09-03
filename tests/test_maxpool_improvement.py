@@ -24,8 +24,20 @@ class TestMaxPoolImprovement(unittest.TestCase):
     def _add_free(self, b, tensor):
         for idx in b.available_indices():
             if b.get_neuron(idx) is None:
+                if b.neurons:
+                    first_idx = next(iter(b.neurons.keys()))
+                    n = b.add_neuron(idx, tensor=tensor, connect_to=first_idx)
+                    for s in list(getattr(n, "outgoing", [])):
+                        if s.target is b.get_neuron(first_idx):
+                            b.remove_synapse(s)
+                    return n
                 return b.add_neuron(idx, tensor=tensor)
-        return b.add_neuron(b.available_indices()[0], tensor=tensor)
+        first_idx = next(iter(b.neurons.keys()))
+        n = b.add_neuron(b.available_indices()[0], tensor=tensor, connect_to=first_idx)
+        for s in list(getattr(n, "outgoing", [])):
+            if s.target is b.get_neuron(first_idx):
+                b.remove_synapse(s)
+        return n
 
     def _loss_after_walk(self, w, steps, start):
         stats = w.walk(max_steps=steps, start=start, lr=1e-2)

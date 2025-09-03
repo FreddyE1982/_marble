@@ -7,9 +7,18 @@ class LobeTrainingTests(unittest.TestCase):
     def test_lobe_independent_training_and_plugins(self):
         b = Brain(1, size=4)
         n0 = b.add_neuron((0,), tensor=1.0)
-        n1 = b.add_neuron((1,), tensor=0.0)
-        n2 = b.add_neuron((2,), tensor=1.0)
-        n3 = b.add_neuron((3,), tensor=0.0)
+        n1 = b.add_neuron((1,), tensor=0.0, connect_to=(0,), direction="uni")
+        for s in list(getattr(n1, "outgoing", [])):
+            if s.target is n0:
+                b.remove_synapse(s)
+        n2 = b.add_neuron((2,), tensor=1.0, connect_to=(0,), direction="uni")
+        for s in list(getattr(n2, "outgoing", [])):
+            if s.target is n0:
+                b.remove_synapse(s)
+        n3 = b.add_neuron((3,), tensor=0.0, connect_to=(0,), direction="uni")
+        for s in list(getattr(n3, "outgoing", [])):
+            if s.target is n0:
+                b.remove_synapse(s)
         s01 = b.connect((0,), (1,))
         s23 = b.connect((2,), (3,))
 

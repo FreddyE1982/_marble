@@ -15,8 +15,14 @@ class TestWayfinderPlugin(unittest.TestCase):
     def test_map_and_learnables(self):
         b = self.Brain(2, mode="sparse", sparse_bounds=((0.0, None), (0.0, None)))
         n0 = b.add_neuron((0.0, 0.0), tensor=[1.0], weight=1.0, bias=0.0)
-        n1 = b.add_neuron((1.0, 0.0), tensor=[1.0], weight=1.0, bias=0.0)
-        n2 = b.add_neuron((0.0, 1.0), tensor=[1.0], weight=1.0, bias=0.0)
+        n1 = b.add_neuron((1.0, 0.0), tensor=[1.0], weight=1.0, bias=0.0, connect_to=(0.0, 0.0))
+        for s in list(getattr(n1, "outgoing", [])):
+            if s.target is n0:
+                b.remove_synapse(s)
+        n2 = b.add_neuron((0.0, 1.0), tensor=[1.0], weight=1.0, bias=0.0, connect_to=(0.0, 0.0))
+        for s in list(getattr(n2, "outgoing", [])):
+            if s.target is n0:
+                b.remove_synapse(s)
         b.connect((0.0, 0.0), (1.0, 0.0), direction="uni")
         b.connect((0.0, 0.0), (0.0, 1.0), direction="uni")
 

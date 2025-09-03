@@ -12,8 +12,14 @@ class TestQuantumTypeNeuron(unittest.TestCase):
 
         b = Brain(1, size=(3,))
         src = b.add_neuron((0,), tensor=[2.0])
-        q = b.add_neuron((1,), tensor=[0.0], type_name="quantumtype")
-        dst = b.add_neuron((2,), tensor=[0.0])
+        q = b.add_neuron((1,), tensor=[0.0], type_name="quantumtype", connect_to=(0,), direction="uni")
+        for s in list(getattr(q, "outgoing", [])):
+            if s.target is src:
+                b.remove_synapse(s)
+        dst = b.add_neuron((2,), tensor=[0.0], connect_to=(0,), direction="uni")
+        for s in list(getattr(dst, "outgoing", [])):
+            if s.target is src:
+                b.remove_synapse(s)
         b.connect((0,), (1,), direction="uni")
         b.connect((1,), (2,), direction="uni")
 

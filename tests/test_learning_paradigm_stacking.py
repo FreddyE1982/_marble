@@ -18,8 +18,14 @@ class TestLearningParadigmStacking(unittest.TestCase):
         it = iter(b.available_indices())
         i1 = next(it); i2 = next(it); i3 = next(it)
         n1 = b.add_neuron(i1, tensor=[1.0])
-        n2 = b.add_neuron(i2, tensor=[0.5])
-        n3 = b.add_neuron(i3, tensor=[0.25])
+        n2 = b.add_neuron(i2, tensor=[0.5], connect_to=i1, direction="uni")
+        for s in list(getattr(n2, "outgoing", [])):
+            if s.target is n1:
+                b.remove_synapse(s)
+        n3 = b.add_neuron(i3, tensor=[0.25], connect_to=i2, direction="uni")
+        for s in list(getattr(n3, "outgoing", [])):
+            if s.target is n2:
+                b.remove_synapse(s)
         s12 = b.connect(i1, i2, direction="uni")
         s23 = b.connect(i2, i3, direction="uni")
 

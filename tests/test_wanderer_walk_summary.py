@@ -21,8 +21,11 @@ class TestWandererWalkSummary(unittest.TestCase):
         self.clear_report_group("training")
 
         b = self.Brain(2, mode="sparse", sparse_bounds=((0.0, None), (0.0, None)))
-        b.add_neuron((0.0, 0.0), tensor=[1.0], weight=1.0, bias=0.0)
-        b.add_neuron((1.0, 0.0), tensor=[1.0], weight=1.0, bias=0.0)
+        first = b.add_neuron((0.0, 0.0), tensor=[1.0], weight=1.0, bias=0.0)
+        second = b.add_neuron((1.0, 0.0), tensor=[1.0], weight=1.0, bias=0.0, connect_to=(0.0, 0.0))
+        for s in list(getattr(second, "outgoing", [])):
+            if s.target is first:
+                b.remove_synapse(s)
         b.connect((0.0, 0.0), (1.0, 0.0), direction="bi")
 
         w = self.Wanderer(b, seed=123)

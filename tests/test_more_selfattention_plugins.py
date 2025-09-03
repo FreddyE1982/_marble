@@ -6,9 +6,13 @@ class MoreSelfAttentionPluginTests(unittest.TestCase):
         from marble.marblemain import Brain
         b = Brain(1, size=2)
         idxs = list(b.available_indices())
-        b.add_neuron(idxs[0], tensor=[0.0])
+        first = b.add_neuron(idxs[0], tensor=[0.0])
         if len(idxs) > 1:
-            b.add_neuron(idxs[1], tensor=[0.0])
+            second = b.add_neuron(idxs[1], tensor=[0.0], connect_to=idxs[0])
+            # remove auto synapse from second->first and recreate bidirectional link
+            for s in list(getattr(second, "outgoing", [])):
+                if s.target is first:
+                    b.remove_synapse(s)
             b.connect(idxs[0], idxs[1], direction="bi")
         return b
 

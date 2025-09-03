@@ -10,7 +10,11 @@ class TestResourceAllocatorPlugin(unittest.TestCase):
     def test_plugin_active_by_default_and_params(self):
         b = self.Brain(1, size=(4,))
         n1 = b.add_neuron((0,), tensor=0.0)
-        n2 = b.add_neuron((1,), tensor=0.0)
+        n2 = b.add_neuron((1,), tensor=0.0, connect_to=(0,), direction="uni")
+        # remove auto-created connection from n2->n1 to match original graph
+        for s in list(getattr(n2, "outgoing", [])):
+            if s.target is n1:
+                b.remove_synapse(s)
         b.connect(getattr(n1, "position"), getattr(n2, "position"), direction="uni")
         w = self.Wanderer(b)
         names = [p.__class__.__name__ for p in getattr(w, "_wplugins", [])]
