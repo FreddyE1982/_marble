@@ -1108,7 +1108,15 @@ class Brain:
                 raise ValueError("coordinate length must equal n")
             return coords
 
-    def add_neuron(self, index: Sequence[int], *, tensor: Union[TensorLike, Sequence[float], float, int] = 0.0, **kwargs: Any) -> Neuron:
+    def add_neuron(
+        self,
+        index: Sequence[int],
+        *,
+        tensor: Union[TensorLike, Sequence[float], float, int] = 0.0,
+        connect_to: Optional[Sequence[int]] = None,
+        direction: str = "bi",
+        **kwargs: Any,
+    ) -> Neuron:
         if self.mode == "grid":
             idx = tuple(int(i) for i in index)
             if getattr(self, "dynamic", False):
@@ -1142,6 +1150,12 @@ class Brain:
             except Exception:
                 pass
             self.neurons_added += 1
+            if len(self.neurons) > 1:
+                if connect_to is None:
+                    raise RuntimeError(
+                        "tried to create a neuron not connected to at least one another neuron via at least one other synapse"
+                    )
+                self.connect(idx, connect_to, direction=direction)
             return neuron
         else:
             coords = tuple(float(v) for v in index)
@@ -1161,6 +1175,12 @@ class Brain:
             except Exception:
                 pass
             self.neurons_added += 1
+            if len(self.neurons) > 1:
+                if connect_to is None:
+                    raise RuntimeError(
+                        "tried to create a neuron not connected to at least one another neuron via at least one other synapse"
+                    )
+                self.connect(coords, connect_to, direction=direction)
             return neuron
 
     def get_neuron(self, index: Sequence[int]) -> Optional[Neuron]:
