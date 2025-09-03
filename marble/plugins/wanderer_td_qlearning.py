@@ -21,10 +21,14 @@ class TDQLearningPlugin:
         if st is None:
             syn._plugin_state = {}
             st = syn._plugin_state
-        q = st.get("q", 0.0)
+        q = st.get("q")
+        if q is None:
+            st["q"] = 0.0
+            return 0.0
         try:
             return float(q)
         except Exception:
+            st["q"] = 0.0
             return 0.0
 
     def _set_q(self, syn: "Synapse", q: float) -> None:

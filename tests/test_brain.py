@@ -27,7 +27,7 @@ class TestBrain(unittest.TestCase):
 
         # Connect two neurons inside
         p2 = (6, 5)
-        b.add_neuron(p2, tensor=[0.0])
+        b.add_neuron(p2, tensor=[0.0], connect_to=center, direction="uni")
         s = b.connect(center, p2)
         print("brain add synapse count:", len(b.synapses))
         self.assertIn(s, b.synapses)
