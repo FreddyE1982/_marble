@@ -150,17 +150,15 @@ class UniversalTensorCodec:
             return False
 
     def _select_device(self) -> str:
+        """Prefer CUDA when available, otherwise fall back to CPU."""
         if self._torch is None:
             return "cpu"
         try:
-            return str(self._torch.tensor(0).device)
+            if self._torch.cuda.is_available():
+                return "cuda"
         except Exception:
-            try:
-                if self._torch.cuda.is_available():
-                    return "cuda"
-            except Exception:
-                pass
-            return "cpu"
+            pass
+        return "cpu"
 
 
 __all__ = ["UniversalTensorCodec", "TensorLike"]
