@@ -12,8 +12,9 @@ Usage:
     py -3 examples/run_hf_image_quality.py
 """
 
-print("Importing packages..")
 from __future__ import annotations
+
+print("Importing packages..")
 
 from typing import Iterator, Any, Dict
 import os
@@ -240,6 +241,8 @@ def main(
         "*",  # shorthand for all other plugins
     ]
     wplugins = expand_wplugins(wplugins)
+    if "synthetictrainer" in wplugins:
+        wplugins.remove("synthetictrainer")
     neuro_cfg = {
         "grow_on_step_when_stuck": True,
         "max_new_per_walk": 1,
