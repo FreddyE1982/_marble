@@ -12,6 +12,7 @@ Usage:
     py -3 examples/run_hf_image_quality.py
 """
 
+print("Importing packages..")
 from __future__ import annotations
 
 from typing import Iterator, Any, Dict
@@ -42,6 +43,8 @@ from marble.plugins.selfattention_noise_profiler import ContextAwareNoiseRoutine
 from marble.plugins.wanderer_autoplugin import AutoPlugin
 from marble.plugins.wanderer_resource_allocator import clear as clear_resources
 from marble.plugins.auto_target_scaler import AutoTargetScalerPlugin
+
+print("...complete")
 
 
 class QualityAwareRoutine:
@@ -122,6 +125,8 @@ def main(
         hf_retries = int(os.environ.get("MARBLE_IMG_RETRY", "5"))
     except Exception:
         hf_retries = 5
+        
+    print("Connecting to dataset...")
     ds = load_hf_streaming_dataset(
         "Rapidata/Imagen-4-ultra-24-7-25_t2i_human_preference",
         split="train",
@@ -131,6 +136,7 @@ def main(
         cache_images=cache_enabled,
         cache_size=cache_size,
     )
+    print("...done")
     # Consumed fields: prompt, image1, image2, weighted_results_image1_preference,
     # weighted_results_image2_preference, weighted_results_image1_alignment,
     # weighted_results_image2_alignment
@@ -141,6 +147,9 @@ def main(
         else 1
     )
     kuzu_db = os.environ.get("MARBLE_KUZU_DB", "brain_topology.db")
+    
+    print("Initializing brain...")
+    
     brain = Brain(
         dims,
         size=None,
@@ -151,6 +160,8 @@ def main(
         snapshot_keep=10,
         kuzu_path=kuzu_db,
     )
+    
+    print("...done")
     # Ensure every newly added neuron defaults to the autoneuron type
     _orig_add = brain.add_neuron
 
@@ -294,7 +305,8 @@ def main(
             n = br.add_neuron(idx, tensor=0.0, type_name="autoneuron")
         n.receive(enc)
         return n
-
+    
+    print("Starting training loop...")
     for _ in range(int(epochs)):
         pairs = _sample_pairs(ds, max_pairs=max_pairs)
         start_time = time.perf_counter()
