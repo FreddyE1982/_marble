@@ -130,18 +130,17 @@ class ProgressBar(ProgressBarBase):
         status: Dict[str, Any] = data.get("status", {})
         try:
             self._bar.set_postfix(
-                brain=f"{data.get('cur_size', 0)}/{data.get('cap', '-')}",
+                neurons=f"{data.get('cur_size', 0)}/{data.get('cap', '-')}",
                 loss=f"{data.get('cur_loss', 0.0):.4f}",
                 mean_loss=f"{data.get('mean_loss', 0.0):.4f}",
                 loss_speed=f"{data.get('loss_speed', 0.0):.4f}",
                 mean_loss_speed=f"{data.get('mean_loss_speed', 0.0):.4f}",
-                neurons=data.get("cur_size", 0),
                 neurons_added=status.get("neurons_added", 0),
                 synapses=data.get("synapses", 0),
                 synapses_added=status.get("synapses_added", 0),
                 neurons_pruned=status.get("neurons_pruned", 0),
                 synapses_pruned=status.get("synapses_pruned", 0),
-                paths=data.get("paths", data.get("synapses", 0)),
+                paths=data.get("paths", 0),
                 speed=f"{data.get('mean_speed', 0.0):.2f}",
             )
         except Exception:  # pragma: no cover - cosmetic only
