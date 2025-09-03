@@ -259,7 +259,12 @@ class _ConvNDCommon:
     def _to_list1d(self, x) -> list:
         try:
             if hasattr(x, "detach") and hasattr(x, "tolist"):
-                lst = x.detach().to("cpu").view(-1).tolist()
+                owner = getattr(self, "owner", None)
+                dev = getattr(owner, "_device", getattr(self, "_device", "cpu"))
+                try:
+                    lst = x.detach().to(dev).view(-1).tolist()
+                except Exception:
+                    lst = x.detach().to("cpu").view(-1).tolist()
             elif isinstance(x, (list, tuple)):
                 # Flatten nested lists
                 def flat(z):
@@ -318,7 +323,12 @@ class _AdaptiveLRRoutine:
 
     def after_step(self, selfattention: "SelfAttention", reporter_ro: Any, wanderer: "Wanderer", step_index: int, ctx: Dict[str, Any]):
         try:
-            cur = float(ctx.get("cur_loss_tensor").detach().to("cpu").item()) if ctx.get("cur_loss_tensor") is not None else None
+            cur_loss = ctx.get("cur_loss_tensor")
+            if cur_loss is not None and hasattr(cur_loss, "detach"):
+                dev = getattr(wanderer, "_device", "cpu")
+                cur = float(cur_loss.detach().to(dev).item())
+            else:
+                cur = None
         except Exception:
             cur = None
         # Determine base lr
@@ -711,11 +721,16 @@ class HebbianParadigm:
         self.decay = float(cfg.get("hebbian_decay", 0.0))
         self._prev_syn: Optional["Synapse"] = None
         self._prev_mean: Optional[float] = None
+        self.owner: Optional["Wanderer"] = None
+
+    def on_wanderer(self, wanderer: "Wanderer") -> None:
+        self.owner = wanderer
 
     def _mean_val(self, x: Any) -> Optional[float]:
         try:
             if hasattr(x, "detach") and hasattr(x, "to"):
-                v = x.detach().to("cpu").view(-1).float()
+                dev = getattr(getattr(self, "owner", None), "_device", "cpu")
+                v = x.detach().to(dev).view(-1).float()
                 return float(v.mean().item()) if v.numel() > 0 else None
             if isinstance(x, (list, tuple)) and x:
                 return float(sum(float(v) for v in x) / len(x))
