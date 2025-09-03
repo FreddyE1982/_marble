@@ -99,7 +99,7 @@ The following test modules still need to be run and outputs analyzed:
 - tests/test_wanderer_alternate_paths_creator.py [complete]
 - tests/test_wanderer_bestpath_weights.py [complete]
 - tests/test_wanderer_walk_summary.py [complete]
-- tests/test_wanderer_wayfinder_plugin.py [complete]
+    - tests/test_wanderer_wayfinder_plugin.py [complete]
 
 # SelfAttention metrics integration
 
@@ -114,3 +114,15 @@ decisions.
    usage to `REPORTER`. [complete]
 3. Expand tests to cover metric-driven behaviour for every plugin. [complete]
 4. Document the available metrics and integration guidelines in `ARCHITECTURE.md`. [complete]
+
+# Device-aware plugin refactor
+
+## Goal
+Ensure plugins operate on the active device without unnecessary CPU casts.
+
+## Steps
+1. Refactor Conv1DNeuronPlugin to cast tensors via `neuron._device` instead of hard-coded CPU transfers. [complete]
+2. Extend this device-aware approach to the remaining plugin modules, replacing `.to("cpu")` with `.to(owner._device)` and limiting `detach()` to logging or Python-scalar extraction.
+
+## Pending tests
+- tests/test_conv_improvement.py

@@ -31,10 +31,10 @@ class Conv1DNeuronPlugin:
             return (0, tuple(pos))
         return (1, id(src))
 
-    def _to_list1d(self, x) -> list:
+    def _to_list1d(self, x, device="cpu") -> list:
         try:
             if hasattr(x, "detach") and hasattr(x, "tolist"):
-                lst = x.detach().to("cpu").view(-1).tolist()
+                lst = x.detach().to(device).view(-1).tolist()
             elif isinstance(x, (list, tuple)):
                 lst = list(x)
             else:
@@ -49,8 +49,8 @@ class Conv1DNeuronPlugin:
                 out.append(0.0)
         return out
 
-    def _first_scalar(self, x, *, default: float = 0.0, min_val: Optional[float] = None) -> float:
-        vals = self._to_list1d(x)
+    def _first_scalar(self, x, *, default: float = 0.0, min_val: Optional[float] = None, device="cpu") -> float:
+        vals = self._to_list1d(x, device)
         v = float(vals[0]) if vals else float(default)
         if min_val is not None and v < min_val:
             v = float(min_val)
@@ -76,11 +76,12 @@ class Conv1DNeuronPlugin:
         d_src = sel[3].source
         b_src = sel[4].source
 
-        kernel = self._to_list1d(getattr(k_src, "tensor", [])) or [1.0]
-        stride = int(self._first_scalar(getattr(s_src, "tensor", 1.0), default=1.0, min_val=1.0))
-        padding = int(max(0.0, self._first_scalar(getattr(p_src, "tensor", 0.0), default=0.0)))
-        dilation = int(self._first_scalar(getattr(d_src, "tensor", 1.0), default=1.0, min_val=1.0))
-        bias = float(self._first_scalar(getattr(b_src, "tensor", 0.0), default=0.0))
+        device = getattr(neuron, "_device", "cpu")
+        kernel = self._to_list1d(getattr(k_src, "tensor", []), device) or [1.0]
+        stride = int(self._first_scalar(getattr(s_src, "tensor", 1.0), default=1.0, min_val=1.0, device=device))
+        padding = int(max(0.0, self._first_scalar(getattr(p_src, "tensor", 0.0), default=0.0, device=device)))
+        dilation = int(self._first_scalar(getattr(d_src, "tensor", 1.0), default=1.0, min_val=1.0, device=device))
+        bias = float(self._first_scalar(getattr(b_src, "tensor", 0.0), default=0.0, device=device))
 
         lstore = getattr(neuron, "_plugin_state", {}).get("learnable_params", {})
         learn_kernel = lstore.get("kernel")
@@ -91,14 +92,13 @@ class Conv1DNeuronPlugin:
             data_incs.sort(key=self._key_src)
             x_list_all: List[float] = []
             for s in data_incs:
-                x_list_all += self._to_list1d(getattr(s.source, "tensor", []))
+                x_list_all += self._to_list1d(getattr(s.source, "tensor", []), device)
             x1 = x_list_all
         else:
             x = input_value if input_value is not None else getattr(neuron, "tensor", [])
-            x1 = self._to_list1d(x)
+            x1 = self._to_list1d(x, device)
 
         torch = getattr(neuron, "_torch", None)
-        device = getattr(neuron, "_device", "cpu")
         if torch is not None and str(device) == "cuda":
             try:
                 xt = torch.tensor(x1, dtype=torch.float32, device=device).view(1, 1, -1)
@@ -126,13 +126,13 @@ class Conv1DNeuronPlugin:
         y_list: List[float] = []
         if hasattr(learn_kernel, "detach"):
             try:
-                kernel = list(learn_kernel.detach().to("cpu").view(-1).tolist())
+                kernel = list(learn_kernel.detach().to(device).view(-1).tolist())
                 klen = len(kernel)
             except Exception:
                 pass
         if hasattr(learn_bias, "detach"):
             try:
-                bias = float(learn_bias.detach().to("cpu").view(-1)[0].item())
+                bias = float(learn_bias.detach().to(device).view(-1)[0].item())
             except Exception:
                 try:
                     bias = float(learn_bias)
