@@ -7,6 +7,7 @@ class TestBatchTrainingPlugin(unittest.TestCase):
     def test_batch_training_and_single_inference(self):
         codec = UniversalTensorCodec()
         brain = Brain(1)
+        start = brain.add_neuron(brain.available_indices()[0], tensor=0.0)
         data = [([1.0], [2.0]), ([2.0], [4.0]), ([3.0], [6.0]), ([4.0], [8.0])]
         run_training_with_datapairs(
             brain,
@@ -18,6 +19,7 @@ class TestBatchTrainingPlugin(unittest.TestCase):
             batch_size=2,
             streaming=False,
             seed=1,
+            left_to_start=lambda _l, _b: start,
         )
         neuron = next(iter(brain.neurons.values()))
         out = neuron.forward([2.0])

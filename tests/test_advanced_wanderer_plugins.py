@@ -8,8 +8,7 @@ class AdvancedWandererPluginSuiteTests(unittest.TestCase):
     def make_brain(self):
         b = Brain(2, mode="sparse", sparse_bounds=((0.0, None), (0.0, None)))
         b.add_neuron((0.0, 0.0), tensor=[1.0], weight=1.0, bias=0.0)
-        b.add_neuron((1.0, 0.0), tensor=[1.0], weight=1.0, bias=0.0)
-        b.connect((0.0, 0.0), (1.0, 0.0), direction="bi")
+        b.add_neuron((1.0, 0.0), tensor=[1.0], weight=1.0, bias=0.0, connect_to=(0.0, 0.0))
         return b
 
     def test_advanced_wanderer_plugins_register_learnables(self):

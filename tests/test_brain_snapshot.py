@@ -14,9 +14,8 @@ class TestBrainSnapshot(unittest.TestCase):
         codec = UniversalTensorCodec()
         tokens = codec.encode("foo bar foo bar")
         b.codec = codec
-        b.add_neuron((0,), tensor=[1.0])
         b.add_neuron((1,), tensor=[0.0])
-        b.connect((0,), (1,))
+        b.add_neuron((0,), tensor=[1.0], connect_to=(1,), direction="uni")
         snap_path = b.save_snapshot()
         print("snapshot path:", snap_path)
         loaded = Brain.load_snapshot(snap_path)

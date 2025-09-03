@@ -13,9 +13,8 @@ class TestBrainStatus(unittest.TestCase):
 
     def test_brain_status_counts(self):
         b = self.Brain(2)
-        b.add_neuron((0, 0))
         b.add_neuron((1, 1))
-        b.connect((0, 0), (1, 1))
+        b.add_neuron((0, 0), connect_to=(1, 1), direction="uni")
         b.remove_neuron(b.get_neuron((1, 1)))
         status = b.status()
         print("brain status:", status)

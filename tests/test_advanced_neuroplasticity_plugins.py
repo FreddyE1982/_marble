@@ -5,9 +5,8 @@ class AdvancedNeuroplasticityPluginSuiteTests(unittest.TestCase):
         from marble.marblemain import Brain
         b = Brain(2, size=(3, 3))
         idxs = list(b.available_indices())
-        b.add_neuron(idxs[0], tensor=[0.0])
         b.add_neuron(idxs[1], tensor=[0.0])
-        b.connect(idxs[0], idxs[1], direction="uni")
+        b.add_neuron(idxs[0], tensor=[0.0], connect_to=idxs[1], direction="uni")
         return b
 
     def test_plugins_register_learnables(self):
