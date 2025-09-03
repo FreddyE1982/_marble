@@ -420,6 +420,13 @@ class Wanderer(_DeviceHelper):
         except Exception:
             leave_flag = False
         pbar = tqdm_cls(total=max_steps, leave=leave_flag)
+        try:
+            pbar.bar_format = (
+                "{desc} {percentage:3.0f}% steps: {n_fmt}/{total_fmt}"
+                " [{elapsed}<{remaining}, {rate_fmt}{postfix}]"
+            )
+        except Exception:
+            pass
         # Announce walk start explicitly (per-walk output)
         try:
             if bool(getattr(self, "pbar_verbose", False)):
@@ -670,8 +677,10 @@ class Wanderer(_DeviceHelper):
             except Exception:
                 cur_size = len(getattr(self.brain, "neurons", {}))
                 cap = None
-            desc = f"{getattr(self.brain, '_progress_epoch', 0)+1}/{getattr(self.brain, '_progress_total_epochs', 1)} epochs "
-            desc += f"{getattr(self.brain, '_progress_walk', 0)+1}/{getattr(self.brain, '_progress_total_walks', 1)} walks"
+            desc = (
+                f"{getattr(self.brain, '_progress_epoch', 0)+1}/{getattr(self.brain, '_progress_total_epochs', 1)} epochs "
+                f"{getattr(self.brain, '_progress_walk', 0)+1}/{getattr(self.brain, '_progress_total_walks', 1)} walks:"
+            )
             pbar.set_description(desc)
             try:
                 status = getattr(self.brain, "status", lambda: {})()
