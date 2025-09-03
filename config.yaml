@@ -8,3 +8,4 @@ resource_allocator:
 max_flat_steps: 5  # consecutive zero-delta steps before pruning/connection
 auto_scale_targets: false  # scale tiny targets to match output magnitude
 auto_max_steps_interval: 10  # recompute wanderer max_steps every N datapairs
+gc_interval: 10  # run gc.collect every N batches; 0 disables
