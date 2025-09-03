@@ -204,6 +204,7 @@ def main(
         "DistillationPlugin",
         "WanderAlongSynapseWeightsPlugin",
         "DynamicDimensionsPlugin",
+        "MixedPrecisionPlugin",  # auto loss scaling via mixed precision
         "QualityAwareRoutine",
         "AdaptiveGradClipRoutine",
         "FindBestNeuronTypeRoutine",
@@ -236,6 +237,7 @@ def main(
         "distillation",
         "wanderalongsynapseweights",
         "dynamicdimensions",
+        "mixedprecision",  # ensure GradScaler handles loss scaling
         "autoplugin_logger",
         "auto_target_scaler",
         "*",  # shorthand for all other plugins
