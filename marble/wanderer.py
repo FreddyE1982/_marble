@@ -476,7 +476,7 @@ class Wanderer(_DeviceHelper):
                 return holder.w, holder.b
             try:
                 wt_val = (
-                    float(n.weight.detach().to("cpu").item())
+                    float(n.weight.detach().cpu().item())
                     if hasattr(getattr(n, "weight", None), "detach")
                     else float(getattr(n, "weight", 0.0))
                 )
@@ -484,7 +484,7 @@ class Wanderer(_DeviceHelper):
                 wt_val = float(getattr(n, "weight", 0.0))
             try:
                 bs_val = (
-                    float(n.bias.detach().to("cpu").item())
+                    float(n.bias.detach().cpu().item())
                     if hasattr(getattr(n, "bias", None), "detach")
                     else float(getattr(n, "bias", 0.0))
                 )
@@ -563,7 +563,7 @@ class Wanderer(_DeviceHelper):
 
             with (torch.autocast(device_type=amp_device, dtype=amp_dtype) if amp_enabled else contextlib.nullcontext()):
                 step_loss_t = self._compute_loss([out], override_loss=loss_fn)
-            cur_loss = float(step_loss_t.detach().to("cpu").item())
+            cur_loss = float(step_loss_t.detach().cpu().item())
             prev_loss = step_metrics[-1]["loss"] if step_metrics else None
             delta = cur_loss - prev_loss if prev_loss is not None else 0.0
             try:
@@ -644,7 +644,7 @@ class Wanderer(_DeviceHelper):
 
             try:
                 cum_loss_t = self._compute_loss(outputs, override_loss=loss_fn)
-                cur_walk_loss = float(cum_loss_t.detach().to("cpu").item())
+                cur_walk_loss = float(cum_loss_t.detach().cpu().item())
             except Exception:
                 cur_walk_loss = float("nan")
 
@@ -785,14 +785,14 @@ class Wanderer(_DeviceHelper):
 
             if self.pre_forward and str(self._device).startswith("cuda"):
                 try:
-                    start_cpu = time.perf_counter()
-                    cpu_val = out.detach().to("cpu")
-                    cpu_val = cpu_val * float(getattr(next_syn, "weight", 1.0)) + float(getattr(next_syn, "bias", 0.0))
-                    cpu_time = time.perf_counter() - start_cpu
+                    start_dev = time.perf_counter()
+                    dev_val = out.detach().to(self._device)
+                    dev_val = dev_val * float(getattr(next_syn, "weight", 1.0)) + float(getattr(next_syn, "bias", 0.0))
+                    compute_time = time.perf_counter() - start_dev
                     start_transfer = time.perf_counter()
-                    _ = cpu_val.to(self._device)
+                    _ = dev_val.to(self._device)
                     transfer_time = time.perf_counter() - start_transfer
-                    self._last_pre_forward_time = cpu_time
+                    self._last_pre_forward_time = compute_time
                     self._last_transfer_time = transfer_time
                 except Exception:
                     self._last_pre_forward_time = 0.0
@@ -970,7 +970,7 @@ class Wanderer(_DeviceHelper):
         except Exception:
             pass
 
-        final_loss_val = float(loss.detach().to("cpu").item())
+        final_loss_val = float(loss.detach().cpu().item())
         self._last_walk_loss = final_loss_val
         try:
             if step_metrics:
@@ -1275,11 +1275,11 @@ class Wanderer(_DeviceHelper):
         for n in self._visited:
             holder = self._param_map[id(n)]
             try:
-                n.weight = float(holder.w.detach().to("cpu").item())  # type: ignore[assignment]
+                n.weight = float(holder.w.detach().cpu().item())  # type: ignore[assignment]
             except Exception:
                 n.weight = float(holder.w)  # type: ignore[assignment]
             try:
-                n.bias = float(holder.b.detach().to("cpu").item())  # type: ignore[assignment]
+                n.bias = float(holder.b.detach().cpu().item())  # type: ignore[assignment]
             except Exception:
                 n.bias = float(holder.b)  # type: ignore[assignment]
 
@@ -1289,7 +1289,7 @@ class Wanderer(_DeviceHelper):
         outputs: List[Any] = self._walk_ctx.get("outputs", [])
         current: Optional[Neuron] = self._walk_ctx.get("current")
         loss_t = self._compute_loss(outputs)
-        loss_v = float(loss_t.detach().to("cpu").item())
+        loss_v = float(loss_t.detach().cpu().item())
         delta = None if self._last_walk_loss is None else (loss_v - self._last_walk_loss)
         out_pos = getattr(current, "position", None) if current is not None else None
         self._finish_stats = {"loss_tensor": loss_t, "loss": loss_v, "delta": delta, "output_neuron": out_pos}
