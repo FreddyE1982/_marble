@@ -125,8 +125,10 @@ class UniversalTensorCodec:
 
     def _to_list(self, maybe_tensor: Union[TensorLike, Sequence[int]]) -> List[int]:
         if self._torch is not None and self._is_torch_tensor(maybe_tensor):
-            t = maybe_tensor.detach().to("cpu")
-            return [int(x) for x in t.view(-1).tolist()]
+            t = maybe_tensor.detach().view(-1)
+            if t.device.type != "cpu":
+                t = t.to("cpu")
+            return [int(x) for x in t.tolist()]
         return list(maybe_tensor)  # type: ignore[arg-type]
 
     # Torch detection
@@ -148,12 +150,17 @@ class UniversalTensorCodec:
             return False
 
     def _select_device(self) -> str:
+        if self._torch is None:
+            return "cpu"
         try:
-            if self._torch is not None and self._torch.cuda.is_available():
-                return "cuda"
+            return str(self._torch.tensor(0).device)
         except Exception:
-            pass
-        return "cpu"
+            try:
+                if self._torch.cuda.is_available():
+                    return "cuda"
+            except Exception:
+                pass
+            return "cpu"
 
 
 __all__ = ["UniversalTensorCodec", "TensorLike"]
