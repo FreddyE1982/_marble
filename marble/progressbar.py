@@ -14,6 +14,9 @@ handled here so that Wanderer only has to supply the raw numbers.
 
 from typing import Any, Dict, Optional, ClassVar
 
+import inspect
+from pathlib import Path
+
 import tqdm as _tqdm_mod
 from tqdm.auto import tqdm as _tqdm_impl
 
@@ -22,18 +25,34 @@ from tqdm.auto import tqdm as _tqdm_impl
 # ---------------------------------------------------------------------------
 _ORIGINAL_TQDM = _tqdm_impl
 
-
-def _forbidden_tqdm(*_: Any, **__: Any) -> None:  # pragma: no cover - defensive
-    """Disallow direct ``tqdm`` usage outside this module."""
-    raise RuntimeError("Use progressbar.ProgressBar; direct tqdm usage is forbidden")
+_REPO_ROOT = Path(__file__).resolve().parent.parent
 
 
-# Patch all public tqdm entry points so any external import fails.
-_tqdm_mod.tqdm = _forbidden_tqdm  # type: ignore[assignment]
+class _PatchedTqdm(_ORIGINAL_TQDM):  # pragma: no cover - thin wrapper
+    """`tqdm` subclass that forbids direct usage from within the repo.
+
+    External libraries are allowed to instantiate progress bars, but calls made
+    from Marble modules raise a ``RuntimeError``. Third-party progress bars are
+    silently disabled to avoid cluttering output.
+    """
+
+    def __new__(cls, *args: Any, **kwargs: Any):  # type: ignore[override]
+        caller = inspect.stack()[1].filename
+        if str(caller).startswith(str(_REPO_ROOT)) and not caller.endswith("progressbar.py"):
+            raise RuntimeError("Use progressbar.ProgressBar; direct tqdm usage is forbidden")
+        return super().__new__(cls)
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:  # type: ignore[override]
+        kwargs.setdefault("disable", True)
+        super().__init__(*args, **kwargs)
+
+
+# Patch all public tqdm entry points so any external import uses the wrapper.
+_tqdm_mod.tqdm = _PatchedTqdm  # type: ignore[assignment]
 try:  # pragma: no cover - import side effects
     import tqdm.auto as _tqdm_auto_mod
 
-    _tqdm_auto_mod.tqdm = _forbidden_tqdm  # type: ignore[assignment]
+    _tqdm_auto_mod.tqdm = _PatchedTqdm  # type: ignore[assignment]
 except Exception:  # pragma: no cover - if tqdm.auto missing
     pass
 
