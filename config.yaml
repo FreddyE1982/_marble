@@ -7,3 +7,4 @@ resource_allocator:
   disk_usage_threshold: 0.95  # stop offloading when disk usage exceeds this ratio
 max_flat_steps: 5  # consecutive zero-delta steps before pruning/connection
 auto_scale_targets: false  # scale tiny targets to match output magnitude
+auto_max_steps_interval: 10  # recompute wanderer max_steps every N datapairs

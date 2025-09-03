@@ -1597,6 +1597,42 @@ class Brain:
                 cap = 0
         return current, cap
 
+    def longest_path_steps(self) -> int:
+        """Return length of the longest simple path in the Brain.
+
+        The search is limited by the total number of synapses to keep the DFS
+        tractable. Cycles are avoided by tracking visited neurons.
+        """
+
+        limit = len(self.synapses)
+        best = 0
+
+        def dfs(node: Neuron, visited: set) -> int:
+            nonlocal best
+            if len(visited) > limit:
+                return limit
+            longest = 0
+            for syn in getattr(node, "outgoing", []):
+                nxt = getattr(syn, "target", None)
+                if nxt is None or nxt in visited:
+                    continue
+                visited.add(nxt)
+                cur = 1 + dfs(nxt, visited)
+                visited.remove(nxt)
+                if cur > longest:
+                    longest = cur
+                    if longest >= limit:
+                        break
+            return longest
+
+        for n in self.neurons.values():
+            cur = dfs(n, {n})
+            if cur > best:
+                best = cur
+                if best >= limit:
+                    break
+        return best
+
     # --- Sparse mode utilities ---
     def bulk_add_neurons(
         self,
@@ -2423,6 +2459,29 @@ def _auto_scale_targets_enabled() -> bool:
         pass
     return False
 
+
+def _auto_max_steps_interval() -> int:
+    """Read ``auto_max_steps_interval`` from ``config.yaml``.
+
+    Returns the integer interval after which the Wanderer should recompute its
+    ``max_steps`` based on the longest path in the current Brain. If the value
+    is missing or invalid, ``0`` is returned to disable automatic updates.
+    """
+
+    try:
+        base = os.path.dirname(os.path.dirname(__file__))
+        with open(os.path.join(base, "config.yaml"), "r", encoding="utf-8") as fh:
+            for raw in fh:
+                line = raw.split("#", 1)[0].strip().lower()
+                if line.startswith("auto_max_steps_interval:"):
+                    try:
+                        return int(line.split(":", 1)[1].strip())
+                    except Exception:
+                        return 0
+    except Exception:
+        pass
+    return 0
+
 def create_start_neuron_old(brain: "Brain", encoded_input: Union[TensorLike, Sequence[float], float, int]) -> "Neuron":
     """Create and return a start neuron in the brain and inject encoded input.
 
@@ -2447,7 +2506,7 @@ def run_training_with_datapairs(
     datapairs: Iterable[Union[DataPair, Tuple[Any, Any], Tuple[Union[TensorLike, Sequence[int]], Union[TensorLike, Sequence[int]]]]],
     codec: "UniversalTensorCodec",
     *,
-    steps_per_pair: int = 5,
+    steps_per_pair: Optional[int] = None,
     lr: float = 1e-2,
     wanderer_type: Optional[str] = None,
     train_type: Optional[Union[str, Sequence[str]]] = None,
@@ -2462,12 +2521,16 @@ def run_training_with_datapairs(
       batch_size: Optional[int] = None,
       lobe: Optional[Lobe] = None,
       mixedprecision: bool = True,
+      auto_max_steps_every: Optional[int] = None,
   ) -> Dict[str, Any]:
     """Train over a sequence of DataPairs and return aggregate stats.
 
     - datapairs: elements can be DataPair, raw (left,right) objects, or encoded
       ((enc_left, enc_right)) as produced by DataPair.encode(codec).
     - codec: UniversalTensorCodec used for encoding/decoding when needed.
+    - steps_per_pair: when ``None`` or ``<=0``, the Wanderer uses the longest
+      path length in the Brain as ``max_steps`` and refreshes that value every
+      ``auto_max_steps_every`` datapairs.
     - left_to_start: optional function mapping left object -> starting Neuron.
     - loss: same semantics as in Wanderer; default uses nn.MSELoss.
     - train_type: optional Brain-train plugin name(s) applied across datapairs.
@@ -2607,9 +2670,17 @@ def run_training_with_datapairs(
             if p is not None:
                 train_plugins.append(p)
 
+    if auto_max_steps_every is None:
+        auto_max_steps_every = _auto_max_steps_interval()
+    if steps_per_pair is None or steps_per_pair <= 0:
+        current_max_steps = max(1, brain.longest_path_steps())
+    else:
+        current_max_steps = int(steps_per_pair)
+    _pairs_since_update = 0
+
     cfg = {
         "num_walks": None,
-        "max_steps": steps_per_pair,
+        "max_steps": current_max_steps,
         "lr": lr,
         "type_name": train_type,
     }
@@ -2618,7 +2689,7 @@ def run_training_with_datapairs(
 
     batch: List[DataPair] = []
     batch_index = 0
-    def _process_batch(items: List[DataPair], idx: int) -> None:
+    def _process_batch(items: List[DataPair], idx: int, max_steps_cur: int) -> None:
         nonlocal count
         enc_left_list: List[Any] = []
         enc_right_list: List[Any] = []
@@ -2677,7 +2748,7 @@ def run_training_with_datapairs(
         for p in train_plugins:
             ovr = _before_walk_overrides(p, brain, w, idx)
             overrides.update(ovr)
-        ms = int(overrides.get("max_steps", steps_per_pair))
+        ms = int(overrides.get("max_steps", max_steps_cur))
         lr_i = float(overrides.get("lr", lr))
         if batch_sz > 1:
             lr_i /= batch_sz
@@ -2709,11 +2780,15 @@ def run_training_with_datapairs(
         dp = _normalize_pair(item)
         batch.append(dp)
         if len(batch) >= batch_sz:
-            _process_batch(batch, batch_index)
+            _process_batch(batch, batch_index, current_max_steps)
             batch = []
             batch_index += 1
+            _pairs_since_update += batch_sz
+            if (steps_per_pair is None or steps_per_pair <= 0) and auto_max_steps_every and _pairs_since_update >= auto_max_steps_every:
+                current_max_steps = max(1, brain.longest_path_steps())
+                _pairs_since_update = 0
     if batch:
-        _process_batch(batch, batch_index)
+        _process_batch(batch, batch_index, current_max_steps)
 
     final_loss = history[-1]["loss"] if history else 0.0
     out = {"history": history, "final_loss": final_loss, "count": count}
