@@ -8,9 +8,9 @@ class BrainKuzuTest(unittest.TestCase):
     def test_updates(self):
         db_path = tempfile.mktemp()
         brain = Brain(2, size=3, formula="1", kuzu_path=db_path)
-        n1 = brain.add_neuron((0, 0), tensor=0.0)
         brain.add_neuron((0, 1), tensor=0.0)
-        syn = brain.connect((0, 0), (0, 1))
+        n1 = brain.add_neuron((0, 0), tensor=0.0, connect_to=(0, 1), direction="uni")
+        syn = brain.synapses[0]
         conn = kuzu.Connection(kuzu.Database(db_path))
         nodes = list(conn.execute("MATCH (n:Neuron) RETURN COUNT(*)"))[0][0]
         edges = list(conn.execute("MATCH ()-[:Synapse]->() RETURN COUNT(*)"))[0][0]

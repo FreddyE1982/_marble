@@ -9,16 +9,23 @@ class TestWandererBestPathAndWeights(unittest.TestCase):
 
     def _add_two_paths(self, b):
         it = iter(b.available_indices())
-        s = b.add_neuron(next(it), tensor=0.0)
-        a = b.add_neuron(next(it), tensor=[0.1])  # low loss path
-        bnode = b.add_neuron(next(it), tensor=[1.5])  # higher loss path
-        # Downstream nodes to receive
-        da = b.add_neuron(next(it), tensor=0.0)
-        db = b.add_neuron(next(it), tensor=0.0)
-        sa = b.connect(getattr(s, "position"), getattr(a, "position"), direction="uni")
-        sb = b.connect(getattr(s, "position"), getattr(bnode, "position"), direction="uni")
-        b.connect(getattr(a, "position"), getattr(da, "position"), direction="uni")
-        b.connect(getattr(bnode, "position"), getattr(db, "position"), direction="uni")
+        s_idx = next(it)
+        a_idx = next(it)
+        b_idx = next(it)
+        da_idx = next(it)
+        db_idx = next(it)
+
+        s = b.add_neuron(s_idx, tensor=0.0)
+        b.add_neuron(da_idx, tensor=0.0, connect_to=s_idx)
+        b.remove_synapse(b.synapses[-1])
+        a = b.add_neuron(a_idx, tensor=[0.1], connect_to=da_idx, direction="uni")  # low loss path
+        b.add_neuron(db_idx, tensor=0.0, connect_to=s_idx)
+        b.remove_synapse(b.synapses[-1])
+        bnode = b.add_neuron(b_idx, tensor=[1.5], connect_to=db_idx, direction="uni")  # higher loss path
+        sa = b.connect(s_idx, a_idx, direction="uni")
+        sb = b.connect(s_idx, b_idx, direction="uni")
+        b.connect(a_idx, da_idx, direction="uni")
+        b.connect(b_idx, db_idx, direction="uni")
         return s, sa, sb, a, bnode
 
     def test_wander_along_weights_prefers_higher(self):

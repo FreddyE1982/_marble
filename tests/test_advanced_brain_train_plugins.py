@@ -9,9 +9,8 @@ class AdvancedBrainTrainPluginTests(unittest.TestCase):
         it = iter(b.available_indices())
         i1 = next(it)
         i2 = next(it)
-        n1 = b.add_neuron(i1, tensor=0.0)
         n2 = b.add_neuron(i2, tensor=0.0)
-        b.connect(i1, i2, direction="uni")
+        n1 = b.add_neuron(i1, tensor=0.0, connect_to=i2, direction="uni")
         w = Wanderer(b)
         return b, w, n1
 

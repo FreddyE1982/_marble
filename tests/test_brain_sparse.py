@@ -39,7 +39,7 @@ class TestBrainSparse(unittest.TestCase):
         self.assertFalse(b.is_inside(outside_low))
 
         b.add_neuron(inside_low, tensor=[1.0])
-        b.add_neuron(inside_high, tensor=[2.0])
+        b.add_neuron(inside_high, tensor=[2.0], connect_to=inside_low)
         s = b.connect(inside_low, inside_high)
         self.assertIsNotNone(s)
 

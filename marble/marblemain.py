@@ -1680,8 +1680,13 @@ class Brain:
         In grid mode, positions are indices. Returns the created neurons in order.
         """
         created: List[Neuron] = []
+        prev_pos: Optional[Sequence[float]] = None
         for pos in positions:
-            created.append(self.add_neuron(pos, tensor=tensor, **kwargs))
+            if prev_pos is None:
+                created.append(self.add_neuron(pos, tensor=tensor, **kwargs))
+            else:
+                created.append(self.add_neuron(pos, tensor=tensor, connect_to=prev_pos, **kwargs))
+            prev_pos = pos
         return created
 
     def export_sparse(self, path: str, include_synapses: bool = True) -> None:
@@ -1763,6 +1768,8 @@ class Brain:
             sparse_bounds.append((mn, mx))
         brain = cls(n, mode="sparse", sparse_bounds=tuple(sparse_bounds))
 
+        temp_syns: List[Synapse] = []
+        prev_coords: Optional[Sequence[float]] = None
         for item in data.get("neurons", []):
             coords = item["coords"]
             tensor = item.get("tensor", 0.0)
@@ -1770,7 +1777,22 @@ class Brain:
             bias = item.get("bias", 0.0)
             age = item.get("age", 0)
             type_name = item.get("type_name", None)
-            brain.add_neuron(coords, tensor=tensor, weight=weight, bias=bias, age=age, type_name=type_name)
+            if prev_coords is None:
+                brain.add_neuron(coords, tensor=tensor, weight=weight, bias=bias, age=age, type_name=type_name)
+            else:
+                brain.add_neuron(
+                    coords,
+                    tensor=tensor,
+                    weight=weight,
+                    bias=bias,
+                    age=age,
+                    type_name=type_name,
+                    connect_to=prev_coords,
+                )
+                temp_syns.append(brain.synapses[-1])
+            prev_coords = coords
+        for syn in temp_syns:
+            brain.remove_synapse(syn)
 
         for s in data.get("synapses", []):
             src = s["source"]
@@ -1901,15 +1923,33 @@ class Brain:
                 escape_radius=float(data.get("escape_radius", 2.0)),
                 store_snapshots=False,
             )
+        temp_syns: List[Synapse] = []
+        prev_pos: Optional[Sequence[float]] = None
         for item in data.get("neurons", []):
-            brain.add_neuron(
-                item.get("position", []),
-                tensor=item.get("tensor", 0.0),
-                weight=item.get("weight", 1.0),
-                bias=item.get("bias", 0.0),
-                age=item.get("age", 0),
-                type_name=item.get("type_name"),
-            )
+            pos = item.get("position", [])
+            if prev_pos is None:
+                brain.add_neuron(
+                    pos,
+                    tensor=item.get("tensor", 0.0),
+                    weight=item.get("weight", 1.0),
+                    bias=item.get("bias", 0.0),
+                    age=item.get("age", 0),
+                    type_name=item.get("type_name"),
+                )
+            else:
+                brain.add_neuron(
+                    pos,
+                    tensor=item.get("tensor", 0.0),
+                    weight=item.get("weight", 1.0),
+                    bias=item.get("bias", 0.0),
+                    age=item.get("age", 0),
+                    type_name=item.get("type_name"),
+                    connect_to=prev_pos,
+                )
+                temp_syns.append(brain.synapses[-1])
+            prev_pos = pos
+        for syn in temp_syns:
+            brain.remove_synapse(syn)
         for syn in data.get("synapses", []):
             brain.connect(
                 syn.get("source", []),
