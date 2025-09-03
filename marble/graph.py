@@ -28,8 +28,10 @@ class _DeviceHelper:
 
     def _select_device(self) -> str:
         try:
-            if self._torch is not None and self._torch.cuda.is_available():
-                return "cuda"
+            if self._torch is not None:
+                cuda = getattr(self._torch, "cuda", None)
+                if callable(getattr(cuda, "is_available", None)) and cuda.is_available():
+                    return "cuda"
         except Exception:
             pass
         return "cpu"
@@ -53,6 +55,14 @@ class _DeviceHelper:
                 return self._torch.tensor([float(value)], dtype=self._torch.float32, device=self._device)
             else:
                 return self._torch.tensor(value, dtype=self._torch.float32, device=self._device)
+
+    def _report(self, groupname: str, itemname: str, data: Any, *subgroups: str) -> None:
+        if isinstance(data, dict):
+            payload = dict(data)
+            payload["device"] = self._device
+        else:
+            payload = {"value": data, "device": self._device}
+        report(groupname, itemname, payload, *subgroups)
 
     def _is_torch_tensor(self, obj: Any) -> bool:
         try:
@@ -120,7 +130,7 @@ class Neuron(_DeviceHelper):
         if plugin is not None and hasattr(plugin, "on_init"):
             plugin.on_init(self)  # type: ignore[attr-defined]
         try:
-            report("neuron", "create", {"weight": self.weight, "bias": self.bias, "age": self.age, "type": self.type_name}, "events")
+            self._report("neuron", "create", {"weight": self.weight, "bias": self.bias, "age": self.age, "type": self.type_name}, "events")
         except Exception:
             pass
 
@@ -148,7 +158,7 @@ class Neuron(_DeviceHelper):
     def connect_to(self, other: "Neuron", *, direction: str = "uni", age: int = 0, type_name: Optional[str] = None) -> "Synapse":
         s = Synapse(self, other, direction=direction, age=age, type_name=type_name)
         try:
-            report("neuron", "connect_to", {"direction": direction, "age": age, "type": type_name}, "events")
+            self._report("neuron", "connect_to", {"direction": direction, "age": age, "type": type_name}, "events")
         except Exception:
             pass
         return s
@@ -160,7 +170,7 @@ class Neuron(_DeviceHelper):
             return
         self.tensor = value
         try:
-            report("neuron", "receive", {"len": int(self.tensor.numel()) if hasattr(self.tensor, "numel") else (len(self.tensor) if isinstance(self.tensor, list) else 1)}, "events")
+            self._report("neuron", "receive", {"len": int(self.tensor.numel()) if hasattr(self.tensor, "numel") else (len(self.tensor) if isinstance(self.tensor, list) else 1)}, "events")
         except Exception:
             pass
 
@@ -197,7 +207,7 @@ class Neuron(_DeviceHelper):
                     return float(v)
                 except Exception:
                     return None
-            report("neuron", "forward", {"out_len": out_len, "weight": _wb_val(self.weight), "bias": _wb_val(self.bias)}, "metrics")
+            self._report("neuron", "forward", {"out_len": out_len, "weight": _wb_val(self.weight), "bias": _wb_val(self.bias)}, "metrics")
         except Exception:
             pass
         return out
@@ -231,7 +241,7 @@ class Neuron(_DeviceHelper):
             except Exception:
                 pass
         try:
-            report("neuron", "selfattention_report", info, "events")
+            self._report("neuron", "selfattention_report", info, "events")
         except Exception:
             pass
         return info
@@ -289,7 +299,7 @@ class Synapse(_DeviceHelper):
         if plugin is not None and hasattr(plugin, "on_init"):
             plugin.on_init(self)  # type: ignore[attr-defined]
         try:
-            report("synapse", "create", {"direction": self.direction, "age": self.age, "weight": self.weight, "bias": self.bias, "type": self.type_name}, "events")
+            self._report("synapse", "create", {"direction": self.direction, "age": self.age, "weight": self.weight, "bias": self.bias, "type": self.type_name}, "events")
         except Exception:
             pass
 
@@ -334,7 +344,7 @@ class Synapse(_DeviceHelper):
                 dest.receive(val)
                 out_neuron = dest
         try:
-            report("synapse", "transmit", {"dir": direction, "weight": float(self.weight), "bias": float(self.bias)}, "events")
+            self._report("synapse", "transmit", {"dir": direction, "weight": float(self.weight), "bias": float(self.bias)}, "events")
         except Exception:
             pass
         return out_neuron
@@ -362,7 +372,7 @@ class Synapse(_DeviceHelper):
     def step_age(self, delta: int = 1) -> None:
         self.age += int(delta)
         try:
-            report("synapse", "aged", {"age": self.age}, "metrics")
+            self._report("synapse", "aged", {"age": self.age}, "metrics")
         except Exception:
             pass
 
