@@ -412,21 +412,34 @@ class Wanderer(_DeviceHelper):
             scaler = None
 
         tqdm_cls = _tqdm_factory()
-        # Allow callers to control whether the tqdm line is left on screen after completion.
-        # Expose as a public attribute so SelfAttention and helpers can toggle it.
+        # Allow callers to control whether the tqdm line is left on screen after
+        # completion. Expose as a public attribute so SelfAttention and helpers can
+        # toggle it.
         leave_flag = False
         try:
             leave_flag = bool(getattr(self, "pbar_leave", False))
         except Exception:
             leave_flag = False
-        pbar = tqdm_cls(total=max_steps, leave=leave_flag)
-        try:
-            pbar.bar_format = (
-                "{desc} {percentage:3.0f}% steps: {n_fmt}/{total_fmt}"
-                " [{elapsed}<{remaining}, {rate_fmt}{postfix}]"
-            )
-        except Exception:
-            pass
+
+        total_steps = max_steps * int(getattr(self.brain, "_progress_total_walks", 1))
+        pbar = getattr(self, "_pbar", None)
+        if pbar is None:
+            pbar = tqdm_cls(total=total_steps, leave=leave_flag)
+            try:
+                pbar.bar_format = (
+                    "{desc} {percentage:3.0f}% steps: {n_fmt}/{total_fmt}"
+                    " [{elapsed}<{remaining}, {rate_fmt}{postfix}]"
+                )
+            except Exception:
+                pass
+            self._pbar = pbar
+        else:
+            # If total differs (rare), adjust to keep global progress accurate
+            try:
+                if getattr(pbar, "total", total_steps) != total_steps:
+                    pbar.total = total_steps
+            except Exception:
+                pass
         # Announce walk start explicitly (per-walk output)
         try:
             if bool(getattr(self, "pbar_verbose", False)):
@@ -849,7 +862,20 @@ class Wanderer(_DeviceHelper):
             carried_value = out
             steps += 1
             moved_last = True
-        pbar.close()
+
+        is_last_walk = (
+            int(getattr(self.brain, "_progress_walk", 0)) + 1
+            >= int(getattr(self.brain, "_progress_total_walks", 1))
+        )
+        if is_last_walk:
+            try:
+                pbar.close()
+            except Exception:
+                pass
+            try:
+                delattr(self, "_pbar")
+            except Exception:
+                pass
         # Announce walk end explicitly (per-walk output)
         try:
             if bool(getattr(self, "pbar_verbose", False)):
@@ -857,7 +883,9 @@ class Wanderer(_DeviceHelper):
                 tot_walks = int(getattr(self.brain, "_progress_total_walks", 1))
                 cur_ep = int(getattr(self.brain, "_progress_epoch", 0)) + 1
                 tot_ep = int(getattr(self.brain, "_progress_total_epochs", 1))
-                pbar.write(f"{cur_ep}/{tot_ep} epochs {cur_walk}/{tot_walks} walks: end (loss={float(loss.detach().to('cpu').item())}, steps={int(steps)})")
+                pbar.write(
+                    f"{cur_ep}/{tot_ep} epochs {cur_walk}/{tot_walks} walks: end (loss={float(loss.detach().to('cpu').item())}, steps={int(steps)})"
+                )
         except Exception:
             pass
 
