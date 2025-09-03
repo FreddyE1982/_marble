@@ -242,7 +242,7 @@ def main(
         "batch_size": batch_size,
         "aggressive_starting_neuroplasticity": True,
         "add_min_new_neurons_per_step": int(min_new_neurons),
-        "aggressive_phase_steps": 100,
+        "aggressive_phase_steps": 10,
     }
     def _run_kuzu_explorer(db_file: str, port: int = 8000) -> str:
         """Launch Kuzu Explorer in a background thread without Docker.
