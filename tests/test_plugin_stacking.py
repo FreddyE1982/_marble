@@ -22,7 +22,7 @@ class TestPluginStacking(unittest.TestCase):
         idx1 = next(it)
         start = b.add_neuron(idx1, tensor=0.0)
         idx2 = next(it)
-        dst = b.add_neuron(idx2, tensor=1.0)
+        dst = b.add_neuron(idx2, tensor=1.0, connect_to=idx1, direction="uni")
         b.connect(idx1, idx2, direction="uni")
         w = Wanderer(b)
         res = b.train(w, num_walks=1, max_steps=5, lr=0.01, type_name="p1,p2", start_selector=lambda brain: start)
