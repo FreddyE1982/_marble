@@ -142,7 +142,7 @@ class SelfAttention:
         """
         owner = getattr(self, "_owner", None)
         torch = getattr(owner, "_torch", None) if owner is not None else None
-        device = getattr(owner, "_device", "cpu") if owner is not None else "cpu"
+        device = getattr(owner, "_device", "cpu")
         nid = id(neuron)
         if nid not in self._learnables:
             self._learnables[nid] = {}
@@ -190,7 +190,7 @@ class SelfAttention:
     ) -> Any:
         owner = getattr(self, "_owner", None)
         torch = getattr(owner, "_torch", None) if owner is not None else None
-        device = getattr(owner, "_device", "cpu") if owner is not None else "cpu"
+        device = getattr(owner, "_device", "cpu")
         if name in self._global_learnables:
             return self._global_learnables[name].tensor
         if torch is not None:
@@ -279,7 +279,7 @@ class SelfAttention:
         loss_val: Optional[float] = None
         if loss_tensor is not None:
             try:
-                loss_val = float(loss_tensor.detach().to("cpu").item())
+                loss_val = float(loss_tensor.detach().item())
             except Exception:
                 loss_val = None
         loss_speed = 0.0
@@ -398,10 +398,10 @@ class SelfAttention:
             self.start_change("implicit")
         snap = {}
         try:
-            # Capture core attributes and a CPU list version of the tensor
+            # Capture core attributes and a list version of the tensor
             t = getattr(neuron, "tensor", None)
             if hasattr(t, "detach") and hasattr(t, "to"):
-                t_list = t.detach().to("cpu").view(-1).tolist()
+                t_list = t.detach().view(-1).tolist()
             elif isinstance(t, list):
                 t_list = list(t)
             else:
