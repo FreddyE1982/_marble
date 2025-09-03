@@ -189,7 +189,7 @@ def main(
         routines=[
             QualityAwareRoutine(window=8),
             AdaptiveGradClipRoutine(),
-            FindBestNeuronTypeRoutine(),
+            #FindBestNeuronTypeRoutine(),
             ContextAwareNoiseRoutine(),
         ]
     )
@@ -207,7 +207,7 @@ def main(
         "MixedPrecisionPlugin",  # auto loss scaling via mixed precision
         "QualityAwareRoutine",
         "AdaptiveGradClipRoutine",
-        "FindBestNeuronTypeRoutine",
+        #"FindBestNeuronTypeRoutine",
         "ContextAwareNoiseRoutine",
     ]
     # Instantiate AutoPlugin with mandatory plugin support when available.
@@ -319,8 +319,8 @@ def main(
             brain,
             pairs,
             codec,
-            steps_per_pair=None,
-            auto_max_steps_every=1,
+            steps_per_pair=20,
+            auto_max_steps_every=20,
             lr=1e-3,
             wanderer_type=",".join(wplugins),
             train_type="warmup_decay,curriculum,qualityaware",
@@ -329,7 +329,7 @@ def main(
             streaming=True,
             batch_size=batch_size,
             left_to_start=_start_neuron,
-            dashboard=False,
+           
         )
         duration = time.perf_counter() - start_time
         cnt = res.get("count", 0)
