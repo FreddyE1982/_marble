@@ -106,7 +106,7 @@ def _sample_pairs(ds, max_pairs: int | None = None) -> Iterator:
         count += 2
 def main(
     epochs: int = 1,
-    max_pairs: int | None = 100,
+    max_pairs: int | None = None,
     batch_size: int = 10,
     launch_kuzu: bool | None = None,
     min_new_neurons: int = 1,
