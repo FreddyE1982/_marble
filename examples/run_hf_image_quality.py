@@ -320,7 +320,7 @@ def main(
             pairs,
             codec,
             steps_per_pair=None,
-            auto_max_steps_every=50,
+            auto_max_steps_every=1,
             lr=1e-3,
             wanderer_type=",".join(wplugins),
             train_type="warmup_decay,curriculum,qualityaware",
