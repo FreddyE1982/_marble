@@ -25,7 +25,7 @@ class ShadowClonePlugin:
         (bias_t,) = self._params(wanderer)
         torch = getattr(wanderer, "_torch", None)
         if torch is not None:
-            prob = float(torch.sigmoid(bias_t).detach().to("cpu").item())
+            prob = float(torch.sigmoid(bias_t).detach().to(wanderer._device).item())
         else:
             prob = 1.0 / (1.0 + math.exp(-float(bias_t)))
         idx = random.randrange(len(choices))

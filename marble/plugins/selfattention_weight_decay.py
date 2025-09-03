@@ -28,7 +28,7 @@ class WeightDecayRoutine:
     ):
         d_t = _decay_param(wanderer)
         try:
-            decay = float(d_t.detach().to("cpu").item())
+            decay = float(d_t.detach().to(wanderer._device).item())
         except Exception:
             decay = 0.01
         decay *= metric_factor(ctx, "weight_decay")
@@ -37,8 +37,8 @@ class WeightDecayRoutine:
             if w is None:
                 continue
             try:
-                wt = torch.tensor([float(w)], dtype=torch.float32)
-                syn.weight = float((wt * (1.0 - decay)).detach().to("cpu").item())
+                wt = torch.tensor([float(w)], dtype=torch.float32, device=wanderer._device)
+                syn.weight = float((wt * (1.0 - decay)).detach().to(wanderer._device).item())
             except Exception:
                 pass
         report("selfattention", "weight_decay", {"step": step_index, "decay": decay}, "events")

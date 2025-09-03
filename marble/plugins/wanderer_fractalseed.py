@@ -23,7 +23,7 @@ class FractalSeedPlugin:
         if not choices:
             return None, "forward"
         (d_t,) = self._params(wanderer)
-        d = float(d_t.detach().to("cpu").item()) if hasattr(d_t, "detach") else float(d_t)
+        d = float(d_t.detach().to(wanderer._device).item()) if hasattr(d_t, "detach") else float(d_t)
         base = torch.arange(len(choices), dtype=torch.float32)
         self._counter += 1
         weights = torch.frac(base * d * (self._counter)) + 1e-6
