@@ -29,6 +29,8 @@ import hashlib
 import importlib
 import itertools
 import gc
+import multiprocessing as mp
+import queue
 from .learnable_param import LearnableParam
 try:
     import msvcrt  # type: ignore
@@ -817,6 +819,53 @@ def _auto_register_local_paradigms() -> None:
 _auto_register_local_paradigms()
 
 # -----------------------------
+# Longest path worker process
+# -----------------------------
+
+def _longest_path_worker(task_q: "mp.Queue", res_q: "mp.Queue") -> None:
+    """Compute longest simple path lengths asynchronously.
+
+    Receives a tuple of edge pairs ``((src, dst), ...)`` on ``task_q`` and
+    writes the computed longest path length to ``res_q``. Exits when ``None``
+    is received.
+    """
+    while True:
+        edges = task_q.get()
+        if edges is None:
+            break
+        adj: Dict[Tuple[Any, ...], set] = {}
+        for s, d in edges:
+            adj.setdefault(s, set()).add(d)
+        limit = len(edges)
+        best = 0
+        visited: set = set()
+
+        def dfs(node: Tuple[Any, ...]) -> int:
+            nonlocal best
+            if len(visited) > limit:
+                return limit
+            longest = 0
+            for nxt in adj.get(node, ()):  # iterate over set
+                if nxt in visited:
+                    continue
+                visited.add(nxt)
+                cur = 1 + dfs(nxt)
+                visited.remove(nxt)
+                if cur > longest:
+                    longest = cur
+                    if longest >= limit:
+                        break
+            return longest
+
+        for nd in adj.keys():
+            cur = dfs(nd)
+            if cur > best:
+                best = cur
+                if best >= limit:
+                    break
+        res_q.put(best)
+
+# -----------------------------
 # Brain: n-Dimensional Structure
 # -----------------------------
 
@@ -883,6 +932,16 @@ class Brain:
         self.synapses_pruned = 0
         self.prune_hit_count = int(prune_hit_count)
         self._prune_marks: Dict[Neuron, int] = {}
+
+        # Cached longest path state with background process
+        self._longest_path = 0
+        self._lp_queue: mp.Queue = mp.Queue()
+        self._lp_result: mp.Queue = mp.Queue()
+        self._lp_process = mp.Process(
+            target=_longest_path_worker, args=(self._lp_queue, self._lp_result), daemon=True
+        )
+        self._lp_process.start()
+        self._schedule_longest_path_update()
 
         if self.mode == "grid":
             self.dynamic = size is None
@@ -1142,6 +1201,7 @@ class Brain:
             except Exception:
                 pass
             self.neurons_added += 1
+            self._schedule_longest_path_update()
             return neuron
         else:
             coords = tuple(float(v) for v in index)
@@ -1161,6 +1221,7 @@ class Brain:
             except Exception:
                 pass
             self.neurons_added += 1
+            self._schedule_longest_path_update()
             return neuron
 
     def get_neuron(self, index: Sequence[int]) -> Optional[Neuron]:
@@ -1197,6 +1258,7 @@ class Brain:
                     self._kuzu_add_synapse(s_coords, d_coords, direction)
             except Exception:
                 pass
+        self._schedule_longest_path_update()
         return syn
 
     def define_lobe(
@@ -1353,6 +1415,7 @@ class Brain:
             report("brain", "remove_synapse", {"direction": synapse.direction}, "events")
         except Exception:
             pass
+        self._schedule_longest_path_update()
 
     # Remove a neuron and bridge its synapses to avoid gaps
     def remove_neuron(self, neuron: "Neuron") -> None:
@@ -1400,6 +1463,7 @@ class Brain:
             self._kuzu_rebuild_all()
         except Exception:
             pass
+        self._schedule_longest_path_update()
 
     def status(self) -> Dict[str, Any]:
         """Return a snapshot of training/runtime stats."""
@@ -1612,41 +1676,35 @@ class Brain:
                 cap = 0
         return current, cap
 
+    def _schedule_longest_path_update(self) -> None:
+        """Trigger asynchronous recomputation of the longest path."""
+        try:
+            edges = tuple(
+                (
+                    getattr(s.source, "position", None),
+                    getattr(s.target, "position", None),
+                )
+                for s in self.synapses
+                if getattr(s, "source", None) is not None and getattr(s, "target", None) is not None
+            )
+            self._lp_queue.put_nowait(edges)
+        except Exception:
+            pass
+
+    def _drain_longest_path_result(self) -> None:
+        """Retrieve latest longest path result from worker."""
+        try:
+            while True:
+                self._longest_path = int(self._lp_result.get_nowait())
+        except queue.Empty:
+            pass
+        except Exception:
+            pass
+
     def longest_path_steps(self) -> int:
-        """Return length of the longest simple path in the Brain.
-
-        The search is limited by the total number of synapses to keep the DFS
-        tractable. Cycles are avoided by tracking visited neurons.
-        """
-
-        limit = len(self.synapses)
-        best = 0
-
-        def dfs(node: Neuron, visited: set) -> int:
-            nonlocal best
-            if len(visited) > limit:
-                return limit
-            longest = 0
-            for syn in getattr(node, "outgoing", []):
-                nxt = getattr(syn, "target", None)
-                if nxt is None or nxt in visited:
-                    continue
-                visited.add(nxt)
-                cur = 1 + dfs(nxt, visited)
-                visited.remove(nxt)
-                if cur > longest:
-                    longest = cur
-                    if longest >= limit:
-                        break
-            return longest
-
-        for n in self.neurons.values():
-            cur = dfs(n, {n})
-            if cur > best:
-                best = cur
-                if best >= limit:
-                    break
-        return best
+        """Return cached longest simple path length."""
+        self._drain_longest_path_result()
+        return int(self._longest_path)
 
     # --- Sparse mode utilities ---
     def bulk_add_neurons(
@@ -2497,6 +2555,23 @@ def _auto_max_steps_interval() -> int:
         pass
     return 0
 
+
+def _gc_interval_default() -> int:
+    """Read ``gc_interval`` from ``config.yaml`` (default 10)."""
+    try:
+        base = os.path.dirname(os.path.dirname(__file__))
+        with open(os.path.join(base, "config.yaml"), "r", encoding="utf-8") as fh:
+            for raw in fh:
+                line = raw.split("#", 1)[0].strip().lower()
+                if line.startswith("gc_interval:"):
+                    try:
+                        return int(line.split(":", 1)[1].strip())
+                    except Exception:
+                        return 10
+    except Exception:
+        pass
+    return 10
+
 def create_start_neuron_old(brain: "Brain", encoded_input: Union[TensorLike, Sequence[float], float, int]) -> "Neuron":
     """Create and return a start neuron in the brain and inject encoded input.
 
@@ -2536,6 +2611,7 @@ def run_training_with_datapairs(
       batch_size: Optional[int] = None,
       lobe: Optional[Lobe] = None,
       mixedprecision: bool = True,
+      gc_interval: Optional[int] = None,
       auto_max_steps_every: Optional[int] = None,
   ) -> Dict[str, Any]:
     """Train over a sequence of DataPairs and return aggregate stats.
@@ -2549,11 +2625,15 @@ def run_training_with_datapairs(
     - left_to_start: optional function mapping left object -> starting Neuron.
     - loss: same semantics as in Wanderer; default uses nn.MSELoss.
     - train_type: optional Brain-train plugin name(s) applied across datapairs.
+    - gc_interval: number of batches between ``gc.collect`` calls; ``0`` disables
+      automatic collection.
 
     Returns: {"history": [per-pair stats], "final_loss": float, "count": int}.
     """
     history: List[Dict[str, Any]] = []
     count = 0
+    if gc_interval is None:
+        gc_interval = _gc_interval_default()
 
     def _normalize_pair(p: Union[DataPair, Tuple[Any, Any], Tuple[Union[TensorLike, Sequence[int]], Union[TensorLike, Sequence[int]]]]) -> DataPair:
         if isinstance(p, DataPair):
@@ -2704,7 +2784,7 @@ def run_training_with_datapairs(
 
     batch: List[DataPair] = []
     batch_index = 0
-    def _process_batch(items: List[DataPair], idx: int, max_steps_cur: int) -> None:
+    def _process_batch(items: List[DataPair], idx: int, max_steps_cur: int, *, gc_interval: Optional[int], force_gc: bool = False) -> None:
         nonlocal count
         enc_left_list: List[Any] = []
         enc_right_list: List[Any] = []
@@ -2768,8 +2848,9 @@ def run_training_with_datapairs(
         if batch_sz > 1:
             lr_i /= batch_sz
         _current_target["val"] = enc_right
+        setattr(w, "_current_sample", count)
         stats = w.walk(max_steps=ms, start=start, lr=lr_i, lobe=lobe)
-        stats["plugins"] = [p.__class__.__name__ for p in getattr(w, "_wplugins", []) or []]
+        stats["plugins"] = list(getattr(w, "_walk_used_plugins", []))
         history.append(stats)
         for p in train_plugins:
             _after_walk(p, brain, w, idx, stats)
@@ -2789,13 +2870,14 @@ def run_training_with_datapairs(
             except Exception:
                 pass
         del items, enc_left, enc_right
-        gc.collect()
+        if force_gc or (gc_interval and idx % gc_interval == 0):
+            gc.collect()
 
     for i, item in enumerate(data_iter):
         dp = _normalize_pair(item)
         batch.append(dp)
         if len(batch) >= batch_sz:
-            _process_batch(batch, batch_index, current_max_steps)
+            _process_batch(batch, batch_index, current_max_steps, gc_interval=gc_interval)
             batch = []
             batch_index += 1
             _pairs_since_update += batch_sz
@@ -2803,7 +2885,7 @@ def run_training_with_datapairs(
                 current_max_steps = max(1, brain.longest_path_steps())
                 _pairs_since_update = 0
     if batch:
-        _process_batch(batch, batch_index, current_max_steps)
+        _process_batch(batch, batch_index, current_max_steps, gc_interval=gc_interval, force_gc=True)
 
     final_loss = history[-1]["loss"] if history else 0.0
     out = {"history": history, "final_loss": final_loss, "count": count}
@@ -2834,8 +2916,11 @@ def run_wanderer_epochs_with_datapairs(
     left_to_start: Optional[Callable[[Any, "Brain"], Optional["Neuron"]]] = None,
     callback: Optional[Callable[[int, int, Dict[str, Any], DataPair], None]] = None,
     mixedprecision: bool = True,
+    gc_interval: Optional[int] = None,
 ) -> Dict[str, Any]:
     """Run multiple epochs; each epoch runs all datapairs once through the Wanderer.
+
+    - gc_interval: forwarded to ``run_training_with_datapairs``.
 
     Returns: {epochs: [{history, final_loss, delta_vs_prev}], final_loss}.
     Logs per-epoch and summary via REPORTER under group "training/epochs".
@@ -2865,6 +2950,7 @@ def run_wanderer_epochs_with_datapairs(
             left_to_start=left_to_start,
             callback=(lambda i, stats, dp: callback(e, i, stats, dp)) if callback is not None else None,
             mixedprecision=mixedprecision,
+            gc_interval=gc_interval,
         )
         final_loss = res.get("final_loss", 0.0)
         delta = None if prev_final is None else (final_loss - prev_final)
@@ -2904,12 +2990,14 @@ def run_wanderers_parallel(
     left_to_start: Optional[Callable[[Any, "Brain"], Optional["Neuron"]]] = None,
     neuro_config: Optional[Dict[str, Any]] = None,
     mixedprecision: bool = True,
+    gc_interval: Optional[int] = None,
 ) -> List[Dict[str, Any]]:
     """Run multiple Wanderers on the same brain sequentially or concurrently.
 
     - datasets: list of iterable datasets (one per wanderer). All must match in
       signature unless brain.allow_dissimilar_datasets_in_wanderers is True.
     - mode: "thread" (concurrent threads) or "process" (real processes).
+    - gc_interval: forwarded to ``run_training_with_datapairs``.
 
     Returns list of results per wanderer (same format as run_training_with_datapairs).
     """
@@ -2963,6 +3051,7 @@ def run_wanderers_parallel(
                     loss=loss,
                     left_to_start=left_to_start,
                     mixedprecision=mixedprecision,
+                    gc_interval=gc_interval,
                 )
                 results[idx] = res
 
@@ -3008,12 +3097,14 @@ def run_wine_hello_world(
     steps_per_pair: int = 3,
     lr: float = 5e-3,
     seed: Optional[int] = 42,
+    gc_interval: Optional[int] = None,
 ) -> Dict[str, Any]:
     """Hello-world training on scikit-learn's Wine dataset with per-step logging.
 
     - Loads Wine dataset (features -> left, class index -> right).
     - Trains using `run_training_with_datapairs` with neuroplasticity active (default base plugin).
     - Logs per-wanderer-step metrics (time, dt, current/prev/mean loss, neuron/synapse counts) to REPORTER and writes JSONL to `log_path`.
+    - gc_interval: forwarded to ``run_training_with_datapairs``.
 
     Returns: training result dict with history and final_loss.
     """
@@ -3049,6 +3140,7 @@ def run_wine_hello_world(
             "max_norm": 1.0,
             "norm_type": 2.0,
         },
+        gc_interval=gc_interval,
     )
 
     export_wanderer_steps_to_jsonl(log_path)
@@ -3091,12 +3183,14 @@ def quick_train_on_pairs(
     gradient_clip: Optional[Dict[str, Any]] = None,
     selfattention: Optional["SelfAttention"] = None,
     mixedprecision: bool = True,
+    gc_interval: Optional[int] = None,
 ) -> Dict[str, Any]:
     """High-level convenience to train quickly on a small 2D brain.
 
     - Builds a 2D `Brain` of size `grid_size` and a default codec if none provided.
     - Runs `run_training_with_datapairs` with provided knobs and returns the result dict.
     - Logs a concise summary via `REPORTER` under `training/quick`.
+    - gc_interval: forwarded to ``run_training_with_datapairs``.
     """
     brain = Brain(2, size=grid_size)
     cdc = codec if codec is not None else UniversalTensorCodec()
@@ -3112,6 +3206,7 @@ def quick_train_on_pairs(
         gradient_clip=gradient_clip,
         selfattention=selfattention,
         mixedprecision=mixedprecision,
+        gc_interval=gc_interval,
     )
     try:
         report(
@@ -3133,14 +3228,8 @@ def quick_train_on_pairs(
 
 __all__ += ["make_default_codec", "quick_train_on_pairs"]
 
-# Re-import training helpers to ensure lock-based implementations are used
-from .training import (
-    run_training_with_datapairs,
-    run_wanderer_epochs_with_datapairs,
-    run_wanderers_parallel,
-    make_default_codec,
-    quick_train_on_pairs,
-)
+# Re-import only the codec helper; training flows use local implementations
+from .training import make_default_codec
 
 __all__ += [
     "run_training_with_datapairs",
@@ -3271,6 +3360,7 @@ def launch_gui(config: Optional[Dict[str, Any]] = None) -> None:
                     lr=self.lr,
                     wanderer_type=self.wanderer_type,
                     seed=self.seed,
+                    gc_interval=getattr(self, "gc_interval", None),
                 )
                 self.finished_stats.emit(res)
             except Exception as exc:

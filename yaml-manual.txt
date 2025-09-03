@@ -25,6 +25,10 @@
   current Brain and uses that length as ``max_steps`` for subsequent walks.
   Set to ``0`` to disable automatic updates.
 
+- gc_interval (int, default: 10)
+  ``run_training_with_datapairs`` calls ``gc.collect`` every ``n`` batches to
+  free memory. Set to ``0`` to disable periodic garbage collection.
+
 ## Resource Allocator Settings
 
  - resource_allocator.max_disk_mb (int, default: 30720)
