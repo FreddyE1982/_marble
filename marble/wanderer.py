@@ -16,6 +16,7 @@ from .graph import _DeviceHelper, Neuron, Synapse, _NEURON_TYPES
 from .lobe import Lobe
 from .reporter import report
 from .learnable_param import LearnableParam
+from .progressbar import ProgressBar
 
 
 class _ParamHolder:
@@ -137,20 +138,6 @@ def expose_learnable_params(fn: Callable[..., Any]) -> Callable[..., Any]:
 # Local aliases for registry use inside the class (keeps original logic intact)
 _WANDERER_TYPES = WANDERER_TYPES_REGISTRY
 _NEURO_TYPES = NEURO_TYPES_REGISTRY
-
-
-def _tqdm_factory():
-    """Return a tqdm variant suited for the current environment.
-
-    ``tqdm.auto`` automatically picks ``tqdm.notebook`` when running inside
-    IPython notebooks and falls back to the standard tqdm otherwise. This
-    keeps progress reporting to a single updating line regardless of the
-    front end.
-    """
-
-    from tqdm.auto import tqdm  # type: ignore
-
-    return tqdm
 
 
 class Wanderer(_DeviceHelper):
@@ -411,32 +398,26 @@ class Wanderer(_DeviceHelper):
             amp_enabled = False
             scaler = None
 
-        tqdm_cls = _tqdm_factory()
-        # Allow callers to control whether the tqdm line is left on screen after completion.
-        # Expose as a public attribute so SelfAttention and helpers can toggle it.
+        # Initialize progress bar
         leave_flag = False
         try:
             leave_flag = bool(getattr(self, "pbar_leave", False))
         except Exception:
             leave_flag = False
-        pbar = tqdm_cls(total=max_steps, leave=leave_flag)
-        try:
-            pbar.bar_format = (
-                "{desc} {percentage:3.0f}% steps: {n_fmt}/{total_fmt}"
-                " [{elapsed}<{remaining}, {rate_fmt}{postfix}]"
-            )
-        except Exception:
-            pass
-        # Announce walk start explicitly (per-walk output)
-        try:
-            if bool(getattr(self, "pbar_verbose", False)):
-                cur_walk = int(getattr(self.brain, "_progress_walk", 0)) + 1
-                tot_walks = int(getattr(self.brain, "_progress_total_walks", 1))
-                cur_ep = int(getattr(self.brain, "_progress_epoch", 0)) + 1
-                tot_ep = int(getattr(self.brain, "_progress_total_epochs", 1))
-                pbar.write(f"{cur_ep}/{tot_ep} epochs {cur_walk}/{tot_walks} walks: start")
-        except Exception:
-            pass
+        cur_walk = int(getattr(self.brain, "_progress_walk", 0)) + 1
+        tot_walks = int(getattr(self.brain, "_progress_total_walks", 1))
+        cur_ep = int(getattr(self.brain, "_progress_epoch", 0)) + 1
+        tot_ep = int(getattr(self.brain, "_progress_total_epochs", 1))
+        pbar = ProgressBar()
+        pbar.start(
+            max_steps,
+            leave=leave_flag,
+            verbose=bool(getattr(self, "pbar_verbose", False)),
+            cur_walk=cur_walk,
+            tot_walks=tot_walks,
+            cur_ep=cur_ep,
+            tot_ep=tot_ep,
+        )
         total_dt = 0.0
         prev_mean = None
 
@@ -677,40 +658,31 @@ class Wanderer(_DeviceHelper):
             except Exception:
                 cur_size = len(getattr(self.brain, "neurons", {}))
                 cap = None
-            desc = (
-                f"{getattr(self.brain, '_progress_epoch', 0)+1}/{getattr(self.brain, '_progress_total_epochs', 1)} epochs "
-                f"{getattr(self.brain, '_progress_walk', 0)+1}/{getattr(self.brain, '_progress_total_walks', 1)} walks:"
-            )
-            pbar.set_description(desc)
+            cur_ep = int(getattr(self.brain, "_progress_epoch", 0)) + 1
+            tot_ep = int(getattr(self.brain, "_progress_total_epochs", 1))
+            cur_walk = int(getattr(self.brain, "_progress_walk", 0)) + 1
+            tot_walks = int(getattr(self.brain, "_progress_total_walks", 1))
             try:
                 status = getattr(self.brain, "status", lambda: {})()
             except Exception:
                 status = {}
-            try:
-                # Emit fields in a stable, human-readable order expected by examples/tests.
-                pbar.set_postfix(
-                    brain=f"{cur_size}/{cap if cap is not None else '-'}",
-                    loss=f"{cur_loss:.4f}",
-                    mean_loss=f"{mean_loss:.4f}",
-                    loss_speed=f"{loss_speed:.4f}",
-                    mean_loss_speed=f"{mean_loss_speed:.4f}",
-                    neurons=cur_size,
-                    neurons_added=status.get("neurons_added", 0),
-                    synapses=len(getattr(self.brain, "synapses", [])),
-                    synapses_added=status.get("synapses_added", 0),
-                    neurons_pruned=status.get("neurons_pruned", 0),
-                    synapses_pruned=status.get("synapses_pruned", 0),
-                    paths=len(getattr(self.brain, "synapses", [])),
-                    speed=f"{mean_speed:.2f}",
-                )
-            except Exception:
-                pass
-            pbar.update(1)
-            # Force a flush to ensure per-step visibility across environments
-            try:
-                pbar.refresh()
-            except Exception:
-                pass
+            syn_count = len(getattr(self.brain, "synapses", []))
+            pbar.update(
+                cur_ep=cur_ep,
+                tot_ep=tot_ep,
+                cur_walk=cur_walk,
+                tot_walks=tot_walks,
+                cur_size=cur_size,
+                cap=cap,
+                cur_loss=cur_loss,
+                mean_loss=mean_loss,
+                loss_speed=loss_speed,
+                mean_loss_speed=mean_loss_speed,
+                status=status,
+                synapses=syn_count,
+                paths=syn_count,
+                mean_speed=mean_speed,
+            )
             prev_mean = mean_loss
 
             self._global_step_counter += 1
@@ -849,17 +821,6 @@ class Wanderer(_DeviceHelper):
             carried_value = out
             steps += 1
             moved_last = True
-        pbar.close()
-        # Announce walk end explicitly (per-walk output)
-        try:
-            if bool(getattr(self, "pbar_verbose", False)):
-                cur_walk = int(getattr(self.brain, "_progress_walk", 0)) + 1
-                tot_walks = int(getattr(self.brain, "_progress_total_walks", 1))
-                cur_ep = int(getattr(self.brain, "_progress_epoch", 0)) + 1
-                tot_ep = int(getattr(self.brain, "_progress_total_epochs", 1))
-                pbar.write(f"{cur_ep}/{tot_ep} epochs {cur_walk}/{tot_walks} walks: end (loss={float(loss.detach().to('cpu').item())}, steps={int(steps)})")
-        except Exception:
-            pass
 
         try:
             if moved_last and current is not None:
@@ -896,6 +857,19 @@ class Wanderer(_DeviceHelper):
                     loss = self._finish_stats["loss_tensor"]
                 else:
                     loss = self._compute_loss(outputs, override_loss=loss_fn)
+
+        cur_walk = int(getattr(self.brain, "_progress_walk", 0)) + 1
+        tot_walks = int(getattr(self.brain, "_progress_total_walks", 1))
+        cur_ep = int(getattr(self.brain, "_progress_epoch", 0)) + 1
+        tot_ep = int(getattr(self.brain, "_progress_total_epochs", 1))
+        pbar.end(
+            cur_ep=cur_ep,
+            tot_ep=tot_ep,
+            cur_walk=cur_walk,
+            tot_walks=tot_walks,
+            loss=float(loss.detach().to('cpu').item()),
+            steps=int(steps),
+        )
 
         if amp_enabled and scaler is not None and not self.tiling:
             scaler.scale(loss).backward()
