@@ -33,7 +33,6 @@ class TestTrainingWithDataPairs(unittest.TestCase):
             steps_per_pair=3,
             lr=5e-3,
             loss="nn.MSELoss",
-            gc_interval=1,
         )
         self.assertEqual(id(b), pre_brain_id)
         self.assertEqual(id(b.neurons), pre_graph_id)

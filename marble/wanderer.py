@@ -17,11 +17,6 @@ from .lobe import Lobe
 from .reporter import report
 from .learnable_param import LearnableParam
 
-try:
-    import psutil  # type: ignore
-except Exception:
-    psutil = None  # type: ignore
-
 
 class _ParamHolder:
     __slots__ = ("w", "b", "__weakref__")
@@ -400,7 +395,6 @@ class Wanderer(_DeviceHelper):
         self._last_step_time = time.time()
         self._walk_loss_sum = 0.0
         self._walk_step_count = 0
-        used_plugins: set = set()
         amp_enabled = bool(getattr(self, '_use_mixed_precision', False))
         amp_device = 'cuda' if torch.cuda.is_available() and str(self._device).startswith('cuda') else 'cpu'
         amp_dtype = torch.float16 if amp_device == 'cuda' else torch.bfloat16
@@ -454,7 +448,6 @@ class Wanderer(_DeviceHelper):
                 try:
                     if hasattr(plug, "rebalance_all"):
                         plug.rebalance_all(self)  # type: ignore[attr-defined]
-                        used_plugins.add(plug.__class__.__name__)
                 except Exception:
                     pass
             for n in neuron_iter:  # type: ignore[union-attr]
@@ -510,7 +503,6 @@ class Wanderer(_DeviceHelper):
             for p in getattr(self, "_wplugins", []) or []:
                 if hasattr(p, "before_walk"):
                     p.before_walk(self, current)
-                    used_plugins.add(p.__class__.__name__)
         except Exception:
             pass
         try:
@@ -695,24 +687,6 @@ class Wanderer(_DeviceHelper):
             except Exception:
                 status = {}
             try:
-                sample_no = getattr(self, "_current_sample", 0)
-                plugins_str = ",".join(sorted(tuple(used_plugins)))
-                cpu = float(psutil.cpu_percent()) if psutil else 0.0
-                ram = float(psutil.virtual_memory().percent) if psutil else 0.0
-                gpu = 0.0
-                vram = 0.0
-                if torch.cuda.is_available():
-                    dev = torch.device(self._device)
-                    idx = dev.index if getattr(dev, "index", None) is not None else 0
-                    try:
-                        gpu = float(torch.cuda.utilization(idx))
-                    except Exception:
-                        gpu = 0.0
-                    try:
-                        total_mem = torch.cuda.get_device_properties(idx).total_memory
-                        vram = float(torch.cuda.memory_allocated(idx)) / float(total_mem) * 100.0
-                    except Exception:
-                        vram = 0.0
                 # Emit fields in a stable, human-readable order expected by examples/tests.
                 pbar.set_postfix(
                     brain=f"{cur_size}/{cap if cap is not None else '-'}",
@@ -728,12 +702,6 @@ class Wanderer(_DeviceHelper):
                     synapses_pruned=status.get("synapses_pruned", 0),
                     paths=len(getattr(self.brain, "synapses", [])),
                     speed=f"{mean_speed:.2f}",
-                    sample=sample_no,
-                    plugins=plugins_str,
-                    cpu=f"{cpu:.1f}%",
-                    ram=f"{ram:.1f}%",
-                    gpu=f"{gpu:.1f}%",
-                    vram=f"{vram:.1f}%",
                 )
             except Exception:
                 pass
@@ -799,7 +767,6 @@ class Wanderer(_DeviceHelper):
                     for p in getattr(self, "_wplugins", []) or []:
                         if hasattr(p, "on_step"):
                             p.on_step(self, current, None, "none", steps, out)  # type: ignore[attr-defined]
-                            used_plugins.add(p.__class__.__name__)
                 except Exception:
                     pass
                 choices = self._gather_choices(current)
@@ -811,7 +778,6 @@ class Wanderer(_DeviceHelper):
                 try:
                     if hasattr(plugin, "choose_next"):
                         cand_syn, cand_dir = plugin.choose_next(self, current, choices)  # type: ignore[attr-defined]
-                        used_plugins.add(plugin.__class__.__name__)
                         if cand_syn is not None and cand_dir in ("forward", "backward"):
                             next_syn, dir_str = cand_syn, cand_dir
                 except Exception:
@@ -1060,7 +1026,6 @@ class Wanderer(_DeviceHelper):
             try:
                 if hasattr(plug, "on_walk_end"):
                     plug.on_walk_end(self, res)  # type: ignore[attr-defined]
-                    used_plugins.add(plug.__class__.__name__)
             except Exception:
                 pass
         try:
@@ -1068,7 +1033,6 @@ class Wanderer(_DeviceHelper):
         except Exception:
             pass
         self._active_lobe = None
-        self._walk_used_plugins = tuple(used_plugins)
         return res
 
     def _random_start(self) -> Optional[Neuron]:
