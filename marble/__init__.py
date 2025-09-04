@@ -9,6 +9,7 @@ from .auto_param import enable_auto_param_learning
 from .plugin_encoder import PluginEncoder
 from .action_sampler import compute_logits, sample_actions, select_plugins
 from .offpolicy import Trajectory, importance_weights, doubly_robust
+from .policy_gradient import PolicyGradientAgent
 
 __all__ = [
     "enable_auto_param_learning",
@@ -19,4 +20,5 @@ __all__ = [
     "Trajectory",
     "importance_weights",
     "doubly_robust",
+    "PolicyGradientAgent",
 ]
