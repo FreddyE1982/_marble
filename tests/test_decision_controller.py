@@ -21,6 +21,15 @@ class TestDecisionController(unittest.TestCase):
         print("selected under budget:", selected)
         self.assertEqual(selected, {"B": "on", "A": "on"})
 
+    def test_per_plugin_running_cost(self):
+        dc.BUDGET_LIMIT = 5.0
+        h_t = {"A": {"cost": 3}, "B": {"cost": 3}}
+        x_t = {"A": "on", "B": "on"}
+        history = [{"A": "on"}]
+        selected = dc.decide_actions(h_t, x_t, history)
+        print("selected with per-plugin budget:", selected)
+        self.assertEqual(selected, {"B": "on"})
+
 
 if __name__ == "__main__":  # pragma: no cover
     unittest.main(verbosity=2)

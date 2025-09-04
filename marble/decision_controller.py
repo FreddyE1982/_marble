@@ -13,6 +13,8 @@ from __future__ import annotations
 import os
 from typing import Dict, Iterable, List, Any, Set
 
+from .constraints import check_budget, check_incompatibility, check_throughput
+
 # Incompatibility sets I_t: mapping plugin name to set of incompatible plugins
 INCOMPATIBILITY_SETS: Dict[str, Set[str]] = {
     "A": {"C"},
@@ -80,9 +82,12 @@ def decide_actions(h_t: Dict[str, Dict[str, float]], x_t: Dict[str, Any], histor
     """
 
     usage: Dict[str, int] = {}
+    running_costs: Dict[str, float] = {}
     for past in history:
         for name in past:
             usage[name] = usage.get(name, 0) + 1
+            cost = float(h_t.get(name, {}).get("cost", 0.0))
+            running_costs[name] = running_costs.get(name, 0.0) + cost
 
     # Sort candidates by cost so cheaper actions are preferred under budget
     ordered = sorted(x_t.items(), key=lambda kv: h_t.get(kv[0], {}).get("cost", 0.0))
@@ -93,17 +98,16 @@ def decide_actions(h_t: Dict[str, Dict[str, float]], x_t: Dict[str, Any], histor
 
     for name, action in ordered:
         cost = float(h_t.get(name, {}).get("cost", 0.0))
-        cap = CAPACITY_LIMITS.get(name, float("inf"))
-        if usage.get(name, 0) >= cap:
+        if not check_throughput(name, usage, CAPACITY_LIMITS):
             continue
-        if cost > remaining:
+        if not check_budget(name, cost, remaining, running_costs, BUDGET_LIMIT):
             continue
-        incompatible = INCOMPATIBILITY_SETS.get(name, set())
-        if active & incompatible:
+        if not check_incompatibility(name, active, INCOMPATIBILITY_SETS):
             continue
         selected[name] = action
         active.add(name)
         usage[name] = usage.get(name, 0) + 1
+        running_costs[name] = running_costs.get(name, 0.0) + cost
         remaining -= cost
         if remaining <= 0:
             break
