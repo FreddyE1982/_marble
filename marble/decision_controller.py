@@ -498,9 +498,24 @@ class DecisionController:
             + self.encoder.ctx_rnn.hidden_size
             + self.encoder.action_embed.embedding_dim
         )
+
+        # Build a cost vector so the policy-gradient agent can impose a soft
+        # budget constraint through its generic ``constraints`` interface.
+        cost_vec = torch.tensor(
+            [get_plugin_cost(n) for n in PLUGIN_ID_REGISTRY.keys()],
+            dtype=torch.float32,
+        )
+
+        def g_budget(actions: torch.Tensor) -> torch.Tensor:
+            """Return normalised cost for the selected ``actions``."""
+
+            return cost_vec[actions] / max(1.0, BUDGET_LIMIT)
+
         self.agent = PolicyGradientAgent(
             state_dim=feat_dim,
             action_dim=len(PLUGIN_ID_REGISTRY),
+            lambdas=[1.0],
+            constraints=[g_budget],
         )
         self.reward_shaper = RewardShaper()
         self.trajectory = Trajectory()
