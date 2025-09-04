@@ -33,9 +33,10 @@
 - resource_allocator.compress_offload (bool, default: true)
   When true, tensors moved to CPU or disk are converted to ``float16`` to save
   space. They are restored to their original dtype when reloaded.
-- resource_allocator.min_gpu_tensor_mb (float, default: 1.0)
+- resource_allocator.min_gpu_tensor_mb (float, default: 0.0)
   Minimum tensor size in megabytes required before the allocator considers
-  moving it to GPU. Smaller tensors stay on CPU to avoid transfer overhead.
+  moving it to GPU. A value of ``0.0`` sends every tensor to GPU regardless of
+  size.
 - resource_allocator.ram_offload_threshold (float, default: 0.9)
   RAM usage ratio beyond which rarely accessed tensors are proactively
   offloaded to disk. Value must be between 0 and 1.

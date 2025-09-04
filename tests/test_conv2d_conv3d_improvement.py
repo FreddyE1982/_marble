@@ -24,7 +24,19 @@ class TestConv2D3DImprovement(unittest.TestCase):
     def _add_free(self, b, tensor):
         for idx in b.available_indices():
             if b.get_neuron(idx) is None:
+                if b.neurons:
+                    first = next(iter(b.neurons))
+                    neu = b.add_neuron(idx, tensor=tensor, connect_to=first)
+                    for s in list(neu.incoming) + list(neu.outgoing):
+                        b.remove_synapse(s)
+                    return neu
                 return b.add_neuron(idx, tensor=tensor)
+        if b.neurons:
+            first = next(iter(b.neurons))
+            neu = b.add_neuron(b.available_indices()[0], tensor=tensor, connect_to=first)
+            for s in list(neu.incoming) + list(neu.outgoing):
+                b.remove_synapse(s)
+            return neu
         return b.add_neuron(b.available_indices()[0], tensor=tensor)
 
     def _build_params(self, b, kernel_vals, stride=1, padding=0, dilation=1, bias=0.0):

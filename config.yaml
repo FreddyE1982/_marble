@@ -1,7 +1,7 @@
 resource_allocator:
   max_disk_mb: 30720  # maximum MB for disk offload (30 GB)
   compress_offload: true  # store offloaded tensors in float16
-  min_gpu_tensor_mb: 1.0  # tensors smaller than this stay on CPU
+  min_gpu_tensor_mb: 0.0  # send all tensors to GPU regardless of size
   ram_offload_threshold: 0.9  # offload tensors to disk when RAM usage exceeds this ratio
   vram_offload_threshold: 0.9  # move tensors off GPU when VRAM usage exceeds this ratio
   disk_usage_threshold: 0.95  # stop offloading when disk usage exceeds this ratio

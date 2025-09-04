@@ -155,7 +155,7 @@ class ResourceAllocatorPlugin:
         cfg = _load_resource_cfg()
         self.max_disk_mb = float(cfg.get("max_disk_mb", 30720))
         self.compress_offload = bool(cfg.get("compress_offload", True))
-        self.min_gpu_tensor_mb = float(cfg.get("min_gpu_tensor_mb", 1.0))
+        self.min_gpu_tensor_mb = float(cfg.get("min_gpu_tensor_mb", 0.0))
         self.ram_offload_threshold = float(cfg.get("ram_offload_threshold", 0.9))
         self.vram_offload_threshold = float(cfg.get("vram_offload_threshold", 0.9))
         self.disk_usage_threshold = float(cfg.get("disk_usage_threshold", 0.95))
