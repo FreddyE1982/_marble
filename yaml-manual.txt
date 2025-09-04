@@ -59,3 +59,9 @@
   Maximum cumulative cost allowed for plugin actions during a single decision
   step. Actions exceeding the remaining budget are discarded starting with the
   highest cost.
+
+## Reward Shaper Settings
+
+- reward_shaper.window_size (int, default: 10)
+  Number of recent performance samples kept for computing OLS trends used to
+  shape actor-critic rewards. Must be at least 2.
