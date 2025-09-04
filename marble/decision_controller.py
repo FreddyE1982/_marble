@@ -581,7 +581,11 @@ class DecisionController:
             return {}
 
         watch_vals = self._gather_watchables()
-        metrics = {**watch_vals, **(metrics or {})} if watch_vals or metrics else {}
+        # Merge caller-provided metrics with values gathered from the
+        # ``watch_*`` configuration.  When no metrics are available we keep an
+        # empty dict so the caller can still inspect ``last_metrics`` without
+        # triggering reward shaping on placeholder zeros.
+        metrics = {**watch_vals, **(metrics or {})}
         self.last_metrics = metrics
 
         plugin_names = list(h_t.keys())
@@ -639,7 +643,7 @@ class DecisionController:
             self._last_phase = None
 
         reward = 0.0
-        if metrics is not None:
+        if metrics:
             reward, _ = self.reward_shaper.update(
                 metrics.get("latency", 0.0),
                 metrics.get("throughput", 0.0),
