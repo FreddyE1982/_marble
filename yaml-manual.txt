@@ -66,6 +66,10 @@
   Minimum seconds a plugin should wait between state changes. When the actual
   interval \(\tau_t\) falls below this value, a penalty of ``tau_threshold - \tau_t``
   is added to the plugin's cost during action selection.
+- decision_controller.cadence (int, default: 1)
+  Number of walk steps between successive decisions of the controller. Actions
+  are only reconsidered on steps that are multiples of this cadence. Must be at
+  least 1.
 
 ## Reward Shaper Settings
 

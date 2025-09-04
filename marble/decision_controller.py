@@ -18,6 +18,12 @@ import torch
 
 from .constraints import check_budget, check_incompatibility, check_throughput
 from .plugin_graph import PLUGIN_GRAPH
+from .plugin_encoder import PluginEncoder
+from .action_sampler import compute_logits, select_plugins
+from .reward_shaper import RewardShaper
+from .offpolicy import Trajectory, doubly_robust
+from .policy_gradient import PolicyGradientAgent
+from .plugins import PLUGIN_ID_REGISTRY
 
 # Incompatibility sets I_t: mapping plugin name to set of incompatible plugins
 INCOMPATIBILITY_SETS: Dict[str, Set[str]] = {
@@ -131,6 +137,41 @@ def _load_tau_threshold() -> float:
 
 TAU_THRESHOLD = _load_tau_threshold()
 
+
+def _load_cadence() -> int:
+    """Load decision cadence from ``config.yaml``."""
+    base = os.path.dirname(os.path.dirname(__file__))
+    cfg: Dict[str, Dict[str, Any]] = {}
+    try:
+        with open(os.path.join(base, "config.yaml"), "r", encoding="utf-8") as fh:
+            section: str | None = None
+            for raw in fh:
+                line = raw.split("#", 1)[0].rstrip()
+                if not line:
+                    continue
+                if not line.startswith(" ") and line.endswith(":"):
+                    section = line[:-1].strip()
+                    cfg[section] = {}
+                    continue
+                if section and ":" in line:
+                    k, v = line.split(":", 1)
+                    try:
+                        cfg[section][k.strip()] = float(v.strip())
+                    except Exception:
+                        cfg[section][k.strip()] = v.strip()
+    except Exception:
+        return 1
+    dc = cfg.get("decision_controller", {})
+    try:
+        val = int(dc.get("cadence", 1))
+        return max(1, val)
+    except Exception:
+        return 1
+
+
+CADENCE = _load_cadence()
+STEP_COUNTER = 0
+
 # Track last state-change timestamp for each plugin
 LAST_STATE_CHANGE: Dict[str, float] = {}
 
@@ -209,6 +250,34 @@ def estimate_plugin_contributions(
     return {
         name: float(w.detach().to("cpu").item()) for name, w in zip(plugin_names, weights)
     }
+
+
+def estimate_plugin_contributions_bayesian(
+    activation: torch.Tensor,
+    outcomes: torch.Tensor,
+    plugin_names: List[str],
+    *,
+    alpha: float = 1.0,
+    beta: float = 1.0,
+) -> Dict[str, tuple[float, float]]:
+    """Estimate contribution mean and variance via Bayesian linear regression.
+
+    A normal prior with precision ``alpha`` and noise precision ``beta`` is
+    assumed.  The posterior over weights is returned as a mapping from plugin
+    name to ``(mean, variance)``.
+    """
+
+    n, d = activation.shape
+    eye = torch.eye(d, device=activation.device) * alpha
+    precision = eye + beta * activation.t() @ activation
+    cov = torch.inverse(precision)
+    mean = beta * cov @ activation.t() @ outcomes
+    out: Dict[str, tuple[float, float]] = {}
+    for i, name in enumerate(plugin_names):
+        m = float(mean[i].detach().to("cpu").item())
+        v = float(cov[i, i].detach().to("cpu").item())
+        out[name] = (m, v)
+    return out
 
 
 def decide_actions(
@@ -291,6 +360,125 @@ def decide_actions(
     return selected
 
 
+class DecisionController:
+    """High-level orchestrator integrating embeddings, sampling and learning."""
+
+    def __init__(
+        self,
+        *,
+        encoder: PluginEncoder | None = None,
+        cadence: int = CADENCE,
+        sampler_mode: str = "gumbel-top-k",
+        top_k: int = 1,
+    ) -> None:
+        if encoder is None:
+            encoder = PluginEncoder(len(PLUGIN_ID_REGISTRY))
+        self.encoder = encoder
+        self.cadence = max(1, int(cadence))
+        self.sampler_mode = sampler_mode
+        self.top_k = int(top_k)
+        feat_dim = (
+            self.encoder.embedding.embedding_dim
+            + self.encoder.ctx_rnn.hidden_size
+            + self.encoder.action_embed.embedding_dim
+        )
+        self.agent = PolicyGradientAgent(
+            state_dim=feat_dim,
+            action_dim=len(PLUGIN_ID_REGISTRY),
+        )
+        self.reward_shaper = RewardShaper()
+        self.trajectory = Trajectory()
+        self.history: List[Dict[str, Any]] = []
+        self.past_actions: List[str] = []
+        self.step = 0
+
+    # --------------------------------------------------------------
+    def _advance(self) -> bool:
+        self.step += 1
+        return self.step % self.cadence == 0
+
+    # --------------------------------------------------------------
+    def decide(
+        self,
+        h_t: Dict[str, Dict[str, float]],
+        ctx_seq: torch.Tensor,
+        *,
+        metrics: Dict[str, float] | None = None,
+    ) -> Dict[str, Any]:
+        """Return selected actions using embeddings and stochastic policy."""
+
+        if not self._advance():
+            self.history.append({})
+            return {}
+
+        plugin_names = list(h_t.keys())
+        plugin_ids = torch.tensor(
+            [PLUGIN_ID_REGISTRY.get(n, 0) for n in plugin_names], dtype=torch.long
+        )
+        past_ids = [PLUGIN_ID_REGISTRY.get(n, 0) for n in self.past_actions] or [0]
+        ctx_rep = ctx_seq.expand(len(plugin_ids), -1, -1)
+        feats = self.encoder(plugin_ids, ctx_rep, past_ids)
+        e_t = feats
+        e_a_t = feats.mean(dim=0)
+        logits = compute_logits(e_t, e_a_t)
+        chosen = select_plugins(
+            plugin_ids, e_t, e_a_t, mode=self.sampler_mode, top_k=self.top_k
+        )
+        x_t = {
+            name: h_t[name].get("action", "on")
+            for name in plugin_names
+            if PLUGIN_ID_REGISTRY.get(name, -1) in chosen
+        }
+        selected = decide_actions(h_t, x_t, self.history)
+        self.history.append(selected)
+        self.past_actions.extend(selected.keys())
+
+        reward = 0.0
+        if metrics is not None:
+            reward, _ = self.reward_shaper.update(
+                metrics.get("latency", 0.0),
+                metrics.get("throughput", 0.0),
+                metrics.get("cost", 0.0),
+            )
+
+        probs = torch.sigmoid(logits)
+        for name in selected:
+            pid = PLUGIN_ID_REGISTRY.get(name, 0)
+            prob = float(probs[(plugin_ids == pid).nonzero(as_tuple=False)][0].detach())
+            self.trajectory.log(pid, reward, prob, prob)
+
+        if selected:
+            state = e_a_t.unsqueeze(0)
+            act = torch.tensor([PLUGIN_ID_REGISTRY[list(selected.keys())[0]]])
+            ret = torch.tensor([reward])
+            self.agent.step(state, act, ret)
+
+        return selected
+
+    # --------------------------------------------------------------
+    def offpolicy_value(self, q_hat: List[float]) -> float:
+        """Return doubly-robust off-policy estimate for logged trajectory."""
+
+        return doubly_robust(self.trajectory, q_hat)
+
+    # --------------------------------------------------------------
+    def compute_contributions(
+        self,
+        activation: torch.Tensor,
+        outcomes: torch.Tensor,
+        plugin_names: List[str],
+        *,
+        bayesian: bool = False,
+    ) -> Dict[str, Any]:
+        """Wrapper around contribution estimators."""
+
+        if bayesian:
+            return estimate_plugin_contributions_bayesian(
+                activation, outcomes, plugin_names
+            )
+        return estimate_plugin_contributions(activation, outcomes, plugin_names)
+
+
 __all__ = [
     "decide_actions",
     "INCOMPATIBILITY_SETS",
@@ -298,9 +486,13 @@ __all__ = [
     "BUDGET_LIMIT",
     "train_contribution_regressor",
     "estimate_plugin_contributions",
+    "estimate_plugin_contributions_bayesian",
     "L1_PENALTY",
     "TAU_THRESHOLD",
+    "CADENCE",
+    "STEP_COUNTER",
     "LAST_STATE_CHANGE",
     "record_plugin_state_change",
     "tau_since_last_change",
+    "DecisionController",
 ]
