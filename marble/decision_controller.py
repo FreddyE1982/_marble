@@ -27,7 +27,7 @@ from .constraints import (
 )
 from .plugin_graph import PLUGIN_GRAPH
 from .plugin_encoder import PluginEncoder
-from .action_sampler import compute_logits, select_plugins
+from .action_sampler import select_plugins
 from .reward_shaper import RewardShaper
 from .offpolicy import Trajectory, doubly_robust
 from .policy_gradient import PolicyGradientAgent
@@ -544,6 +544,7 @@ class DecisionController:
             [get_plugin_cost(n) for n in PLUGIN_ID_REGISTRY.keys()],
             dtype=torch.float32,
         )
+        self.cost_vec = cost_vec
 
         def g_budget(actions: torch.Tensor) -> torch.Tensor:
             """Return normalised cost for the selected ``actions``."""
@@ -648,9 +649,27 @@ class DecisionController:
         feats = self.encoder(plugin_ids, ctx_rep, past_ids)
         e_t = feats
         e_a_t = feats.mean(dim=0)
-        logits = compute_logits(e_t, e_a_t)
+        costs = self.cost_vec[plugin_ids]
+        incompat: Dict[int, Set[int]] = {}
+        name_to_idx = {n: i for i, n in enumerate(plugin_names)}
+        for i, name in enumerate(plugin_names):
+            others = {
+                name_to_idx[o]
+                for o in INCOMPATIBILITY_SETS.get(name, set())
+                if o in name_to_idx
+            }
+            if others:
+                incompat[i] = others
         chosen = select_plugins(
-            plugin_ids, e_t, e_a_t, mode=self.sampler_mode, top_k=self.top_k
+            plugin_ids,
+            e_t,
+            e_a_t,
+            mode=self.sampler_mode,
+            top_k=self.top_k,
+            temperature=1.0,
+            costs=costs,
+            budget=BUDGET_LIMIT,
+            incompatibility=incompat,
         )
         x_t = {
             name: h_t[name].get("action", "on")
