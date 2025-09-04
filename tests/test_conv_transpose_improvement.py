@@ -21,19 +21,35 @@ class TestConvTransposeImprovement(unittest.TestCase):
 
         register_wanderer_type("det_deconv", DeterministicPlugin())
 
-    def _add_free(self, b, tensor):
+    def _add_free(self, b, tensor, connect_to=None, direction="bi", keep_connection=True):
         for idx in b.available_indices():
             if b.get_neuron(idx) is None:
-                return b.add_neuron(idx, tensor=tensor)
-        return b.add_neuron(b.available_indices()[0], tensor=tensor)
+                if connect_to is None:
+                    connect = next(iter(b.neurons.keys())) if b.neurons else None
+                else:
+                    connect = getattr(connect_to, "position", connect_to)
+                n = b.add_neuron(idx, tensor=tensor, connect_to=connect, direction=direction)
+                if not keep_connection:
+                    for s in list(n.incoming) + list(n.outgoing):
+                        b.remove_synapse(s)
+                return n
+        if connect_to is None:
+            connect = next(iter(b.neurons.keys())) if b.neurons else None
+        else:
+            connect = getattr(connect_to, "position", connect_to)
+        n = b.add_neuron(b.available_indices()[0], tensor=tensor, connect_to=connect, direction=direction)
+        if not keep_connection:
+            for s in list(n.incoming) + list(n.outgoing):
+                b.remove_synapse(s)
+        return n
 
     def _build_params(self, b, kernel_vals, stride=1, padding=0, dilation=1, bias=0.0):
         p = []
-        p.append(self._add_free(b, list(kernel_vals)))
-        p.append(self._add_free(b, [float(stride)]))
-        p.append(self._add_free(b, [float(padding)]))
-        p.append(self._add_free(b, [float(dilation)]))
-        p.append(self._add_free(b, [float(bias)]))
+        p.append(self._add_free(b, list(kernel_vals), keep_connection=False))
+        p.append(self._add_free(b, [float(stride)], keep_connection=False))
+        p.append(self._add_free(b, [float(padding)], keep_connection=False))
+        p.append(self._add_free(b, [float(dilation)], keep_connection=False))
+        p.append(self._add_free(b, [float(bias)], keep_connection=False))
         return p
 
     def _loss_after_walk(self, w, steps, start):
@@ -42,17 +58,16 @@ class TestConvTransposeImprovement(unittest.TestCase):
 
     def test_conv_transpose_1d_improves_loss(self):
         b = self.Brain(2, size=(8, 8))
-        data = self._add_free(b, [1.0, 2.0, 3.0])
-        dst = self._add_free(b, [0.0])
-        base = self._add_free(b, [0.0])
+        data = self._add_free(b, [1.0, 2.0, 3.0], keep_connection=False)
+        dst = self._add_free(b, [0.0], keep_connection=False)
+        base = self._add_free(b, [0.0], keep_connection=False)
         b.connect(getattr(data, "position"), getattr(base, "position"), direction="uni")
         b.connect(getattr(base, "position"), getattr(dst, "position"), direction="uni")
 
         params = self._build_params(b, [0.0, 0.0, 0.0], 1, 0, 1, 0.0)
-        conv = self._add_free(b, [0.0])
+        conv = self._add_free(b, [0.0], connect_to=getattr(dst, "position"), direction="uni")
         self.wire_params(b, conv, params)
         self.wire_data(b, conv, [data])
-        b.connect(getattr(conv, "position"), getattr(dst, "position"), direction="uni")
         conv.type_name = "conv_transpose1d"
         from marble.marblemain import _NEURON_TYPES  # noqa: E402
         plug = _NEURON_TYPES.get("conv_transpose1d")
@@ -88,18 +103,17 @@ class TestConvTransposeImprovement(unittest.TestCase):
 
     def test_conv_transpose_2d_improves_loss(self):
         b = self.Brain(2, size=(10, 10))
-        row1 = self._add_free(b, [1.0, 2.0, 3.0])
-        row2 = self._add_free(b, [2.0, 3.0, 4.0])
-        dst = self._add_free(b, [0.0])
-        base = self._add_free(b, [0.0])
+        row1 = self._add_free(b, [1.0, 2.0, 3.0], keep_connection=False)
+        row2 = self._add_free(b, [2.0, 3.0, 4.0], keep_connection=False)
+        dst = self._add_free(b, [0.0], keep_connection=False)
+        base = self._add_free(b, [0.0], keep_connection=False)
         b.connect(getattr(row1, "position"), getattr(base, "position"), direction="uni")
         b.connect(getattr(base, "position"), getattr(dst, "position"), direction="uni")
 
         params = self._build_params(b, [0.0, 0.0, 0.0, 0.0], 1, 0, 1, 0.0)
-        conv = self._add_free(b, [0.0])
+        conv = self._add_free(b, [0.0], connect_to=getattr(dst, "position"), direction="uni")
         self.wire_params(b, conv, params)
         self.wire_data(b, conv, [row1, row2])
-        b.connect(getattr(conv, "position"), getattr(dst, "position"), direction="uni")
         conv.type_name = "conv_transpose2d"
         from marble.marblemain import _NEURON_TYPES  # noqa: E402
         plug = _NEURON_TYPES.get("conv_transpose2d")
@@ -133,18 +147,17 @@ class TestConvTransposeImprovement(unittest.TestCase):
 
     def test_conv_transpose_3d_improves_loss(self):
         b = self.Brain(2, size=(12, 12))
-        slice1 = self._add_free(b, [1.0, 2.0, 3.0, 4.0])
-        slice2 = self._add_free(b, [2.0, 3.0, 4.0, 5.0])
-        dst = self._add_free(b, [0.0])
-        base = self._add_free(b, [0.0])
+        slice1 = self._add_free(b, [1.0, 2.0, 3.0, 4.0], keep_connection=False)
+        slice2 = self._add_free(b, [2.0, 3.0, 4.0, 5.0], keep_connection=False)
+        dst = self._add_free(b, [0.0], keep_connection=False)
+        base = self._add_free(b, [0.0], keep_connection=False)
         b.connect(getattr(slice1, "position"), getattr(base, "position"), direction="uni")
         b.connect(getattr(base, "position"), getattr(dst, "position"), direction="uni")
 
         params = self._build_params(b, [0.0] * 8, 1, 0, 1, 0.0)
-        conv = self._add_free(b, [0.0])
+        conv = self._add_free(b, [0.0], connect_to=getattr(dst, "position"), direction="uni")
         self.wire_params(b, conv, params)
         self.wire_data(b, conv, [slice1, slice2])
-        b.connect(getattr(conv, "position"), getattr(dst, "position"), direction="uni")
         conv.type_name = "conv_transpose3d"
         from marble.marblemain import _NEURON_TYPES  # noqa: E402
         plug = _NEURON_TYPES.get("conv_transpose3d")

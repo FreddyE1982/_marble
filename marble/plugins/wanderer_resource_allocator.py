@@ -500,6 +500,9 @@ class ResourceAllocatorPlugin:
                 target_device = "disk"
             else:
                 target_device = "cpu"
+            size_mb = t.element_size() * t.nelement() / (1024 * 1024)
+            if target_device == "cuda" and size_mb < self.min_gpu_tensor_mb:
+                target_device = "cpu"
             self._safe_transfer(obj, attr, t, target_device)
 
     def start_auto_rebalance(self, wanderer, interval: float = 5.0) -> None:

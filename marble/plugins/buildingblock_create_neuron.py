@@ -24,6 +24,8 @@ class CreateNeuronPlugin(BuildingBlock):
     ):
         idx = self._to_index(brain, index)
         conn = self._to_index(brain, connect_to_index) if connect_to_index is not None else None
+        if conn is None and brain.neurons:
+            conn = next(iter(brain.neurons))
         try:
             return brain.add_neuron(
                 idx,
