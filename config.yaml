@@ -5,6 +5,8 @@ resource_allocator:
   ram_offload_threshold: 0.9  # offload tensors to disk when RAM usage exceeds this ratio
   vram_offload_threshold: 0.9  # move tensors off GPU when VRAM usage exceeds this ratio
   disk_usage_threshold: 0.95  # stop offloading when disk usage exceeds this ratio
+autoplugin:
+  decision_interval: 1  # steps between plugin selector decisions
 max_flat_steps: 5  # consecutive zero-delta steps before pruning/connection
 auto_scale_targets: false  # scale tiny targets to match output magnitude
 auto_max_steps_interval: 10  # recompute wanderer max_steps every N datapairs

@@ -251,6 +251,7 @@ class Wanderer(_DeviceHelper):
         self._walk_loss_sum: float = 0.0
         self._walk_step_count: int = 0
         self._global_step_counter: int = 0
+        self.neuron_fire_count: int = 0
         self._last_walk_mean_loss: Optional[float] = None
         self._walk_counter: int = 0
         self._pending_settings: Dict[str, Any] = {}
@@ -685,6 +686,7 @@ class Wanderer(_DeviceHelper):
             )
             prev_mean = mean_loss
 
+            self.neuron_fire_count += 1
             self._global_step_counter += 1
             itemname = f"step_{self._global_step_counter}"
             try:
