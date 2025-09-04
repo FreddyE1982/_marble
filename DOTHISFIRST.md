@@ -122,7 +122,7 @@ Ensure plugins operate on the active device without unnecessary CPU casts.
 
 ## Steps
 1. Refactor Conv1DNeuronPlugin to cast tensors via `neuron._device` instead of hard-coded CPU transfers. [complete]
-2. Extend this device-aware approach to the remaining plugin modules, replacing `.to("cpu")` with `.to(owner._device)` and limiting `detach()` to logging or Python-scalar extraction.
+2. Extend this device-aware approach to the remaining plugin modules, replacing `.to("cpu")` with `.to(owner._device)` and limiting `detach()` to logging or Python-scalar extraction. [complete]
 
 ## Pending tests
-- tests/test_conv_improvement.py
+- tests/test_conv_improvement.py [complete]
