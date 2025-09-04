@@ -49,6 +49,9 @@ from marble.plugins.auto_target_scaler import AutoTargetScalerPlugin
 print("...complete")
 
 
+scaler: AutoTargetScalerPlugin | None = None
+
+
 class QualityAwareRoutine:
     """Adjust LR based on recent loss trend for stability."""
 
@@ -78,15 +81,32 @@ class QualityAwareRoutine:
 
 
 def quality_loss(pred: torch.Tensor, target: torch.Tensor, delta: float = 0.5) -> torch.Tensor:
-    """Huber-style loss tailored for quality scores.
+    """Huber-style loss with optional target scaling.
 
-    Penalizes large errors linearly while keeping small errors quadratic,
-    offering robustness to outliers compared to plain MSE.
+    When a global ``AutoTargetScalerPlugin`` instance is present, its
+    ``scale`` factor is applied to the target before loss computation to
+    keep magnitudes compatible with model outputs and avoid exploding
+    losses.
     """
 
+    global scaler
+    if scaler is not None:
+        try:
+            dummy = types.SimpleNamespace(
+                _target_provider=lambda _y: target,
+                _torch=torch,
+                _device=pred.device,
+            )
+            scaler._orig_tp = lambda _y: target  # type: ignore[attr-defined]
+            scaler.loss(dummy, [pred])
+            target = target * float(getattr(scaler, "scale", 1.0))
+        except Exception:
+            pass
     diff = pred - target
     abs_diff = torch.abs(diff)
-    return torch.mean(torch.where(abs_diff < delta, 0.5 * diff ** 2, delta * (abs_diff - 0.5 * delta)))
+    return torch.mean(
+        torch.where(abs_diff < delta, 0.5 * diff ** 2, delta * (abs_diff - 0.5 * delta))
+    )
 
 
 
@@ -237,8 +257,8 @@ def main(
         else:
             ap._mandatory = set(mandatory_plugins)
     register_wanderer_type("autoplugin_logger", ap)
+    global scaler
     scaler = AutoTargetScalerPlugin(observe_steps=2)
-    register_wanderer_type("auto_target_scaler", scaler)
     wplugins = [
         "batchtrainer",
         "qualityweightedloss",
@@ -252,7 +272,6 @@ def main(
         "dynamicdimensions",
         "mixedprecision",  # ensure GradScaler handles loss scaling
         "autoplugin_logger",
-        "auto_target_scaler",
         "*",  # shorthand for all other plugins
     ]
     wplugins = expand_wplugins(wplugins)
