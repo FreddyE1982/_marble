@@ -141,7 +141,7 @@ class AutoPlugin:
         name: str,
         active: bool,
     ) -> None:
-        if not self._log_path:
+        if not self._log_path or name in self._mandatory:
             return
         key = (plugintype, name)
         state = self._log_state.setdefault(
