@@ -52,3 +52,10 @@
 - autoplugin.decision_interval (int, default: 1)
   Number of walk steps between plugin selection decisions. Plugins retain their
   previous activation state on intermediate steps. Must be at least ``1``.
+
+## Decision Controller Settings
+
+- decision_controller.budget (float, default: 10.0)
+  Maximum cumulative cost allowed for plugin actions during a single decision
+  step. Actions exceeding the remaining budget are discarded starting with the
+  highest cost.
