@@ -20,9 +20,10 @@ runs can be inspected later.
 
 import math
 import os
-import random
 import time
 from typing import Any, Dict, List, Tuple, Optional
+
+import torch
 
 from ..wanderer import expose_learnable_params
 from ..buildingblock import get_buildingblock_type, _BUILDINGBLOCK_TYPES
@@ -94,6 +95,8 @@ class AutoPlugin:
                 pass
         self._log_state: Dict[Tuple[str, str], Dict[str, Any]] = {}
         self._gate_cache: Dict[Tuple[str, str], Tuple[int, bool]] = {}
+        self._theta_mean: Dict[str, torch.Tensor] = {}
+        self._theta_cov: Dict[str, torch.Tensor] = {}
 
     def on_init(self, wanderer: "Wanderer") -> None:  # noqa: D401
         """Wrap existing Wanderer plugins with gating proxies."""
@@ -229,9 +232,23 @@ class AutoPlugin:
                 name,
                 last_time,
                 last_steps,
-                state["total_active_steps"],
+            state["total_active_steps"],
             )
             state["active"] = False
+
+    def _feature_vector(self, wanderer: "Wanderer", name: str) -> torch.Tensor:
+        """Return feature vector ``Φ(h_t, a_t)`` for plugin *name*."""
+
+        loss = float(getattr(wanderer, "_last_walk_mean_loss", 0.0) or 0.0)
+        steps = float(getattr(wanderer, "_walk_step_count", 0.0))
+        brain = getattr(wanderer, "brain", None)
+        complexity = float(
+            len(getattr(brain, "neurons", {})) + len(getattr(brain, "synapses", []))
+            if brain is not None
+            else 0.0
+        )
+        plugin_id = float(sum(ord(c) for c in name) % 1000) / 1000.0
+        return torch.tensor([loss, steps, complexity, plugin_id], dtype=torch.float32)
 
     def is_active(
         self,
@@ -259,19 +276,23 @@ class AutoPlugin:
             self._update_log(wanderer, plugintype, name, cached[1])
             return cached[1]
 
-        torch = getattr(wanderer, "_torch", None)
         bias = wanderer.get_learnable_param_tensor(f"autoplugin_bias_{name}")
         wanderer.ensure_learnable_param(f"autoplugin_gain_{name}", 1.0)
         gain = wanderer.get_learnable_param_tensor(f"autoplugin_gain_{name}")
-        score = self._attention_score(wanderer) * gain + bias
-        if torch is None:
-            score = float(score) + (random.random() - 0.5) * 0.1
-            gate = 1.0 / (1.0 + math.exp(-score))
-            result = gate >= 0.5
-        else:
-            noise = (torch.rand((), device=getattr(wanderer, "_device", "cpu")).detach().to("cpu").item() - 0.5) * 0.1
-            gate = torch.sigmoid(score + noise)
-            result = bool(gate.detach().to("cpu").item() >= 0.5)
+        features = self._feature_vector(wanderer, name)
+        mean = self._theta_mean.setdefault(name, torch.zeros_like(features))
+        cov = self._theta_cov.setdefault(name, torch.eye(features.shape[0]))
+        theta = torch.distributions.MultivariateNormal(mean, cov).sample()
+        score = (features @ theta) * gain + bias
+        gate = torch.sigmoid(score)
+        result = bool(gate.detach().to("cpu").item() >= 0.5)
+        phi = features.view(-1, 1)
+        cov_inv = torch.inverse(cov)
+        new_cov = torch.inverse(cov_inv + phi @ phi.T)
+        y = torch.tensor(float(result))
+        new_mean = new_cov @ (cov_inv @ mean.view(-1, 1) + phi * y)
+        self._theta_mean[name] = new_mean.view(-1)
+        self._theta_cov[name] = new_cov
         self._update_log(wanderer, plugintype, name, result)
         self._gate_cache[key] = (step, result)
         return result
