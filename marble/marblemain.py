@@ -2829,6 +2829,9 @@ def run_training_with_datapairs(
             lr_i /= batch_sz
         _current_target["val"] = enc_right
         stats = w.walk(max_steps=ms, start=start, lr=lr_i, lobe=lobe)
+        finish_loss, delta = w.walkfinish()
+        stats["loss"] = finish_loss
+        stats["delta"] = delta
         stats["plugins"] = [p.__class__.__name__ for p in getattr(w, "_wplugins", []) or []]
         history.append(stats)
         for p in train_plugins:
