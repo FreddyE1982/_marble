@@ -1110,7 +1110,17 @@ class Wanderer(_DeviceHelper):
                 terms.append(loss_mod(yt, tgt))
             base_loss = sum(terms) if terms else torch.tensor(0.0, device=self._device)
         elif callable(self._loss_spec):
-            base_loss = self._loss_spec(outputs)
+            if self._target_provider is not None:
+                terms = []
+                for y in outputs:
+                    try:
+                        tgt = self._target_provider(y)
+                        terms.append(self._loss_spec(y, tgt))
+                    except Exception:
+                        pass
+                base_loss = sum(terms) if terms else torch.tensor(0.0, device=self._device)
+            else:
+                base_loss = self._loss_spec(outputs)
         else:
             terms = []
             for y in outputs:
