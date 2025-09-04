@@ -8,6 +8,7 @@ This project provides a single-file core library in `marble/marblemain.py` that 
 - Autograd-driven Wanderer with plugin points and neuroplasticity hooks
 - High-level training helpers (including DataPair flows and epochs)
 - Global Reporter for structured logs and auditability
+- Policy gradient utilities with entropy regularization and constraint support
 
 All imports are centralized in `marble/marblemain.py`; other files must not import.
 
