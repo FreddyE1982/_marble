@@ -15,6 +15,9 @@ decision_controller:
   dwell_bonus: 0.1  # cost reduction per consecutive active step
   watch_metrics: []  # reporter paths to monitor automatically
   watch_variables: []  # module.variable paths to observe
+  linear_constraints:
+    A: []  # constraint matrix for actions
+    b: []  # upper bounds for linear constraints
 max_flat_steps: 5  # consecutive zero-delta steps before pruning/connection
 auto_scale_targets: false  # scale tiny targets to match output magnitude
 auto_max_steps_interval: 10  # recompute wanderer max_steps every N datapairs

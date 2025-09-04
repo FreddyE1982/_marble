@@ -16,8 +16,14 @@ import time
 from typing import Any, Dict, Iterable, List, Set
 
 import torch
+import yaml
 
-from .constraints import check_budget, check_incompatibility, check_throughput
+from .constraints import (
+    check_budget,
+    check_incompatibility,
+    check_linear_constraints,
+    check_throughput,
+)
 from .plugin_graph import PLUGIN_GRAPH
 from .plugin_encoder import PluginEncoder
 from .action_sampler import compute_logits, select_plugins
@@ -206,6 +212,24 @@ STEP_COUNTER = 0
 
 DWELL_BONUS = _load_dwell_bonus()
 DWELL_COUNT: Dict[str, int] = {}
+
+
+def _load_linear_constraints() -> tuple[list[list[float]], list[float]]:
+    """Load linear constraint matrices ``A`` and vector ``b`` from config."""
+    try:
+        base = os.path.dirname(os.path.dirname(__file__))
+        with open(os.path.join(base, "config.yaml"), "r", encoding="utf-8") as fh:
+            data = yaml.safe_load(fh) or {}
+        dc = data.get("decision_controller", {}) if isinstance(data, dict) else {}
+        lc = dc.get("linear_constraints", {}) if isinstance(dc, dict) else {}
+        A = lc.get("A", []) or []
+        b = lc.get("b", []) or []
+        return A, b
+    except Exception:
+        return [], []
+
+
+LINEAR_CONSTRAINTS_A, LINEAR_CONSTRAINTS_B = _load_linear_constraints()
 
 
 def _load_watch_metrics() -> List[str]:
@@ -428,6 +452,10 @@ def decide_actions(
 
     now = time.time()
 
+    plugin_list = list(all_plugins or x_t.keys())
+    name_to_idx = {n: i for i, n in enumerate(plugin_list)}
+    action_vec = [0.0] * len(plugin_list)
+
     def penalty(name: str) -> float:
         tau = tau_since_last_change(name, now)
         if tau < TAU_THRESHOLD:
@@ -460,11 +488,21 @@ def decide_actions(
             continue
         if not check_incompatibility(name, active, INCOMPATIBILITY_SETS):
             continue
+        idx = name_to_idx.get(name)
+        if idx is not None:
+            tentative = action_vec.copy()
+            tentative[idx] = 1.0
+            if not check_linear_constraints(
+                tentative, LINEAR_CONSTRAINTS_A, LINEAR_CONSTRAINTS_B
+            ):
+                continue
         selected[name] = action
         active.add(name)
         usage[name] = usage.get(name, 0) + 1
         running_costs[name] = running_costs.get(name, 0.0) + cost
         remaining -= cost
+        if idx is not None:
+            action_vec[idx] = 1.0
         record_plugin_state_change(name, now)
         PLUGIN_GRAPH.mark_executed(name)
         if remaining <= 0:

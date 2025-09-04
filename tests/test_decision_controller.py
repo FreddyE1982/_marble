@@ -72,6 +72,28 @@ class TestDecisionController(unittest.TestCase):
         self.assertEqual(sel1, {"A": "on"})
         self.assertEqual(sel2, {"A": "on"})
 
+    def test_linear_constraints_accept(self):
+        dc.LINEAR_CONSTRAINTS_A = [[1, 1]]
+        dc.LINEAR_CONSTRAINTS_B = [2]
+        dc.BUDGET_LIMIT = 5.0
+        h_t = {"B": {"cost": 1}, "C": {"cost": 1}}
+        x_t = {"B": "on", "C": "on"}
+        history = []
+        selected = dc.decide_actions(h_t, x_t, history, all_plugins=h_t.keys())
+        print("selection satisfying linear constraint:", selected)
+        self.assertEqual(selected, {"B": "on", "C": "on"})
+
+    def test_linear_constraints_reject(self):
+        dc.LINEAR_CONSTRAINTS_A = [[1, 1]]
+        dc.LINEAR_CONSTRAINTS_B = [1]
+        dc.BUDGET_LIMIT = 5.0
+        h_t = {"B": {"cost": 1}, "C": {"cost": 1}}
+        x_t = {"B": "on", "C": "on"}
+        history = []
+        selected = dc.decide_actions(h_t, x_t, history, all_plugins=h_t.keys())
+        print("selection under tight linear constraint:", selected)
+        self.assertEqual(selected, {"B": "on"})
+
 
 if __name__ == "__main__":  # pragma: no cover
     unittest.main(verbosity=2)

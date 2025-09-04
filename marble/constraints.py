@@ -7,7 +7,7 @@ validate proposed plugin actions.  The functions are intentionally side-effect
 free so callers can compose them flexibly while tracking any required state.
 """
 
-from typing import Dict, Set
+from typing import Dict, Sequence, Set
 
 
 def check_budget(name: str, cost: float, remaining: float, running_costs: Dict[str, float], budget_limit: float) -> bool:
@@ -43,4 +43,30 @@ def check_throughput(name: str, usage: Dict[str, int], limits: Dict[str, int]) -
     return usage.get(name, 0) < limits.get(name, float("inf"))
 
 
-__all__ = ["check_budget", "check_incompatibility", "check_throughput"]
+def check_linear_constraints(a: Sequence[float], A: Sequence[Sequence[float]], b: Sequence[float]) -> bool:
+    """Return ``True`` if linear constraints ``A @ a <= b`` hold.
+
+    Parameters
+    ----------
+    a:
+        Proposed action vector.
+    A:
+        Constraint coefficient matrix.
+    b:
+        Upper bound vector corresponding to rows of ``A``.
+    """
+    if not A or not b:
+        return True
+    for row, limit in zip(A, b):
+        total = sum(coef * act for coef, act in zip(row, a))
+        if total > limit:
+            return False
+    return True
+
+
+__all__ = [
+    "check_budget",
+    "check_incompatibility",
+    "check_throughput",
+    "check_linear_constraints",
+]
