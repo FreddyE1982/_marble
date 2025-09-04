@@ -75,6 +75,10 @@
   Cost reduction applied for each consecutive step a plugin remains active.
   Larger values encourage persistence by making long-running plugins
   progressively cheaper under the budget constraint.
+- decision_controller.lambda_lr (float, default: 0.1)
+  Learning rate ``η`` for the adaptive Lagrange multipliers enforcing
+  constraints in the policy-gradient agent. Higher values make penalties
+  respond more aggressively to repeated constraint violations.
 - decision_controller.watch_metrics (list[str], default: [])
   Reporter item paths (``group[/subgroup]/item``) automatically queried each
   decision step. Numeric values are merged into the ``metrics`` dict supplied

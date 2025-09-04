@@ -13,6 +13,7 @@ decision_controller:
   tau_threshold: 1.0  # minimum seconds between state changes before penalty
   cadence: 1  # walk steps between controller decisions
   dwell_bonus: 0.1  # cost reduction per consecutive active step
+  lambda_lr: 0.1  # learning rate for constraint multipliers
   watch_metrics: []  # reporter paths to monitor automatically
   watch_variables: []  # module.variable paths to observe
   linear_constraints:

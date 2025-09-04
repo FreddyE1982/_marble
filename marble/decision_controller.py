@@ -178,6 +178,39 @@ def _load_tau_threshold() -> float:
 TAU_THRESHOLD = _load_tau_threshold()
 
 
+def _load_lambda_lr() -> float:
+    """Load lambda learning rate from ``config.yaml``."""
+    base = os.path.dirname(os.path.dirname(__file__))
+    cfg: Dict[str, Dict[str, Any]] = {}
+    try:
+        with open(os.path.join(base, "config.yaml"), "r", encoding="utf-8") as fh:
+            section: str | None = None
+            for raw in fh:
+                line = raw.split("#", 1)[0].rstrip()
+                if not line:
+                    continue
+                if not line.startswith(" ") and line.endswith(":"):
+                    section = line[:-1].strip()
+                    cfg[section] = {}
+                    continue
+                if section and ":" in line:
+                    k, v = line.split(":", 1)
+                    try:
+                        cfg[section][k.strip()] = float(v.strip())
+                    except Exception:
+                        cfg[section][k.strip()] = v.strip()
+    except Exception:
+        return 0.1
+    dc = cfg.get("decision_controller", {})
+    try:
+        return float(dc.get("lambda_lr", 0.1))
+    except Exception:
+        return 0.1
+
+
+LAMBDA_LR = _load_lambda_lr()
+
+
 def _load_cadence() -> int:
     """Load decision cadence from ``config.yaml``."""
     base = os.path.dirname(os.path.dirname(__file__))
@@ -523,6 +556,7 @@ class DecisionController:
         cadence: int = CADENCE,
         sampler_mode: str = "gumbel-top-k",
         top_k: int = 1,
+        lambda_lr: float = LAMBDA_LR,
         watch_metrics: Iterable[str] | None = None,
         watch_variables: Iterable[str] | None = None,
     ) -> None:
@@ -533,6 +567,7 @@ class DecisionController:
         self.sampler_mode = sampler_mode
         self.top_k = int(top_k)
         self._last_phase: str | None = None
+        self.lambda_lr = float(lambda_lr)
         feat_dim = (
             self.encoder.embedding.embedding_dim
             + self.encoder.ctx_rnn.hidden_size
@@ -564,6 +599,7 @@ class DecisionController:
             action_dim=len(PLUGIN_ID_REGISTRY),
             lambdas=[1.0],
             constraints=[g_budget],
+            lambda_lr=self.lambda_lr,
         )
         self.reward_shaper = RewardShaper()
         self.trajectory = Trajectory()
@@ -752,6 +788,7 @@ class DecisionController:
             act = torch.tensor([PLUGIN_ID_REGISTRY[list(selected.keys())[0]]])
             ret = torch.tensor([reward])
             self.agent.step(state, act, ret)
+            self.agent.lambda_updates(act)
 
         act_vec = torch.zeros(len(PLUGIN_ID_REGISTRY), dtype=torch.float32)
         for name in plugin_names:
@@ -803,6 +840,7 @@ __all__ = [
     "estimate_plugin_contributions_bayesian",
     "L1_PENALTY",
     "TAU_THRESHOLD",
+    "LAMBDA_LR",
     "CADENCE",
     "STEP_COUNTER",
     "advance_step",
