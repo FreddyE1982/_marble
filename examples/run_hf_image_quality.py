@@ -237,11 +237,12 @@ def main(
         "DistillationPlugin",
         "WanderAlongSynapseWeightsPlugin",
         "DynamicDimensionsPlugin",
-        "MixedPrecisionPlugin",  # auto loss scaling via mixed precision
-        "QualityAwareRoutine",
-        "AdaptiveGradClipRoutine",
-        #"FindBestNeuronTypeRoutine",
-        "ContextAwareNoiseRoutine",
+        # The following plugins are intentionally left optional so that
+        # ``autoplugin`` can learn when to enable or disable them.
+        # "MixedPrecisionPlugin",  # auto loss scaling via mixed precision
+        # "QualityAwareRoutine",
+        # "AdaptiveGradClipRoutine",
+        # "ContextAwareNoiseRoutine",
     ]
     # Instantiate AutoPlugin with mandatory plugin support when available.
     try:
