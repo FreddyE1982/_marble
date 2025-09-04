@@ -172,6 +172,14 @@ def _load_cadence() -> int:
 CADENCE = _load_cadence()
 STEP_COUNTER = 0
 
+
+def advance_step(cadence: int = CADENCE) -> bool:
+    """Increment global step counter and enforce decision cadence."""
+    global STEP_COUNTER
+    STEP_COUNTER += 1
+    cad = max(1, int(cadence))
+    return STEP_COUNTER % cad == 0
+
 # Track last state-change timestamp for each plugin
 LAST_STATE_CHANGE: Dict[str, float] = {}
 
@@ -390,12 +398,10 @@ class DecisionController:
         self.trajectory = Trajectory()
         self.history: List[Dict[str, Any]] = []
         self.past_actions: List[str] = []
-        self.step = 0
 
     # --------------------------------------------------------------
     def _advance(self) -> bool:
-        self.step += 1
-        return self.step % self.cadence == 0
+        return advance_step(self.cadence)
 
     # --------------------------------------------------------------
     def decide(
@@ -412,6 +418,12 @@ class DecisionController:
             return {}
 
         plugin_names = list(h_t.keys())
+        ready = set(PLUGIN_GRAPH.recommend_next_plugin())
+        if ready:
+            plugin_names = [n for n in plugin_names if n in ready]
+        if not plugin_names:
+            self.history.append({})
+            return {}
         plugin_ids = torch.tensor(
             [PLUGIN_ID_REGISTRY.get(n, 0) for n in plugin_names], dtype=torch.long
         )
@@ -491,6 +503,7 @@ __all__ = [
     "TAU_THRESHOLD",
     "CADENCE",
     "STEP_COUNTER",
+    "advance_step",
     "LAST_STATE_CHANGE",
     "record_plugin_state_change",
     "tau_since_last_change",
