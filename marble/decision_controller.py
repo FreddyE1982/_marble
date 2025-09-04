@@ -27,12 +27,13 @@ from .constraints import (
 )
 from .plugin_graph import PLUGIN_GRAPH
 from .plugin_encoder import PluginEncoder
-from .action_sampler import select_plugins
+from .action_sampler import select_plugins, compute_logits
 from .reward_shaper import RewardShaper
 from .offpolicy import Trajectory, doubly_robust
 from .policy_gradient import PolicyGradientAgent
 from .plugins import PLUGIN_ID_REGISTRY
 from .reporter import REPORTER
+from .history_encoder import HistoryEncoder
 
 # Incompatibility sets I_t: mapping plugin name to set of incompatible plugins
 INCOMPATIBILITY_SETS: Dict[str, Set[str]] = {
@@ -538,6 +539,13 @@ class DecisionController:
             + self.encoder.action_embed.embedding_dim
         )
 
+        self.history_encoder = HistoryEncoder(
+            feat_dim, len(PLUGIN_ID_REGISTRY), feat_dim
+        )
+        self._h_t: torch.Tensor | None = None
+        self._prev_action_vec = torch.zeros(len(PLUGIN_ID_REGISTRY), dtype=torch.float32)
+        self._prev_reward = 0.0
+
         # Build a cost vector so the policy-gradient agent can impose a soft
         # budget constraint through its generic ``constraints`` interface.
         cost_vec = torch.tensor(
@@ -648,7 +656,11 @@ class DecisionController:
         ctx_rep = ctx_seq.expand(len(plugin_ids), -1, -1)
         feats = self.encoder(plugin_ids, ctx_rep, past_ids)
         e_t = feats
-        e_a_t = feats.mean(dim=0)
+        o_t = feats.mean(dim=0)
+        r_prev = torch.tensor([self._prev_reward], dtype=o_t.dtype, device=o_t.device)
+        self._h_t = self.history_encoder(o_t, self._prev_action_vec.to(o_t), r_prev, self._h_t)
+        e_a_t = self._h_t[0].squeeze(0)
+        logits = compute_logits(e_t, e_a_t)
         costs = self.cost_vec[plugin_ids]
         incompat: Dict[int, Set[int]] = {}
         name_to_idx = {n: i for i, n in enumerate(plugin_names)}
@@ -748,6 +760,12 @@ class DecisionController:
                 act_vec[idx] = 1.0 if name in selected else 0.0
         self._activation_log.append(act_vec)
         self._reward_log.append(float(reward))
+        self._prev_action_vec = act_vec
+        self._prev_reward = float(reward)
+        if isinstance(self._h_t, tuple):
+            self._h_t = tuple(t.detach() for t in self._h_t)
+        else:
+            self._h_t = self._h_t.detach()
 
         return selected
 
