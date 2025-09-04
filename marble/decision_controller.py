@@ -510,6 +510,14 @@ class DecisionController:
         self.watch_variables = set(
             watch_variables if watch_variables is not None else WATCH_VARIABLES
         )
+        # Logs used by the contribution regressor. Each entry in
+        # ``_activation_log`` is a binary vector of length equal to the number
+        # of registered plugins indicating which plugins were active during a
+        # decision step. ``_reward_log`` stores the shaped reward observed after
+        # that step.  These histories allow the controller to estimate per-
+        # plugin contribution scores and feed them back into future selections.
+        self._activation_log: List[torch.Tensor] = []
+        self._reward_log: List[float] = []
 
     # --------------------------------------------------------------
     def _advance(self) -> bool:
@@ -585,8 +593,28 @@ class DecisionController:
             for name in plugin_names
             if PLUGIN_ID_REGISTRY.get(name, -1) in chosen
         }
+
+        contrib_scores = None
+        if self._activation_log and self._reward_log:
+            try:
+                activation = torch.stack(self._activation_log)
+                outcomes = torch.tensor(self._reward_log, dtype=torch.float32)
+                all_names = list(PLUGIN_ID_REGISTRY.keys())
+                contrib_map = estimate_plugin_contributions(
+                    activation, outcomes, all_names
+                )
+                contrib_scores = {
+                    n: contrib_map.get(n, 0.0) for n in plugin_names if n in contrib_map
+                }
+            except Exception:
+                contrib_scores = None
+
         selected = decide_actions(
-            h_t, x_t, self.history, all_plugins=plugin_names
+            h_t,
+            x_t,
+            self.history,
+            contrib_scores=contrib_scores,
+            all_plugins=plugin_names,
         )
         self.history.append(selected)
         self.past_actions.extend(selected.keys())
@@ -614,6 +642,14 @@ class DecisionController:
             act = torch.tensor([PLUGIN_ID_REGISTRY[list(selected.keys())[0]]])
             ret = torch.tensor([reward])
             self.agent.step(state, act, ret)
+
+        act_vec = torch.zeros(len(PLUGIN_ID_REGISTRY), dtype=torch.float32)
+        for name in plugin_names:
+            idx = PLUGIN_ID_REGISTRY.get(name)
+            if idx is not None:
+                act_vec[idx] = 1.0 if name in selected else 0.0
+        self._activation_log.append(act_vec)
+        self._reward_log.append(float(reward))
 
         return selected
 
