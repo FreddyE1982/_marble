@@ -11,6 +11,7 @@ subset of actions that satisfy all constraints.
 from __future__ import annotations
 
 import os
+import sys
 import time
 from typing import Dict, Iterable, List, Any, Set
 
@@ -24,6 +25,7 @@ from .reward_shaper import RewardShaper
 from .offpolicy import Trajectory, doubly_robust
 from .policy_gradient import PolicyGradientAgent
 from .plugins import PLUGIN_ID_REGISTRY
+from .reporter import REPORTER
 
 # Incompatibility sets I_t: mapping plugin name to set of incompatible plugins
 INCOMPATIBILITY_SETS: Dict[str, Set[str]] = {
@@ -199,6 +201,38 @@ def tau_since_last_change(name: str, now: float | None = None) -> float:
     if last is None:
         return float("inf")
     return float(now - last)
+
+
+def collect_watchables() -> Dict[str, float]:
+    """Return all numeric REPORTER items and module-level scalars.
+
+    Reporter items are flattened into ``reporter/<group>/.../<item>`` keys.
+    Module-level numeric variables are exposed as ``<module>.<attr>`` keys.
+    """
+
+    watch: Dict[str, float] = {}
+    try:
+        for path, val in REPORTER.all_items().items():
+            key = "reporter/" + "/".join(path)
+            if isinstance(val, (int, float)):
+                watch[key] = float(val)
+            elif isinstance(val, torch.Tensor) and val.numel() == 1:
+                watch[key] = float(val.detach().to("cpu").item())
+    except Exception:
+        pass
+    for name, module in list(sys.modules.items()):
+        if not module or name.startswith("_") or name.startswith("torch.distributed"):
+            continue
+        try:
+            attrs = vars(module)
+        except Exception:
+            continue
+        for attr, val in list(attrs.items()):
+            if isinstance(val, (int, float)):
+                watch[f"{name}.{attr}"] = float(val)
+            elif isinstance(val, torch.Tensor) and val.numel() == 1:
+                watch[f"{name}.{attr}"] = float(val.detach().to("cpu").item())
+    return watch
 
 
 def train_contribution_regressor(
@@ -398,6 +432,23 @@ class DecisionController:
         self.trajectory = Trajectory()
         self.history: List[Dict[str, Any]] = []
         self.past_actions: List[str] = []
+        self.watchables: Dict[str, float] = {}
+
+    # --------------------------------------------------------------
+    def _compute_costs(self, plugin_names: List[str]) -> Dict[str, float]:
+        """Derive plugin costs from currently observed watchables."""
+
+        self.watchables = collect_watchables()
+        costs: Dict[str, float] = {}
+        for name in plugin_names:
+            cost = 0.0
+            for k, v in self.watchables.items():
+                if name in k:
+                    cost += float(v)
+            if cost == 0.0:
+                cost = 1.0
+            costs[name] = cost
+        return costs
 
     # --------------------------------------------------------------
     def _advance(self) -> bool:
@@ -424,6 +475,10 @@ class DecisionController:
         if not plugin_names:
             self.history.append({})
             return {}
+        cost_map = self._compute_costs(plugin_names)
+        for n in plugin_names:
+            h_t.setdefault(n, {})
+            h_t[n]["cost"] = h_t[n].get("cost", cost_map.get(n, 0.0))
         plugin_ids = torch.tensor(
             [PLUGIN_ID_REGISTRY.get(n, 0) for n in plugin_names], dtype=torch.long
         )
@@ -507,5 +562,6 @@ __all__ = [
     "LAST_STATE_CHANGE",
     "record_plugin_state_change",
     "tau_since_last_change",
+    "collect_watchables",
     "DecisionController",
 ]

@@ -3,6 +3,7 @@ import time
 import torch
 import marble.decision_controller as dc
 from marble.plugins import PLUGIN_ID_REGISTRY
+from marble.reporter import REPORTER
 
 
 class TestDecisionController(unittest.TestCase):
@@ -49,7 +50,8 @@ class TestDecisionController(unittest.TestCase):
     def test_decision_controller_cadence(self):
         names = list(PLUGIN_ID_REGISTRY.keys())[:2]
         controller = dc.DecisionController(cadence=2, top_k=1)
-        h_t = {names[0]: {"cost": 1}, names[1]: {"cost": 1}}
+        dc.STEP_COUNTER = 0
+        h_t = {names[0]: {}, names[1]: {}}
         ctx = torch.zeros(1, 1, 16)
         sel1 = controller.decide(h_t, ctx, metrics={"latency": 1, "throughput": 1, "cost": 1})
         print("first cadence selection:", sel1)
@@ -57,6 +59,28 @@ class TestDecisionController(unittest.TestCase):
         sel2 = controller.decide(h_t, ctx, metrics={"latency": 1, "throughput": 1, "cost": 1})
         print("second cadence selection:", sel2)
         self.assertTrue(set(sel2).issubset(set(names)))
+
+    def test_collect_watchables(self):
+        dc.TEST_VAR = 5
+        REPORTER.item[("val", "test")] = 3
+        watch = dc.collect_watchables()
+        print("watchables sample:", list(watch)[:5])
+        self.assertIn("marble.decision_controller.TEST_VAR", watch)
+        self.assertIn("reporter/test/val", watch)
+        REPORTER.clear_group("test")
+
+    def test_decide_auto_cost_from_reporter(self):
+        names = list(PLUGIN_ID_REGISTRY.keys())[:2]
+        REPORTER.item[("cost", names[0])] = 5
+        REPORTER.item[("cost", names[1])] = 1
+        dc.BUDGET_LIMIT = 3
+        controller = dc.DecisionController(top_k=2)
+        ctx = torch.zeros(1, 1, 16)
+        sel = controller.decide({names[0]: {}, names[1]: {}}, ctx)
+        print("auto cost selection:", sel)
+        self.assertEqual(sel, {names[1]: "on"})
+        REPORTER.clear_group(names[0])
+        REPORTER.clear_group(names[1])
 
 
 if __name__ == "__main__":  # pragma: no cover

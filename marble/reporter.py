@@ -81,6 +81,21 @@ class Reporter:
             node = self._find_group_node(path)
             return {} if node is None else self._summarize(node)
 
+    def all_items(self) -> Dict[Tuple[str, ...], Any]:
+        """Return a mapping of full item paths to their stored values."""
+        with self._lock:
+            out: Dict[Tuple[str, ...], Any] = {}
+
+            def walk(node: Dict[str, Any], path: List[str]) -> None:
+                for item, val in node.get("_items", {}).items():
+                    out[tuple(path + [item])] = val
+                for name, sub in node.get("_subgroups", {}).items():
+                    if isinstance(sub, dict):
+                        walk(sub, path + [name])
+
+            walk({"_items": {}, "_subgroups": self._groups}, [])
+            return out
+
     def clear_group(self, groupname: str, *subgroups: str) -> None:
         path = (str(groupname),) + tuple(str(s) for s in subgroups)
         with self._lock:
