@@ -19,6 +19,8 @@ runs can be inspected later.
 """
 
 import math
+import os
+import random
 import time
 from typing import Any, Dict, List, Tuple, Optional
 
@@ -129,6 +131,8 @@ class AutoPlugin:
             fp.write(
                 f"{action},{plugintype},{name},{last_time:.3f},{last_steps},{total_steps}\n"
             )
+            fp.flush()
+            os.fsync(fp.fileno())
 
     def _update_log(
         self,
@@ -149,10 +153,26 @@ class AutoPlugin:
                 "last_active_steps": 0,
                 "last_active_time": 0.0,
                 "total_active_steps": 0,
+                "initialized": False,
             },
         )
         step = getattr(wanderer, "_walk_step_count", 0)
         now = time.time()
+        if not state["initialized"]:
+            self._write_log(
+                "activated" if active else "deactivated",
+                plugintype,
+                name,
+                0.0,
+                0,
+                0,
+            )
+            state["initialized"] = True
+            state["active"] = active
+            if active:
+                state["active_since_step"] = step
+                state["active_since_time"] = now
+            return
         if active and not state["active"]:
             self._write_log(
                 "activated",
@@ -203,11 +223,13 @@ class AutoPlugin:
         gain = wanderer.get_learnable_param_tensor(f"autoplugin_gain_{name}")
         score = self._attention_score(wanderer) * gain + bias
         if torch is None:
-            gate = 1.0 / (1.0 + math.exp(-float(score)))
-            result = gate > 0.5
+            score = float(score) + (random.random() - 0.5) * 0.1
+            gate = 1.0 / (1.0 + math.exp(-score))
+            result = gate >= 0.5
         else:
-            gate = torch.sigmoid(score)
-            result = bool(gate.detach().to("cpu").item() > 0.5)
+            noise = (torch.rand((), device=getattr(wanderer, "_device", "cpu")).detach().to("cpu").item() - 0.5) * 0.1
+            gate = torch.sigmoid(score + noise)
+            result = bool(gate.detach().to("cpu").item() >= 0.5)
         self._update_log(wanderer, plugintype, name, result)
         return result
 
