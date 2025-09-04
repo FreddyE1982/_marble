@@ -19,6 +19,7 @@ from ..wanderer import register_wanderer_type, register_neuroplasticity_type
 from ..selfattention import register_selfattention_type
 from ..marblemain import register_brain_train_type
 from ..buildingblock import register_buildingblock_type
+from ..plugin_graph import PLUGIN_GRAPH
 
 # Global registry assigning a unique numeric ID to every plugin.  The IDs are
 # stable across runs as long as the set of available plugins does not change.
@@ -63,46 +64,60 @@ for mod in pkgutil.iter_modules(__path__):
     plugin_name = getattr(module, "PLUGIN_NAME", None)
     if name.startswith("wanderer_"):
         base = name[len("wanderer_") :]
-        pid = _assign_plugin_id(plugin_name or base, cls)
+        pname = plugin_name or base
+        pid = _assign_plugin_id(pname, cls)
         inst = cls()
         inst.plugin_id = pid
-        register_wanderer_type(plugin_name or base, inst)
+        register_wanderer_type(pname, inst)
     elif name.startswith("neuroplasticity_"):
         base = name[len("neuroplasticity_") :]
-        pid = _assign_plugin_id(plugin_name or base, cls)
+        pname = plugin_name or base
+        pid = _assign_plugin_id(pname, cls)
         inst = cls()
         inst.plugin_id = pid
-        register_neuroplasticity_type(plugin_name or base, inst)
+        register_neuroplasticity_type(pname, inst)
     elif name.startswith("selfattention_"):
         base = name[len("selfattention_") :]
-        pid = _assign_plugin_id(plugin_name or base, cls)
+        pname = plugin_name or base
+        pid = _assign_plugin_id(pname, cls)
         inst = cls()
         inst.plugin_id = pid
-        register_selfattention_type(plugin_name or base, inst)
+        register_selfattention_type(pname, inst)
     elif name.startswith("synapse_"):
         base = name[len("synapse_") :]
-        pid = _assign_plugin_id(plugin_name or base, cls)
+        pname = plugin_name or base
+        pid = _assign_plugin_id(pname, cls)
         inst = cls()
         inst.plugin_id = pid
-        register_synapse_type(plugin_name or base, inst)
+        register_synapse_type(pname, inst)
     elif name.startswith("brain_train_"):
         base = name[len("brain_train_") :]
-        pid = _assign_plugin_id(plugin_name or base, cls)
+        pname = plugin_name or base
+        pid = _assign_plugin_id(pname, cls)
         inst = cls()
         inst.plugin_id = pid
-        register_brain_train_type(plugin_name or base, inst)
+        register_brain_train_type(pname, inst)
     elif name.startswith("buildingblock_"):
         base = name[len("buildingblock_") :]
-        pid = _assign_plugin_id(plugin_name or base, cls)
+        pname = plugin_name or base
+        pid = _assign_plugin_id(pname, cls)
         inst = cls()
         inst.plugin_id = pid
-        register_buildingblock_type(plugin_name or base, inst)
+        register_buildingblock_type(pname, inst)
     else:
         # Default to neuron plugin registration
-        pid = _assign_plugin_id(plugin_name or name, cls)
+        pname = plugin_name or name
+        pid = _assign_plugin_id(pname, cls)
         inst = cls()
         inst.plugin_id = pid
-        register_neuron_type(plugin_name or name, inst)
+        register_neuron_type(pname, inst)
+
+    PLUGIN_GRAPH.add_plugin(pname)
+    for dep in getattr(cls, "REQUIRES", []) or []:
+        PLUGIN_GRAPH.add_dependency(dep, pname)
+    after = getattr(cls, "PHASE_AFTER", None)
+    if after:
+        PLUGIN_GRAPH.add_dependency(after, pname)
 
 
 __all__ += ["PLUGIN_ID_REGISTRY"]

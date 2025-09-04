@@ -16,6 +16,7 @@ from typing import Dict, Iterable, List, Any, Set
 import torch
 
 from .constraints import check_budget, check_incompatibility, check_throughput
+from .plugin_graph import PLUGIN_GRAPH
 
 # Incompatibility sets I_t: mapping plugin name to set of incompatible plugins
 INCOMPATIBILITY_SETS: Dict[str, Set[str]] = {
@@ -217,6 +218,7 @@ def decide_actions(
         usage[name] = usage.get(name, 0) + 1
         running_costs[name] = running_costs.get(name, 0.0) + cost
         remaining -= cost
+        PLUGIN_GRAPH.mark_executed(name)
         if remaining <= 0:
             break
     return selected
