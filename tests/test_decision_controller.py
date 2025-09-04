@@ -3,6 +3,7 @@ import time
 import torch
 import marble.decision_controller as dc
 from marble.plugins import PLUGIN_ID_REGISTRY
+from marble.reporter import report, clear_report_group
 
 
 class TestDecisionController(unittest.TestCase):
@@ -17,6 +18,8 @@ class TestDecisionController(unittest.TestCase):
 
     def test_budget_limit(self):
         dc.BUDGET_LIMIT = 3.0
+        dc.LAST_STATE_CHANGE.clear()
+        dc.DWELL_COUNT.clear()
         h_t = {"A": {"cost": 2}, "B": {"cost": 1}, "C": {"cost": 4}}
         x_t = {"A": "on", "B": "on", "C": "on"}
         history = []
@@ -71,6 +74,25 @@ class TestDecisionController(unittest.TestCase):
         print("second selection with dwell bonus:", sel2)
         self.assertEqual(sel1, {"A": "on"})
         self.assertEqual(sel2, {"A": "on"})
+
+    def test_auto_cost_from_plugin(self):
+        dc.BUDGET_LIMIT = 2.5
+        class Dummy:
+            def compute_cost(self):
+                return 2.0
+
+        h_t = {"A": {"plugin": Dummy()}, "B": {"plugin": Dummy()}}
+        x_t = {"A": "on", "B": "on"}
+        selected = dc.decide_actions(h_t, x_t, [], all_plugins=h_t.keys())
+        print("auto cost selection:", selected)
+        self.assertEqual(len(selected), 1)
+
+    def test_collect_all_metrics(self):
+        report("train", "latency", 1.0)
+        metrics = dc.collect_all_metrics()
+        print("collected metrics sample:", list(metrics)[:5])
+        self.assertIn("train.latency", metrics)
+        clear_report_group("train")
 
 
 if __name__ == "__main__":  # pragma: no cover

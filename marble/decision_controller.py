@@ -14,6 +14,7 @@ import os
 import time
 from typing import Dict, Iterable, List, Any, Set
 
+import sys
 import torch
 
 from .constraints import check_budget, check_incompatibility, check_throughput
@@ -24,6 +25,7 @@ from .reward_shaper import RewardShaper
 from .offpolicy import Trajectory, doubly_robust
 from .policy_gradient import PolicyGradientAgent
 from .plugins import PLUGIN_ID_REGISTRY
+from .reporter import REPORTER
 
 # Incompatibility sets I_t: mapping plugin name to set of incompatible plugins
 INCOMPATIBILITY_SETS: Dict[str, Set[str]] = {
@@ -244,6 +246,64 @@ def update_dwell_counters(selected: Iterable[str], all_plugins: Iterable[str]) -
             DWELL_COUNT[name] = 0
 
 
+def _flatten_report(prefix: List[str], node: Dict[str, Any], out: Dict[str, float]) -> None:
+    items = node.get("_items", {})
+    for key, val in items.items():
+        if isinstance(val, (int, float)):
+            out[".".join(prefix + [key])] = float(val)
+    for sub, subnode in node.get("_subgroups", {}).items():
+        if isinstance(subnode, dict):
+            _flatten_report(prefix + [sub], subnode, out)
+
+
+def _collect_reporter_metrics() -> Dict[str, float]:
+    metrics: Dict[str, float] = {}
+    _flatten_report([], {"_subgroups": REPORTER._groups, "_items": {}}, metrics)
+    return metrics
+
+
+def _collect_numeric_globals() -> Dict[str, float]:
+    metrics: Dict[str, float] = {}
+    for name, mod in sys.modules.items():
+        if not name.startswith("marble"):
+            continue
+        for attr, val in getattr(mod, "__dict__", {}).items():
+            if isinstance(val, (int, float)):
+                metrics[f"{name}.{attr}"] = float(val)
+    return metrics
+
+
+def collect_all_metrics() -> Dict[str, float]:
+    """Gather all numeric metrics from reporter and module globals."""
+    metrics = _collect_numeric_globals()
+    metrics.update(_collect_reporter_metrics())
+    return metrics
+
+
+def _compute_plugin_cost(meta: Dict[str, Any]) -> float:
+    if "cost" in meta:
+        try:
+            return float(meta["cost"])
+        except Exception:
+            return 0.0
+    plugin = meta.get("plugin")
+    if plugin is None:
+        return 0.0
+    cost = getattr(plugin, "compute_cost", None)
+    if callable(cost):
+        try:
+            return float(cost())
+        except Exception:
+            return 0.0
+    cost = getattr(plugin, "cost", 0.0)
+    return float(cost() if callable(cost) else cost)
+
+
+def ensure_plugin_costs(h_t: Dict[str, Dict[str, Any]]) -> None:
+    for meta in h_t.values():
+        meta["cost"] = _compute_plugin_cost(meta)
+
+
 def train_contribution_regressor(
     activation: torch.Tensor,
     outcomes: torch.Tensor,
@@ -360,12 +420,13 @@ def decide_actions(
         Selected subset of ``x_t`` satisfying all constraints.
     """
 
+    ensure_plugin_costs(h_t)
     usage: Dict[str, int] = {}
     running_costs: Dict[str, float] = {}
     for past in history:
         for name in past:
             usage[name] = usage.get(name, 0) + 1
-            cost = float(h_t.get(name, {}).get("cost", 0.0))
+            cost = _compute_plugin_cost(h_t.get(name, {}))
             running_costs[name] = running_costs.get(name, 0.0) + cost
 
     now = time.time()
@@ -380,7 +441,7 @@ def decide_actions(
     # are deprioritized under the budget constraint
     ordered = sorted(
         x_t.items(),
-        key=lambda kv: h_t.get(kv[0], {}).get("cost", 0.0)
+        key=lambda kv: _compute_plugin_cost(h_t.get(kv[0], {}))
         + penalty(kv[0])
         - (contrib_scores.get(kv[0], 0.0) if contrib_scores else 0.0)
         - DWELL_BONUS * DWELL_COUNT.get(kv[0], 0),
@@ -391,7 +452,7 @@ def decide_actions(
     remaining = BUDGET_LIMIT
 
     for name, action in ordered:
-        base_cost = float(h_t.get(name, {}).get("cost", 0.0))
+        base_cost = _compute_plugin_cost(h_t.get(name, {}))
         pen = penalty(name)
         cost = base_cost + pen
         if contrib_scores:
@@ -461,6 +522,8 @@ class DecisionController:
     ) -> Dict[str, Any]:
         """Return selected actions using embeddings and stochastic policy."""
 
+        if metrics is None:
+            metrics = collect_all_metrics()
         if not self._advance():
             self.history.append({})
             return {}
@@ -564,5 +627,7 @@ __all__ = [
     "DWELL_BONUS",
     "DWELL_COUNT",
     "update_dwell_counters",
+    "collect_all_metrics",
+    "ensure_plugin_costs",
     "DecisionController",
 ]
