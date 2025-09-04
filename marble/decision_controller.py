@@ -525,6 +525,10 @@ class DecisionController:
         self.watch_variables = set(
             watch_variables if watch_variables is not None else WATCH_VARIABLES
         )
+        # Store the most recent metrics observed via ``decide`` so callers can
+        # inspect them even before the first decision step has been executed.
+        # ``decide`` updates this mapping in-place when new metrics arrive.
+        self.last_metrics: Dict[str, float] = {}
         # Logs used by the contribution regressor. Each entry in
         # ``_activation_log`` is a binary vector of length equal to the number
         # of registered plugins indicating which plugins were active during a
