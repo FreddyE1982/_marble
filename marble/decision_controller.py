@@ -39,6 +39,36 @@ CAPACITY_LIMITS: Dict[str, int] = {
 }
 
 
+def _load_dwell_bonus() -> float:
+    """Load dwell-time cost bonus from ``config.yaml``."""
+    base = os.path.dirname(os.path.dirname(__file__))
+    cfg: Dict[str, Dict[str, Any]] = {}
+    try:
+        with open(os.path.join(base, "config.yaml"), "r", encoding="utf-8") as fh:
+            section: str | None = None
+            for raw in fh:
+                line = raw.split("#", 1)[0].rstrip()
+                if not line:
+                    continue
+                if not line.startswith(" ") and line.endswith(":"):
+                    section = line[:-1].strip()
+                    cfg[section] = {}
+                    continue
+                if section and ":" in line:
+                    k, v = line.split(":", 1)
+                    try:
+                        cfg[section][k.strip()] = float(v.strip())
+                    except Exception:
+                        cfg[section][k.strip()] = v.strip()
+    except Exception:
+        return 0.0
+    dc = cfg.get("decision_controller", {})
+    try:
+        return float(dc.get("dwell_bonus", 0.0))
+    except Exception:
+        return 0.0
+
+
 def _load_budget() -> float:
     """Load budget limit from ``config.yaml``."""
     base = os.path.dirname(os.path.dirname(__file__))
@@ -172,6 +202,9 @@ def _load_cadence() -> int:
 CADENCE = _load_cadence()
 STEP_COUNTER = 0
 
+DWELL_BONUS = _load_dwell_bonus()
+DWELL_COUNT: Dict[str, int] = {}
+
 
 def advance_step(cadence: int = CADENCE) -> bool:
     """Increment global step counter and enforce decision cadence."""
@@ -199,6 +232,16 @@ def tau_since_last_change(name: str, now: float | None = None) -> float:
     if last is None:
         return float("inf")
     return float(now - last)
+
+
+def update_dwell_counters(selected: Iterable[str], all_plugins: Iterable[str]) -> None:
+    """Update consecutive-activation counts for ``all_plugins``."""
+    sel = set(selected)
+    for name in all_plugins:
+        if name in sel:
+            DWELL_COUNT[name] = DWELL_COUNT.get(name, 0) + 1
+        else:
+            DWELL_COUNT[name] = 0
 
 
 def train_contribution_regressor(
@@ -293,6 +336,8 @@ def decide_actions(
     x_t: Dict[str, Any],
     history: Iterable[Dict[str, Any]],
     contrib_scores: Dict[str, float] | None = None,
+    *,
+    all_plugins: Iterable[str] | None = None,
 ) -> Dict[str, Any]:
     """Select actions while enforcing incompatibilities, capacity and budget.
 
@@ -337,7 +382,8 @@ def decide_actions(
         x_t.items(),
         key=lambda kv: h_t.get(kv[0], {}).get("cost", 0.0)
         + penalty(kv[0])
-        - (contrib_scores.get(kv[0], 0.0) if contrib_scores else 0.0),
+        - (contrib_scores.get(kv[0], 0.0) if contrib_scores else 0.0)
+        - DWELL_BONUS * DWELL_COUNT.get(kv[0], 0),
     )
 
     selected: Dict[str, Any] = {}
@@ -365,6 +411,7 @@ def decide_actions(
         PLUGIN_GRAPH.mark_executed(name)
         if remaining <= 0:
             break
+    update_dwell_counters(selected.keys(), all_plugins or x_t.keys())
     return selected
 
 
@@ -385,6 +432,7 @@ class DecisionController:
         self.cadence = max(1, int(cadence))
         self.sampler_mode = sampler_mode
         self.top_k = int(top_k)
+        self._last_phase: str | None = None
         feat_dim = (
             self.encoder.embedding.embedding_dim
             + self.encoder.ctx_rnn.hidden_size
@@ -418,7 +466,7 @@ class DecisionController:
             return {}
 
         plugin_names = list(h_t.keys())
-        ready = set(PLUGIN_GRAPH.recommend_next_plugin())
+        ready = set(PLUGIN_GRAPH.recommend_next_plugin(self._last_phase))
         if ready:
             plugin_names = [n for n in plugin_names if n in ready]
         if not plugin_names:
@@ -441,9 +489,15 @@ class DecisionController:
             for name in plugin_names
             if PLUGIN_ID_REGISTRY.get(name, -1) in chosen
         }
-        selected = decide_actions(h_t, x_t, self.history)
+        selected = decide_actions(
+            h_t, x_t, self.history, all_plugins=plugin_names
+        )
         self.history.append(selected)
         self.past_actions.extend(selected.keys())
+        if selected:
+            self._last_phase = next(iter(selected))
+        else:
+            self._last_phase = None
 
         reward = 0.0
         if metrics is not None:
@@ -507,5 +561,8 @@ __all__ = [
     "LAST_STATE_CHANGE",
     "record_plugin_state_change",
     "tau_since_last_change",
+    "DWELL_BONUS",
+    "DWELL_COUNT",
+    "update_dwell_counters",
     "DecisionController",
 ]

@@ -70,6 +70,10 @@
   Number of walk steps between successive decisions of the controller. Actions
   are only reconsidered on steps that are multiples of this cadence. Must be at
   least 1.
+- decision_controller.dwell_bonus (float, default: 0.1)
+  Cost reduction applied for each consecutive step a plugin remains active.
+  Larger values encourage persistence by making long-running plugins
+  progressively cheaper under the budget constraint.
 
 ## Reward Shaper Settings
 

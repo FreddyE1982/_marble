@@ -11,7 +11,7 @@ class TestDecisionController(unittest.TestCase):
         h_t = {"A": {"cost": 2}, "B": {"cost": 1}, "C": {"cost": 4}}
         x_t = {"A": "on", "B": "on", "C": "on"}
         history = [{"B": "on"}]
-        selected = dc.decide_actions(h_t, x_t, history)
+        selected = dc.decide_actions(h_t, x_t, history, all_plugins=h_t.keys())
         print("selected after constraints:", selected)
         self.assertEqual(selected, {"A": "on"})
 
@@ -20,7 +20,7 @@ class TestDecisionController(unittest.TestCase):
         h_t = {"A": {"cost": 2}, "B": {"cost": 1}, "C": {"cost": 4}}
         x_t = {"A": "on", "B": "on", "C": "on"}
         history = []
-        selected = dc.decide_actions(h_t, x_t, history)
+        selected = dc.decide_actions(h_t, x_t, history, all_plugins=h_t.keys())
         print("selected under budget:", selected)
         self.assertEqual(selected, {"B": "on", "A": "on"})
 
@@ -29,7 +29,7 @@ class TestDecisionController(unittest.TestCase):
         h_t = {"A": {"cost": 3}, "B": {"cost": 3}}
         x_t = {"A": "on", "B": "on"}
         history = [{"A": "on"}]
-        selected = dc.decide_actions(h_t, x_t, history)
+        selected = dc.decide_actions(h_t, x_t, history, all_plugins=h_t.keys())
         print("selected with per-plugin budget:", selected)
         self.assertEqual(selected, {"B": "on"})
 
@@ -42,7 +42,7 @@ class TestDecisionController(unittest.TestCase):
         h_t = {"A": {"cost": 1}, "B": {"cost": 1}}
         x_t = {"A": "on", "B": "on"}
         history = []
-        selected = dc.decide_actions(h_t, x_t, history)
+        selected = dc.decide_actions(h_t, x_t, history, all_plugins=h_t.keys())
         print("selected with tau penalty:", selected)
         self.assertEqual(selected, {"B": "on"})
 
@@ -57,6 +57,20 @@ class TestDecisionController(unittest.TestCase):
         sel2 = controller.decide(h_t, ctx, metrics={"latency": 1, "throughput": 1, "cost": 1})
         print("second cadence selection:", sel2)
         self.assertTrue(set(sel2).issubset(set(names)))
+
+    def test_dwell_bonus(self):
+        dc.BUDGET_LIMIT = 3.0
+        dc.DWELL_BONUS = 1.0
+        dc.DWELL_COUNT.clear()
+        h_t = {"A": {"cost": 2}, "B": {"cost": 2}}
+        x_t = {"A": "on", "B": "on"}
+        history = []
+        sel1 = dc.decide_actions(h_t, x_t, history, all_plugins=h_t.keys())
+        sel2 = dc.decide_actions(h_t, x_t, history, all_plugins=h_t.keys())
+        print("first selection:", sel1)
+        print("second selection with dwell bonus:", sel2)
+        self.assertEqual(sel1, {"A": "on"})
+        self.assertEqual(sel2, {"A": "on"})
 
 
 if __name__ == "__main__":  # pragma: no cover

@@ -12,6 +12,7 @@ decision_controller:
   contribution_l1: 0.01  # L1 penalty for contribution regressor
   tau_threshold: 1.0  # minimum seconds between state changes before penalty
   cadence: 1  # walk steps between controller decisions
+  dwell_bonus: 0.1  # cost reduction per consecutive active step
 max_flat_steps: 5  # consecutive zero-delta steps before pruning/connection
 auto_scale_targets: false  # scale tiny targets to match output magnitude
 auto_max_steps_interval: 10  # recompute wanderer max_steps every N datapairs
