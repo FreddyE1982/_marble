@@ -28,6 +28,33 @@ from ..wanderer import expose_learnable_params
 from ..buildingblock import get_buildingblock_type, _BUILDINGBLOCK_TYPES
 
 
+def _load_autoplugin_cfg() -> Dict[str, Any]:
+    """Load AutoPlugin configuration from ``config.yaml``."""
+    cfg: Dict[str, Any] = {}
+    try:
+        base = os.path.dirname(os.path.dirname(__file__))
+        with open(os.path.join(base, "config.yaml"), "r", encoding="utf-8") as fh:
+            section = None
+            for raw in fh:
+                line = raw.split("#", 1)[0].rstrip()
+                if not line:
+                    continue
+                if not line.startswith(" ") and line.endswith(":"):
+                    section = line[:-1].strip()
+                    cfg[section] = {}
+                    continue
+                if section and ":" in line:
+                    k, v = line.split(":", 1)
+                    try:
+                        val: Any = float(v.strip())
+                    except Exception:
+                        val = v.strip()
+                    cfg[section][k.strip()] = val
+    except Exception:
+        return {}
+    return cfg.get("autoplugin", {})
+
+
 class AutoPlugin:
     """Meta-plugin that toggles other plugins on a per-step basis.
 
@@ -50,7 +77,11 @@ class AutoPlugin:
         disabled_plugins: Optional[List[str]] = None,
         log_path: Optional[str] = None,
         mandatory_plugins: Optional[List[str]] = None,
+        decision_interval: Optional[int] = None,
     ) -> None:
+        cfg = _load_autoplugin_cfg()
+        interval = decision_interval if decision_interval is not None else cfg.get("decision_interval", 1)
+        self._decision_interval = max(1, int(interval))
         self._neuro_wrapped = False
         self._sa_wrapped = False
         self._current_neuron_id = 0
@@ -62,6 +93,7 @@ class AutoPlugin:
             with open(log_path, "w", encoding="utf-8"):
                 pass
         self._log_state: Dict[Tuple[str, str], Dict[str, Any]] = {}
+        self._gate_cache: Dict[Tuple[str, str], Tuple[int, bool]] = {}
 
     def on_init(self, wanderer: "Wanderer") -> None:  # noqa: D401
         """Wrap existing Wanderer plugins with gating proxies."""
@@ -156,7 +188,7 @@ class AutoPlugin:
                 "initialized": False,
             },
         )
-        step = getattr(wanderer, "_walk_step_count", 0)
+        step = getattr(wanderer, "neuron_fire_count", 0)
         now = time.time()
         if not state["initialized"]:
             self._write_log(
@@ -212,11 +244,21 @@ class AutoPlugin:
 
         self._current_neuron_id = 0 if neuron is None else id(neuron)
         if name in self._mandatory:
-            # Mandatory plugins are always active and excluded from logs
+            self._update_log(wanderer, plugintype, name, True)
+            self._gate_cache[(plugintype, name)] = (getattr(wanderer, "neuron_fire_count", 0), True)
             return True
         if name in self._disabled:
             self._update_log(wanderer, plugintype, name, False)
+            self._gate_cache[(plugintype, name)] = (getattr(wanderer, "neuron_fire_count", 0), False)
             return False
+
+        step = getattr(wanderer, "neuron_fire_count", 0)
+        key = (plugintype, name)
+        cached = self._gate_cache.get(key)
+        if cached is not None and step % self._decision_interval != 0:
+            self._update_log(wanderer, plugintype, name, cached[1])
+            return cached[1]
+
         torch = getattr(wanderer, "_torch", None)
         bias = wanderer.get_learnable_param_tensor(f"autoplugin_bias_{name}")
         wanderer.ensure_learnable_param(f"autoplugin_gain_{name}", 1.0)
@@ -231,6 +273,7 @@ class AutoPlugin:
             gate = torch.sigmoid(score + noise)
             result = bool(gate.detach().to("cpu").item() >= 0.5)
         self._update_log(wanderer, plugintype, name, result)
+        self._gate_cache[key] = (step, result)
         return result
 
     def apply_buildingblock(

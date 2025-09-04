@@ -46,3 +46,9 @@
 - resource_allocator.disk_usage_threshold (float, default: 0.95)
   Maximum allowed disk usage ratio before tensors are offloaded. Prevents disk
   exhaustion; value must be between 0 and 1.
+
+## AutoPlugin Settings
+
+- autoplugin.decision_interval (int, default: 1)
+  Number of walk steps between plugin selection decisions. Plugins retain their
+  previous activation state on intermediate steps. Must be at least ``1``.

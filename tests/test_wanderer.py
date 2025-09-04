@@ -68,6 +68,20 @@ class TestWanderer(unittest.TestCase):
         self.assertGreaterEqual(w._plugin_state.get("choose_calls", 0), 1)
         self.assertGreaterEqual(stats["steps"], 1)
 
+    def test_neuron_fire_counter(self):
+        b = self.Brain(2, mode="sparse", sparse_bounds=((0.0, None), (0.0, None)))
+        n1 = b.add_neuron((0.0, 0.0), tensor=[1.0], weight=1.0, bias=0.0)
+        n2 = b.add_neuron((1.0, 0.0), tensor=[1.0], weight=1.0, bias=0.0, connect_to=(0.0, 0.0))
+        for s in list(getattr(n2, "outgoing", [])):
+            if s.target is b.get_neuron((0.0, 0.0)):
+                b.remove_synapse(s)
+        b.connect((0.0, 0.0), (1.0, 0.0), direction="bi")
+
+        w = self.Wanderer(b, seed=0)
+        stats = w.walk(max_steps=3, start=n1, lr=1e-2)
+        print("neuron fire counter:", w.neuron_fire_count)
+        self.assertEqual(w.neuron_fire_count, stats["steps"])
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
