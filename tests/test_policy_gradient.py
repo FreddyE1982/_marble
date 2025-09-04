@@ -39,6 +39,20 @@ class TestPolicyGradient(unittest.TestCase):
         print("constraint initial", init_probs.tolist(), "constraint updated", new_probs.tolist())
         self.assertLess(new_probs[1], init_probs[1])
 
+    def test_lambda_updates_increase_on_violation(self) -> None:
+        torch.manual_seed(0)
+        g1 = lambda a: (a == 1).float()
+        agent = PolicyGradientAgent(
+            state_dim=1, action_dim=2, lambdas=[0.0], constraints=[g1], lambda_lr=0.5
+        )
+        actions = torch.tensor([1])
+        agent.lambda_updates(actions)
+        first = agent.lambdas[0]
+        agent.lambda_updates(actions)
+        second = agent.lambdas[0]
+        print("lambda after updates", first, second)
+        self.assertGreater(second, first)
+
 
 if __name__ == "__main__":
     unittest.main()

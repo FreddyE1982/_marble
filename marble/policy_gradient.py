@@ -44,6 +44,7 @@ class PolicyGradientAgent:
         beta: float = 0.01,
         lambdas: Sequence[float] | None = None,
         constraints: Sequence[ConstraintFn] | None = None,
+        lambda_lr: float = 0.1,
     ) -> None:
         self.state_dim = int(state_dim)
         self.action_dim = int(action_dim)
@@ -51,6 +52,10 @@ class PolicyGradientAgent:
         self.beta = float(beta)
         self.lambdas: List[float] = list(lambdas) if lambdas is not None else []
         self.constraints: List[ConstraintFn] = list(constraints) if constraints is not None else []
+        self.lambda_lr = float(lambda_lr)
+        # Running averages of constraint violations ``g_j(a)``
+        self._g_avg: List[float] = [0.0 for _ in self.constraints]
+        self._g_count: List[int] = [0 for _ in self.constraints]
 
         # Policy parameters: linear logits ``s @ Wp + bp``
         self.Wp = torch.zeros(self.state_dim, self.action_dim, requires_grad=True)
@@ -106,6 +111,31 @@ class PolicyGradientAgent:
             for p in [self.Wp, self.bp, self.Wv, self.bv]:
                 p -= self.lr * p.grad
         return loss.detach().to("cpu").item()
+
+    # ------------------------------------------------------------------
+    # Lagrange multiplier update
+    # ------------------------------------------------------------------
+    def lambda_updates(self, actions: torch.Tensor) -> None:
+        """Update Lagrange multipliers based on constraint violations.
+
+        Each constraint ``g_j`` produces a penalty term given the selected
+        ``actions``.  We maintain a running mean of these penalties and adjust
+        ``lambda_j`` via ``lambda_j += eta * mean(g_j(a))`` clipped to be
+        non-negative.
+        """
+
+        if not self.constraints:
+            return
+
+        with torch.no_grad():
+            for j, g in enumerate(self.constraints):
+                g_val = g(actions).detach().to("cpu").mean().item()
+                self._g_count[j] += 1
+                count = self._g_count[j]
+                avg = self._g_avg[j] + (g_val - self._g_avg[j]) / count
+                self._g_avg[j] = avg
+                new_lam = self.lambdas[j] + self.lambda_lr * avg
+                self.lambdas[j] = max(0.0, new_lam)
 
 
 __all__ = ["PolicyGradientAgent"]
