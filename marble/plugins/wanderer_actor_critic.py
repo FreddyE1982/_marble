@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-"""Actor-Critic based Wanderer plugin.
+r"""Actor-Critic based Wanderer plugin.
 
 This plugin maintains tiny actor and critic models built directly with
 :mod:`torch` tensor operations.  At each step it computes a discounted
