@@ -170,6 +170,31 @@ def _load_cadence() -> int:
 
 
 CADENCE = _load_cadence()
+def _load_use_bayesian() -> bool:
+    """Load Bayesian contribution toggle from ``config.yaml``."""
+    base = os.path.dirname(os.path.dirname(__file__))
+    cfg: Dict[str, Dict[str, Any]] = {}
+    try:
+        with open(os.path.join(base, "config.yaml"), "r", encoding="utf-8") as fh:
+            section: str | None = None
+            for raw in fh:
+                line = raw.split("#", 1)[0].rstrip()
+                if not line:
+                    continue
+                if not line.startswith(" ") and line.endswith(":"):
+                    section = line[:-1].strip()
+                    cfg[section] = {}
+                    continue
+                if section and ":" in line:
+                    k, v = line.split(":", 1)
+                    cfg[section][k.strip()] = v.strip().lower()
+    except Exception:
+        return False
+    dc = cfg.get("decision_controller", {})
+    return str(dc.get("bayesian_contributions", "false")).lower() in ("1", "true", "yes")
+
+
+USE_BAYESIAN = _load_use_bayesian()
 STEP_COUNTER = 0
 
 
@@ -378,6 +403,7 @@ class DecisionController:
         cadence: int = CADENCE,
         sampler_mode: str = "gumbel-top-k",
         top_k: int = 1,
+        use_bayesian: bool | None = None,
     ) -> None:
         if encoder is None:
             encoder = PluginEncoder(len(PLUGIN_ID_REGISTRY))
@@ -385,6 +411,7 @@ class DecisionController:
         self.cadence = max(1, int(cadence))
         self.sampler_mode = sampler_mode
         self.top_k = int(top_k)
+        self.use_bayesian = USE_BAYESIAN if use_bayesian is None else bool(use_bayesian)
         feat_dim = (
             self.encoder.embedding.embedding_dim
             + self.encoder.ctx_rnn.hidden_size
@@ -410,8 +437,24 @@ class DecisionController:
         ctx_seq: torch.Tensor,
         *,
         metrics: Dict[str, float] | None = None,
+        activation: torch.Tensor | None = None,
+        outcomes: torch.Tensor | None = None,
     ) -> Dict[str, Any]:
-        """Return selected actions using embeddings and stochastic policy."""
+        """Return selected actions using embeddings and stochastic policy.
+
+        Parameters
+        ----------
+        h_t:
+            Plugin metadata with at least a ``cost`` field.
+        ctx_seq:
+            Contextual sequence encoding.
+        metrics:
+            Optional performance metrics for reward shaping.
+        activation, outcomes:
+            When both provided, they form the design matrix and target vector
+            for contribution estimation.  The resulting scores influence action
+            selection and respect the ``use_bayesian`` setting.
+        """
 
         if not self._advance():
             self.history.append({})
@@ -441,7 +484,12 @@ class DecisionController:
             for name in plugin_names
             if PLUGIN_ID_REGISTRY.get(name, -1) in chosen
         }
-        selected = decide_actions(h_t, x_t, self.history)
+        contrib_scores = None
+        if activation is not None and outcomes is not None:
+            contrib_scores = self.compute_contributions(
+                activation, outcomes, plugin_names, bayesian=self.use_bayesian
+            )
+        selected = decide_actions(h_t, x_t, self.history, contrib_scores=contrib_scores)
         self.history.append(selected)
         self.past_actions.extend(selected.keys())
 
@@ -502,6 +550,7 @@ __all__ = [
     "L1_PENALTY",
     "TAU_THRESHOLD",
     "CADENCE",
+    "USE_BAYESIAN",
     "STEP_COUNTER",
     "advance_step",
     "LAST_STATE_CHANGE",

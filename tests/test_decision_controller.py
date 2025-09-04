@@ -47,6 +47,7 @@ class TestDecisionController(unittest.TestCase):
         self.assertEqual(selected, {"B": "on"})
 
     def test_decision_controller_cadence(self):
+        dc.STEP_COUNTER = 0
         names = list(PLUGIN_ID_REGISTRY.keys())[:2]
         controller = dc.DecisionController(cadence=2, top_k=1)
         h_t = {names[0]: {"cost": 1}, names[1]: {"cost": 1}}
@@ -57,6 +58,25 @@ class TestDecisionController(unittest.TestCase):
         sel2 = controller.decide(h_t, ctx, metrics={"latency": 1, "throughput": 1, "cost": 1})
         print("second cadence selection:", sel2)
         self.assertTrue(set(sel2).issubset(set(names)))
+
+    def test_decide_with_contributions(self):
+        dc.STEP_COUNTER = 0
+        names = list(PLUGIN_ID_REGISTRY.keys())[:2]
+        controller = dc.DecisionController(top_k=2, use_bayesian=False)
+        dc.BUDGET_LIMIT = 5.0
+        h_t = {names[0]: {"cost": 5.0}, names[1]: {"cost": 4.0}}
+        ctx = torch.zeros(1, 1, 16)
+        activation = torch.tensor([[1.0, 0.0], [0.0, 1.0], [1.0, 1.0]])
+        outcomes = torch.tensor([2.0, -1.0, 1.0])
+        sel = controller.decide(
+            h_t,
+            ctx,
+            metrics={"latency": 1, "throughput": 1, "cost": 1},
+            activation=activation,
+            outcomes=outcomes,
+        )
+        print("selection with contributions:", sel)
+        self.assertEqual(sel, {names[0]: "on"})
 
 
 if __name__ == "__main__":  # pragma: no cover

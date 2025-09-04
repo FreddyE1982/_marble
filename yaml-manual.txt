@@ -70,6 +70,10 @@
   Number of walk steps between successive decisions of the controller. Actions
   are only reconsidered on steps that are multiples of this cadence. Must be at
   least 1.
+- decision_controller.bayesian_contributions (bool, default: false)
+  When set to true, plugin contributions are estimated via Bayesian linear
+  regression, yielding a mean value adjusted for uncertainty. When false, a
+  simple L1-regularised regressor is used.
 
 ## Reward Shaper Settings
 
