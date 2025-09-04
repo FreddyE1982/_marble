@@ -10,9 +10,10 @@ subset of actions that satisfy all constraints.
 
 from __future__ import annotations
 
+import importlib
 import os
 import time
-from typing import Dict, Iterable, List, Any, Set
+from typing import Any, Dict, Iterable, List, Set
 
 import torch
 
@@ -24,6 +25,7 @@ from .reward_shaper import RewardShaper
 from .offpolicy import Trajectory, doubly_robust
 from .policy_gradient import PolicyGradientAgent
 from .plugins import PLUGIN_ID_REGISTRY
+from .reporter import REPORTER
 
 # Incompatibility sets I_t: mapping plugin name to set of incompatible plugins
 INCOMPATIBILITY_SETS: Dict[str, Set[str]] = {
@@ -206,6 +208,40 @@ DWELL_BONUS = _load_dwell_bonus()
 DWELL_COUNT: Dict[str, int] = {}
 
 
+def _load_watch_metrics() -> List[str]:
+    """Load reporter metric paths to monitor from ``config.yaml``."""
+    try:
+        import yaml  # type: ignore
+
+        base = os.path.dirname(os.path.dirname(__file__))
+        with open(os.path.join(base, "config.yaml"), "r", encoding="utf-8") as fh:
+            data = yaml.safe_load(fh) or {}
+        dc = data.get("decision_controller", {}) if isinstance(data, dict) else {}
+        items = dc.get("watch_metrics", [])
+        return [str(x) for x in items] if isinstance(items, list) else []
+    except Exception:
+        return []
+
+
+def _load_watch_variables() -> List[str]:
+    """Load module attribute paths to monitor from ``config.yaml``."""
+    try:
+        import yaml  # type: ignore
+
+        base = os.path.dirname(os.path.dirname(__file__))
+        with open(os.path.join(base, "config.yaml"), "r", encoding="utf-8") as fh:
+            data = yaml.safe_load(fh) or {}
+        dc = data.get("decision_controller", {}) if isinstance(data, dict) else {}
+        items = dc.get("watch_variables", [])
+        return [str(x) for x in items] if isinstance(items, list) else []
+    except Exception:
+        return []
+
+
+WATCH_METRICS = _load_watch_metrics()
+WATCH_VARIABLES = _load_watch_variables()
+
+
 def advance_step(cadence: int = CADENCE) -> bool:
     """Increment global step counter and enforce decision cadence."""
     global STEP_COUNTER
@@ -331,6 +367,27 @@ def estimate_plugin_contributions_bayesian(
     return out
 
 
+def get_plugin_cost(name: str) -> float:
+    """Return intrinsic cost for ``name`` by inspecting its plugin module."""
+
+    try:
+        mod = importlib.import_module(f"marble.plugins.{name}")
+    except Exception:
+        return 0.0
+
+    for attr in ("PLUGIN_COST", "COST"):
+        if hasattr(mod, attr):
+            try:
+                return float(getattr(mod, attr))
+            except Exception:
+                return 0.0
+    try:
+        fn = getattr(mod, "estimate_cost")
+        return float(fn())
+    except Exception:
+        return 0.0
+
+
 def decide_actions(
     h_t: Dict[str, Dict[str, float]],
     x_t: Dict[str, Any],
@@ -365,8 +422,9 @@ def decide_actions(
     for past in history:
         for name in past:
             usage[name] = usage.get(name, 0) + 1
-            cost = float(h_t.get(name, {}).get("cost", 0.0))
-            running_costs[name] = running_costs.get(name, 0.0) + cost
+            base = h_t.get(name, {})
+            c = float(base.get("cost", get_plugin_cost(name)))
+            running_costs[name] = running_costs.get(name, 0.0) + c
 
     now = time.time()
 
@@ -391,7 +449,7 @@ def decide_actions(
     remaining = BUDGET_LIMIT
 
     for name, action in ordered:
-        base_cost = float(h_t.get(name, {}).get("cost", 0.0))
+        base_cost = float(h_t.get(name, {}).get("cost", get_plugin_cost(name)))
         pen = penalty(name)
         cost = base_cost + pen
         if contrib_scores:
@@ -425,6 +483,8 @@ class DecisionController:
         cadence: int = CADENCE,
         sampler_mode: str = "gumbel-top-k",
         top_k: int = 1,
+        watch_metrics: Iterable[str] | None = None,
+        watch_variables: Iterable[str] | None = None,
     ) -> None:
         if encoder is None:
             encoder = PluginEncoder(len(PLUGIN_ID_REGISTRY))
@@ -446,10 +506,42 @@ class DecisionController:
         self.trajectory = Trajectory()
         self.history: List[Dict[str, Any]] = []
         self.past_actions: List[str] = []
+        self.watch_metrics = set(watch_metrics if watch_metrics is not None else WATCH_METRICS)
+        self.watch_variables = set(
+            watch_variables if watch_variables is not None else WATCH_VARIABLES
+        )
 
     # --------------------------------------------------------------
     def _advance(self) -> bool:
         return advance_step(self.cadence)
+
+    # --------------------------------------------------------------
+    def _gather_watchables(self) -> Dict[str, float]:
+        """Collect watched metrics and variables."""
+
+        observed: Dict[str, float] = {}
+        for path in self.watch_variables:
+            try:
+                mod_name, attr = path.rsplit(".", 1)
+                mod = importlib.import_module(mod_name)
+                val = getattr(mod, attr, None)
+                if isinstance(val, (int, float)):
+                    observed[path] = float(val)
+            except Exception:
+                continue
+        for path in self.watch_metrics:
+            parts = path.split("/")
+            if len(parts) < 2:
+                continue
+            item = parts[-1]
+            groups = parts[:-1]
+            try:
+                val = REPORTER.item(item, groups[0], *groups[1:])
+                if isinstance(val, (int, float)):
+                    observed[path] = float(val)
+            except Exception:
+                continue
+        return observed
 
     # --------------------------------------------------------------
     def decide(
@@ -464,6 +556,10 @@ class DecisionController:
         if not self._advance():
             self.history.append({})
             return {}
+
+        watch_vals = self._gather_watchables()
+        metrics = {**watch_vals, **(metrics or {})} if watch_vals or metrics else {}
+        self.last_metrics = metrics
 
         plugin_names = list(h_t.keys())
         ready = set(PLUGIN_GRAPH.recommend_next_plugin(self._last_phase))
@@ -564,5 +660,6 @@ __all__ = [
     "DWELL_BONUS",
     "DWELL_COUNT",
     "update_dwell_counters",
+    "get_plugin_cost",
     "DecisionController",
 ]

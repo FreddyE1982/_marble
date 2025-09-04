@@ -74,6 +74,14 @@
   Cost reduction applied for each consecutive step a plugin remains active.
   Larger values encourage persistence by making long-running plugins
   progressively cheaper under the budget constraint.
+- decision_controller.watch_metrics (list[str], default: [])
+  Reporter item paths (``group[/subgroup]/item``) automatically queried each
+  decision step. Numeric values are merged into the ``metrics`` dict supplied
+  to :meth:`DecisionController.decide`.
+- decision_controller.watch_variables (list[str], default: [])
+  Fully qualified ``module.attr`` names of numeric variables to observe. Their
+  current values are sampled every decision and merged into the ``metrics``
+  dictionary.
 
 ## Reward Shaper Settings
 
