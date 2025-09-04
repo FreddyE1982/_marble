@@ -622,9 +622,13 @@ class DecisionController:
             try:
                 activation = torch.stack(self._activation_log)
                 outcomes = torch.tensor(self._reward_log, dtype=torch.float32)
-                all_names = list(PLUGIN_ID_REGISTRY.keys())
-                contrib_map = estimate_plugin_contributions(
-                    activation, outcomes, all_names
+                # ``compute_contributions`` encapsulates both the classical
+                # and Bayesian estimators defined in this module.  Using it
+                # here avoids duplicating estimator selection logic in the
+                # controller and makes future estimator extensions instantly
+                # available to the decision loop.
+                contrib_map = self.compute_contributions(
+                    activation, outcomes, list(PLUGIN_ID_REGISTRY.keys())
                 )
                 contrib_scores = {
                     n: contrib_map.get(n, 0.0) for n in plugin_names if n in contrib_map
