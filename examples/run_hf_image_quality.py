@@ -26,6 +26,7 @@ import shutil
 import time
 from pathlib import Path
 from datasets import DownloadConfig
+import torch
 
 from marble.marblemain import (
     Brain,
@@ -74,6 +75,18 @@ class QualityAwareRoutine:
         else:
             new_lr = min(5e-3, base_lr * self.grow)
         return {"lr_override": float(new_lr)}
+
+
+def quality_loss(pred: torch.Tensor, target: torch.Tensor, delta: float = 0.5) -> torch.Tensor:
+    """Huber-style loss tailored for quality scores.
+
+    Penalizes large errors linearly while keeping small errors quadratic,
+    offering robustness to outliers compared to plain MSE.
+    """
+
+    diff = pred - target
+    abs_diff = torch.abs(diff)
+    return torch.mean(torch.where(abs_diff < delta, 0.5 * diff ** 2, delta * (abs_diff - 0.5 * delta)))
 
 
 
@@ -322,6 +335,7 @@ def main(
             steps_per_pair=20,
             auto_max_steps_every=20,
             lr=1e-3,
+            loss=quality_loss,
             wanderer_type=",".join(wplugins),
             train_type="warmup_decay,curriculum,qualityaware",
             neuro_config=neuro_cfg,

@@ -437,6 +437,10 @@ Context: Ensures a consistent, zero-boilerplate plugin workflow.
 Benefit: Simplifies extension and eliminates manual registry bookkeeping.
 Rollback Plan: Remove this rule if manual registration ever becomes necessary again.
 
+68) Neuron Connection Error Rule
+
+Rule: When tests raise a "neuron not connected" error, resolve it by connecting the newly created neuron to an existing neuron at creation time. Do not suppress the error or alter `add_neuron` or other base neuron-adding functions. Avoid generic fixes; ensure the connection logic lives exactly where the error occurs and preserves the original intent. If no neuron is provided to connect, do not create one automatically.
+
 # BuildingBlock Plugins
 
 Small "BuildingBlock" plugins provide atomic graph operations and can be freely
