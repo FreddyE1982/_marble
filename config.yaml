@@ -7,6 +7,8 @@ resource_allocator:
   disk_usage_threshold: 0.95  # stop offloading when disk usage exceeds this ratio
 autoplugin:
   decision_interval: 1  # steps between plugin selector decisions
+decision_controller:
+  budget: 10.0  # maximum total cost for selected actions
 max_flat_steps: 5  # consecutive zero-delta steps before pruning/connection
 auto_scale_targets: false  # scale tiny targets to match output magnitude
 auto_max_steps_interval: 10  # recompute wanderer max_steps every N datapairs
