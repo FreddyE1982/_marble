@@ -62,6 +62,10 @@
 - decision_controller.contribution_l1 (float, default: 0.01)
   L1 penalty strength applied when training the plugin contribution regressor.
   Higher values yield sparser contribution weights.
+- decision_controller.tau_threshold (float, default: 1.0)
+  Minimum seconds a plugin should wait between state changes. When the actual
+  interval \(\tau_t\) falls below this value, a penalty of ``tau_threshold - \tau_t``
+  is added to the plugin's cost during action selection.
 
 ## Reward Shaper Settings
 

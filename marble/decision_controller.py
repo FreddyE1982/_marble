@@ -11,6 +11,7 @@ subset of actions that satisfy all constraints.
 from __future__ import annotations
 
 import os
+import time
 from typing import Dict, Iterable, List, Any, Set
 
 import torch
@@ -96,6 +97,59 @@ def _load_l1_penalty() -> float:
 
 
 L1_PENALTY = _load_l1_penalty()
+
+
+def _load_tau_threshold() -> float:
+    """Load minimum state-change interval from ``config.yaml``."""
+    base = os.path.dirname(os.path.dirname(__file__))
+    cfg: Dict[str, Dict[str, Any]] = {}
+    try:
+        with open(os.path.join(base, "config.yaml"), "r", encoding="utf-8") as fh:
+            section: str | None = None
+            for raw in fh:
+                line = raw.split("#", 1)[0].rstrip()
+                if not line:
+                    continue
+                if not line.startswith(" ") and line.endswith(":"):
+                    section = line[:-1].strip()
+                    cfg[section] = {}
+                    continue
+                if section and ":" in line:
+                    k, v = line.split(":", 1)
+                    try:
+                        cfg[section][k.strip()] = float(v.strip())
+                    except Exception:
+                        cfg[section][k.strip()] = v.strip()
+    except Exception:
+        return 0.0
+    dc = cfg.get("decision_controller", {})
+    try:
+        return float(dc.get("tau_threshold", 0.0))
+    except Exception:
+        return 0.0
+
+
+TAU_THRESHOLD = _load_tau_threshold()
+
+# Track last state-change timestamp for each plugin
+LAST_STATE_CHANGE: Dict[str, float] = {}
+
+
+def record_plugin_state_change(name: str, now: float | None = None) -> None:
+    """Record that ``name`` changed state at time ``now``."""
+    if now is None:
+        now = time.time()
+    LAST_STATE_CHANGE[name] = float(now)
+
+
+def tau_since_last_change(name: str, now: float | None = None) -> float:
+    """Return seconds since ``name`` last changed state."""
+    if now is None:
+        now = time.time()
+    last = LAST_STATE_CHANGE.get(name)
+    if last is None:
+        return float("inf")
+    return float(now - last)
 
 
 def train_contribution_regressor(
@@ -192,10 +246,20 @@ def decide_actions(
             cost = float(h_t.get(name, {}).get("cost", 0.0))
             running_costs[name] = running_costs.get(name, 0.0) + cost
 
-    # Sort candidates by cost so cheaper actions are preferred under budget
+    now = time.time()
+
+    def penalty(name: str) -> float:
+        tau = tau_since_last_change(name, now)
+        if tau < TAU_THRESHOLD:
+            return TAU_THRESHOLD - tau
+        return 0.0
+
+    # Sort candidates by effective cost including penalty so recent state changes
+    # are deprioritized under the budget constraint
     ordered = sorted(
         x_t.items(),
         key=lambda kv: h_t.get(kv[0], {}).get("cost", 0.0)
+        + penalty(kv[0])
         - (contrib_scores.get(kv[0], 0.0) if contrib_scores else 0.0),
     )
 
@@ -204,7 +268,9 @@ def decide_actions(
     remaining = BUDGET_LIMIT
 
     for name, action in ordered:
-        cost = float(h_t.get(name, {}).get("cost", 0.0))
+        base_cost = float(h_t.get(name, {}).get("cost", 0.0))
+        pen = penalty(name)
+        cost = base_cost + pen
         if contrib_scores:
             cost -= float(contrib_scores.get(name, 0.0))
         if not check_throughput(name, usage, CAPACITY_LIMITS):
@@ -218,6 +284,7 @@ def decide_actions(
         usage[name] = usage.get(name, 0) + 1
         running_costs[name] = running_costs.get(name, 0.0) + cost
         remaining -= cost
+        record_plugin_state_change(name, now)
         PLUGIN_GRAPH.mark_executed(name)
         if remaining <= 0:
             break
@@ -232,4 +299,8 @@ __all__ = [
     "train_contribution_regressor",
     "estimate_plugin_contributions",
     "L1_PENALTY",
+    "TAU_THRESHOLD",
+    "LAST_STATE_CHANGE",
+    "record_plugin_state_change",
+    "tau_since_last_change",
 ]
