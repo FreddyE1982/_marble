@@ -12,7 +12,11 @@ from marble.plugins.wanderer_resource_allocator import (
 
 class ResourceAllocatorSmallTensorTests(unittest.TestCase):
     def test_small_tensor_stays_on_cpu(self) -> None:
-        plug = ResourceAllocatorPlugin()
+        with patch(
+            "marble.plugins.wanderer_resource_allocator._load_resource_cfg",
+            return_value={"min_gpu_tensor_mb": 1.0},
+        ):
+            plug = ResourceAllocatorPlugin()
         class Holder:
             pass
 
