@@ -1,6 +1,8 @@
 import unittest
 import time
+import torch
 import marble.decision_controller as dc
+from marble.plugins import PLUGIN_ID_REGISTRY
 
 
 class TestDecisionController(unittest.TestCase):
@@ -43,6 +45,18 @@ class TestDecisionController(unittest.TestCase):
         selected = dc.decide_actions(h_t, x_t, history)
         print("selected with tau penalty:", selected)
         self.assertEqual(selected, {"B": "on"})
+
+    def test_decision_controller_cadence(self):
+        names = list(PLUGIN_ID_REGISTRY.keys())[:2]
+        controller = dc.DecisionController(cadence=2, top_k=1)
+        h_t = {names[0]: {"cost": 1}, names[1]: {"cost": 1}}
+        ctx = torch.zeros(1, 1, 16)
+        sel1 = controller.decide(h_t, ctx, metrics={"latency": 1, "throughput": 1, "cost": 1})
+        print("first cadence selection:", sel1)
+        self.assertEqual(sel1, {})
+        sel2 = controller.decide(h_t, ctx, metrics={"latency": 1, "throughput": 1, "cost": 1})
+        print("second cadence selection:", sel2)
+        self.assertTrue(set(sel2).issubset(set(names)))
 
 
 if __name__ == "__main__":  # pragma: no cover
