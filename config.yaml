@@ -12,3 +12,5 @@ decision_controller:
 max_flat_steps: 5  # consecutive zero-delta steps before pruning/connection
 auto_scale_targets: false  # scale tiny targets to match output magnitude
 auto_max_steps_interval: 10  # recompute wanderer max_steps every N datapairs
+reward_shaper:
+  window_size: 10  # number of recent steps for OLS
