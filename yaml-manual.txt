@@ -58,7 +58,8 @@
 - decision_controller.budget (float, default: 10.0)
   Maximum cumulative cost allowed for plugin actions during a single decision
   step. Actions exceeding the remaining budget are discarded starting with the
-  highest cost.
+  highest cost. The same limit normalises the soft budget penalty used by the
+  decision controller's policy-gradient learner.
 - decision_controller.contribution_l1 (float, default: 0.01)
   L1 penalty strength applied when training the plugin contribution regressor.
   Higher values yield sparser contribution weights.
