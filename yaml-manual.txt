@@ -95,3 +95,13 @@
 - reward_shaper.window_size (int, default: 10)
   Number of recent performance samples kept for computing OLS trends used to
   shape actor-critic rewards. Must be at least 2.
+- reward_shaper.w1..w6 (float, default: 1.0)
+  Weights applied to individual reward components: latency slope (w1),
+  throughput slope (w2), cost slope (w3), throughput-normalised drop (w4),
+  divergence indicator (w5) and combined action penalties (w6). Adjusting these
+  values emphasises or diminishes the respective component's influence on the
+  total shaped reward.
+- reward_shaper.M_div (float, default: 0.1)
+  Threshold for activating the divergence indicator based on the
+  throughput-normalised drop. When the drop exceeds this value, an additional
+  penalty is applied to the reward.

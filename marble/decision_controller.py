@@ -14,6 +14,7 @@ import importlib
 import os
 import time
 from typing import Any, Dict, Iterable, List, Set
+from collections import deque
 
 import torch
 import yaml
@@ -559,6 +560,8 @@ class DecisionController:
         self.trajectory = Trajectory()
         self.history: List[Dict[str, Any]] = []
         self.past_actions: List[str] = []
+        self._metric_window = deque(maxlen=self.reward_shaper.window_size)
+        self._prev_action_mask: Dict[str, int] = {}
         self.watch_metrics = set(watch_metrics if watch_metrics is not None else WATCH_METRICS)
         self.watch_variables = set(
             watch_variables if watch_variables is not None else WATCH_VARIABLES
@@ -688,12 +691,23 @@ class DecisionController:
         else:
             self._last_phase = None
 
+        action_mask = {n: 1 if n in selected else 0 for n in plugin_names}
+        delta_mask = {
+            n: abs(action_mask.get(n, 0) - self._prev_action_mask.get(n, 0))
+            for n in action_mask
+        }
+        self._prev_action_mask = action_mask
+
         reward = 0.0
         if metrics:
+            self._metric_window.append(metrics)
+            window = list(self._metric_window)
             reward, _ = self.reward_shaper.update(
-                metrics.get("latency", 0.0),
-                metrics.get("throughput", 0.0),
-                metrics.get("cost", 0.0),
+                window,
+                action_mask,
+                delta_mask,
+                h_t,
+                INCOMPATIBILITY_SETS,
             )
 
         probs = torch.sigmoid(logits)
