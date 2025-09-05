@@ -555,6 +555,7 @@ def decide_actions(
     contrib_scores: Dict[str, float] | None = None,
     *,
     all_plugins: Iterable[str] | None = None,
+    cost_recorder: Dict[str, float] | None = None,
 ) -> Dict[str, Any]:
     """Select actions while enforcing incompatibilities, capacity and budget.
 
@@ -580,10 +581,13 @@ def decide_actions(
     usage: Dict[str, int] = {}
     running_costs: Dict[str, float] = {}
     for past in history:
-        for name in past:
+        for name, val in past.items():
             usage[name] = usage.get(name, 0) + 1
-            base = h_t.get(name, {})
-            c = float(base.get("cost", get_plugin_cost(name)))
+            if isinstance(val, dict) and "cost" in val:
+                c = float(val.get("cost", 0.0))
+            else:
+                base = h_t.get(name, {})
+                c = float(base.get("cost", get_plugin_cost(name)))
             running_costs[name] = running_costs.get(name, 0.0) + c
 
     now = time.time()
@@ -636,6 +640,8 @@ def decide_actions(
         active.add(name)
         usage[name] = usage.get(name, 0) + 1
         running_costs[name] = running_costs.get(name, 0.0) + cost
+        if cost_recorder is not None:
+            cost_recorder[name] = cost
         remaining -= cost
         if idx is not None:
             action_vec[idx] = 1.0
@@ -920,14 +926,24 @@ class DecisionController:
             except Exception:
                 contrib_scores = None
 
+        cost_recorder: Dict[str, float] = {}
         selected = decide_actions(
             h_t,
             x_t,
             self.history,
             contrib_scores=contrib_scores,
             all_plugins=plugin_names,
+            cost_recorder=cost_recorder,
         )
-        self.history.append(selected)
+        if selected:
+            self.history.append(
+                {
+                    n: {"action": a, "cost": cost_recorder.get(n, 0.0)}
+                    for n, a in selected.items()
+                }
+            )
+        else:
+            self.history.append({})
         self.past_actions.extend(selected.keys())
         if selected:
             self._last_phase = next(iter(selected))
