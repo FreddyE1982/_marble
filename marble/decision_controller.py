@@ -265,6 +265,39 @@ POLICY_MODE = _load_policy_mode()
 DWELL_COUNT: Dict[str, int] = {}
 
 
+def _load_dwell_threshold() -> float:
+    """Load dwell-time step threshold ``D`` from ``config.yaml``."""
+    base = os.path.dirname(os.path.dirname(__file__))
+    cfg: Dict[str, Dict[str, Any]] = {}
+    try:
+        with open(os.path.join(base, "config.yaml"), "r", encoding="utf-8") as fh:
+            section: str | None = None
+            for raw in fh:
+                line = raw.split("#", 1)[0].rstrip()
+                if not line:
+                    continue
+                if not line.startswith(" ") and line.endswith(":"):
+                    section = line[:-1].strip()
+                    cfg[section] = {}
+                    continue
+                if section and ":" in line:
+                    k, v = line.split(":", 1)
+                    try:
+                        cfg[section][k.strip()] = float(v.strip())
+                    except Exception:
+                        cfg[section][k.strip()] = v.strip()
+    except Exception:
+        return 1.0
+    dc = cfg.get("decision_controller", {})
+    try:
+        return float(dc.get("dwell_threshold", 1.0))
+    except Exception:
+        return 1.0
+
+
+DWELL_THRESHOLD = _load_dwell_threshold()
+
+
 def _load_linear_constraints() -> tuple[list[list[float]], list[float]]:
     """Load linear constraint matrices ``A`` and vector ``b`` from config."""
     try:
@@ -606,11 +639,8 @@ def decide_actions(
         remaining -= cost
         if idx is not None:
             action_vec[idx] = 1.0
-        record_plugin_state_change(name, now)
-        PLUGIN_GRAPH.mark_executed(name)
         if remaining <= 0:
             break
-    update_dwell_counters(selected.keys(), all_plugins or x_t.keys())
     return selected
 
 
@@ -624,6 +654,7 @@ class DecisionController:
         cadence: int = CADENCE,
         sampler_mode: str = "gumbel-top-k",
         top_k: int = 1,
+        dwell_threshold: float = DWELL_THRESHOLD,
         lambda_lr: float = LAMBDA_LR,
         phase_count: int = PHASE_COUNT,
         watch_metrics: Iterable[str] | None = None,
@@ -640,6 +671,7 @@ class DecisionController:
         self.lambda_lr = float(lambda_lr)
         self.phase_count = max(1, int(phase_count))
         self.policy_mode = policy_mode
+        self.dwell_threshold = float(dwell_threshold)
         feat_dim = (
             self.encoder.embedding.embedding_dim
             + self.encoder.ctx_rnn.hidden_size
@@ -652,6 +684,7 @@ class DecisionController:
         self._h_t: torch.Tensor | None = None
         self._prev_action_vec = torch.zeros(len(PLUGIN_ID_REGISTRY), dtype=torch.float32)
         self._prev_reward = 0.0
+        self._steps_since_change = int(self.dwell_threshold)
 
         # Build a cost vector so the policy-gradient agent can impose a soft
         # budget constraint through its generic ``constraints`` interface.
@@ -666,11 +699,20 @@ class DecisionController:
 
             return cost_vec[actions] / max(1.0, BUDGET_LIMIT)
 
+        def g_dwell(actions: torch.Tensor) -> torch.Tensor:
+            """Return dwell penalty based on action changes."""
+            curr = torch.zeros_like(self._prev_action_vec)
+            curr[actions] = 1.0
+            diff = torch.abs(curr - self._prev_action_vec).sum()
+            if self._steps_since_change < self.dwell_threshold:
+                return diff.repeat(actions.shape[0])
+            return torch.zeros_like(actions, dtype=torch.float32)
+
         self.agent = PolicyGradientAgent(
             state_dim=feat_dim,
             action_dim=len(PLUGIN_ID_REGISTRY),
-            lambdas=[1.0],
-            constraints=[g_budget],
+            lambdas=[1.0, 1.0],
+            constraints=[g_budget, g_dwell],
             lambda_lr=self.lambda_lr,
         )
         self.bayesian: BayesianPolicy | None = None
@@ -892,11 +934,24 @@ class DecisionController:
         else:
             self._last_phase = None
 
-        action_mask = {n: 1 if n in selected else 0 for n in plugin_names}
+        action_mask = {
+            n: 1 if selected.get(n, "off") != "off" else 0 for n in plugin_names
+        }
         delta_mask = {
             n: abs(action_mask.get(n, 0) - self._prev_action_mask.get(n, 0))
             for n in action_mask
         }
+        delta_total = sum(delta_mask.values())
+        if delta_total > 0 and self._steps_since_change < self.dwell_threshold:
+            selected = {}
+            action_mask = {n: 0 for n in plugin_names}
+            delta_mask = {n: 0 for n in plugin_names}
+            delta_total = 0
+            self._steps_since_change += 1
+        else:
+            self._steps_since_change = (
+                self._steps_since_change + 1 if delta_total == 0 else 0
+            )
         self._prev_action_mask = action_mask
 
         reward = 0.0
@@ -911,6 +966,13 @@ class DecisionController:
                 INCOMPATIBILITY_SETS,
                 force_divergence=self.divergence,
             )
+
+        now = time.time()
+        if selected:
+            for name in selected:
+                record_plugin_state_change(name, now)
+                PLUGIN_GRAPH.mark_executed(name)
+        update_dwell_counters(selected.keys(), plugin_names)
 
         probs = torch.sigmoid(logits)
         for name in selected:
@@ -933,7 +995,7 @@ class DecisionController:
                 phi = e_t[(plugin_ids == act[0]).nonzero(as_tuple=False)[0]]
                 if self.bayesian is not None:
                     self.bayesian.update(int(act[0].item()), phi, float(reward))
-            self.agent.lambda_updates(act)
+            self.agent.update_lambdas(act)
 
         act_vec = torch.zeros(len(PLUGIN_ID_REGISTRY), dtype=torch.float32)
         for name in plugin_names:
