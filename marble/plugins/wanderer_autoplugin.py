@@ -279,10 +279,15 @@ class AutoPlugin:
         bias = wanderer.get_learnable_param_tensor(f"autoplugin_bias_{name}")
         wanderer.ensure_learnable_param(f"autoplugin_gain_{name}", 1.0)
         gain = wanderer.get_learnable_param_tensor(f"autoplugin_gain_{name}")
-        features = self._feature_vector(wanderer, name)
-        mean = self._theta_mean.setdefault(name, torch.zeros_like(features))
-        cov = self._theta_cov.setdefault(name, torch.eye(features.shape[0]))
-        theta = torch.distributions.MultivariateNormal(mean, cov).sample()
+        device = getattr(wanderer, "_device", torch.device("cpu"))
+        features = self._feature_vector(wanderer, name).to(device)
+        mean = self._theta_mean.setdefault(name, torch.zeros_like(features)).to(device)
+        self._theta_mean[name] = mean
+        cov = self._theta_cov.setdefault(
+            name, torch.eye(features.shape[0], device=device)
+        ).to(device)
+        self._theta_cov[name] = cov
+        theta = torch.distributions.MultivariateNormal(mean, cov).sample().to(device)
         score = (features @ theta) * gain + bias
         gate = torch.sigmoid(score)
         result = bool(gate.detach().to("cpu").item() >= 0.5)
