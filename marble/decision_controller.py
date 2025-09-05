@@ -412,6 +412,41 @@ def train_contribution_regressor(
     return weights.detach()
 
 
+class RewardSurrogate(nn.Module):
+    """Simple quadratic surrogate ``q_omega(h, a)`` predicting rewards."""
+
+    def __init__(self, dim: int) -> None:
+        super().__init__()
+        self.linear = nn.Linear(dim, 1, bias=False)
+        self.pair = nn.Parameter(torch.zeros(dim, dim))
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:  # type: ignore[override]
+        lin = self.linear(x)
+        pair = (x @ self.pair * x).sum(dim=1, keepdim=True)
+        return (lin + pair).squeeze(1)
+
+
+def train_reward_surrogate(
+    activation: torch.Tensor,
+    outcomes: torch.Tensor,
+    lr: float = 0.01,
+    epochs: int = 1000,
+) -> RewardSurrogate:
+    """Fit :class:`RewardSurrogate` to ``(activation, outcomes)`` pairs."""
+
+    model = RewardSurrogate(activation.shape[1]).to(activation.device)
+    for _ in range(epochs):
+        pred = model(activation)
+        loss = ((pred - outcomes) ** 2).mean()
+        loss.backward()
+        with torch.no_grad():
+            for p in model.parameters():
+                p -= lr * p.grad
+                p.grad.zero_()
+            model.pair.fill_diagonal_(0.0)
+    return model
+
+
 def estimate_plugin_contributions(
     activation: torch.Tensor,
     outcomes: torch.Tensor,
@@ -814,7 +849,9 @@ class DecisionController:
                     activation, outcomes, list(PLUGIN_ID_REGISTRY.keys())
                 )
                 contrib_scores = {
-                    n: contrib_map.get(n, 0.0) for n in plugin_names if n in contrib_map
+                    n: contrib_map["individual"].get(n, 0.0)
+                    for n in plugin_names
+                    if n in contrib_map["individual"]
                 }
             except Exception:
                 contrib_scores = None
@@ -901,18 +938,42 @@ class DecisionController:
     def compute_contributions(
         self,
         activation: torch.Tensor,
-        outcomes: torch.Tensor,
-        plugin_names: List[str],
+       outcomes: torch.Tensor,
+       plugin_names: List[str],
         *,
         bayesian: bool = False,
     ) -> Dict[str, Any]:
-        """Wrapper around contribution estimators."""
+        """Return individual and pairwise contribution estimates."""
 
         if bayesian:
-            return estimate_plugin_contributions_bayesian(
+            mean_var = estimate_plugin_contributions_bayesian(
                 activation, outcomes, plugin_names
             )
-        return estimate_plugin_contributions(activation, outcomes, plugin_names)
+            indiv = {k: v[0] for k, v in mean_var.items()}
+            return {"individual": indiv, "pairwise": {}}
+
+        surrogate = train_reward_surrogate(activation, outcomes)
+        d = activation.shape[1]
+        base = torch.zeros(d, device=activation.device)
+        base_val = float(surrogate(base.unsqueeze(0)).detach().to("cpu").item())
+
+        indiv: Dict[str, float] = {}
+        preds = {}
+        for i, name in enumerate(plugin_names):
+            vec = base.clone(); vec[i] = 1.0
+            val = float(surrogate(vec.unsqueeze(0)).detach().to("cpu").item())
+            indiv[name] = val - base_val
+            preds[i] = val
+
+        pair: Dict[tuple[str, str], float] = {}
+        for i in range(len(plugin_names)):
+            for j in range(i + 1, len(plugin_names)):
+                vec = base.clone(); vec[i] = 1.0; vec[j] = 1.0
+                val = float(surrogate(vec.unsqueeze(0)).detach().to("cpu").item())
+                delta = val - preds[i] - preds[j] + base_val
+                pair[(plugin_names[i], plugin_names[j])] = delta
+
+        return {"individual": indiv, "pairwise": pair}
 
 
 __all__ = [
