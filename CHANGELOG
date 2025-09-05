@@ -1,3 +1,6 @@
+2025-09-05
+- Use a bounded budget when `config.yaml` is absent or invalid and expose `BUDGET_LIMIT` at the package root.
+
 2025-09-19
 - Added optional CPU pre-forward pass for `Wanderer` via `pre_forward=True`,
   recording CPU compute and GPU transfer times to help tune VRAM usage.

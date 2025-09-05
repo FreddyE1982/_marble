@@ -10,6 +10,7 @@ from .plugin_encoder import PluginEncoder
 from .action_sampler import compute_logits, sample_actions, select_plugins
 from .offpolicy import Trajectory, importance_weights, doubly_robust
 from .policy_gradient import PolicyGradientAgent
+from .decision_controller import BUDGET_LIMIT
 
 __all__ = [
     "enable_auto_param_learning",
@@ -21,4 +22,5 @@ __all__ = [
     "importance_weights",
     "doubly_robust",
     "PolicyGradientAgent",
+    "BUDGET_LIMIT",
 ]

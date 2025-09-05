@@ -95,7 +95,7 @@ def _load_policy_mode() -> str:
 
 
 def _load_budget() -> float:
-    """Load budget limit from ``config.yaml``."""
+    """Load budget limit from ``config.yaml``; default to ``10.0``."""
     base = os.path.dirname(os.path.dirname(__file__))
     cfg: Dict[str, Dict[str, Any]] = {}
     try:
@@ -116,12 +116,12 @@ def _load_budget() -> float:
                     except Exception:
                         cfg[section][k.strip()] = v.strip()
     except Exception:
-        return float("inf")
+        return 10.0
     dc = cfg.get("decision_controller", {})
     try:
-        return float(dc.get("budget", float("inf")))
+        return float(dc.get("budget", 10.0))
     except Exception:
-        return float("inf")
+        return 10.0
 
 
 BUDGET_LIMIT = _load_budget()
