@@ -128,6 +128,32 @@ class TestDecisionController(unittest.TestCase):
         print("selection under tight linear constraint:", selected)
         self.assertEqual(selected, {"B": "on"})
 
+    def test_multiple_selection_learning(self):
+        dc.LAST_STATE_CHANGE.clear()
+        dc.TAU_THRESHOLD = 0.0
+        dc.LINEAR_CONSTRAINTS_A = []
+        dc.LINEAR_CONSTRAINTS_B = []
+        dc.BUDGET_LIMIT = 10.0
+        names = list(PLUGIN_ID_REGISTRY.keys())[:3]
+        controller = dc.DecisionController(top_k=2)
+        torch.manual_seed(0)
+        h_t = {n: {"cost": 0.0} for n in names}
+        ctx = torch.zeros(1, 1, 16)
+        captured = {}
+        orig_step = controller.agent.step
+
+        def fake_step(states, actions, returns):
+            captured["actions"] = actions.clone()
+            return orig_step(states, actions, returns)
+
+        controller.agent.step = fake_step
+        controller.decide(
+            h_t,
+            ctx,
+            metrics={"latency": 1, "throughput": 1, "cost": 1},
+        )
+        self.assertEqual(len(captured.get("actions", [])), 2)
+
 
 if __name__ == "__main__":  # pragma: no cover
     unittest.main(verbosity=2)
