@@ -1000,16 +1000,20 @@ class DecisionController:
             self.trajectory.log(pid, reward, prob, prob)
 
         if selected:
-            state = e_a_t.unsqueeze(0)
-            act = torch.tensor([PLUGIN_ID_REGISTRY[list(selected.keys())[0]]])
-            ret = torch.tensor([reward])
+            acts = torch.tensor(
+                [PLUGIN_ID_REGISTRY[n] for n in selected.keys()],
+                dtype=torch.long,
+            )
+            state = e_a_t.unsqueeze(0).repeat(len(acts), 1)
+            rets = torch.full((len(acts),), reward, dtype=state.dtype)
             if self.policy_mode == "policy-gradient":
-                self.agent.step(state, act, ret)
+                self.agent.step(state, acts, rets)
             else:
-                phi = e_t[(plugin_ids == act[0]).nonzero(as_tuple=False)[0]]
-                if self.bayesian is not None:
-                    self.bayesian.update(int(act[0].item()), phi, float(reward))
-            self.agent.update_lambdas(act)
+                for pid in acts.tolist():
+                    phi = e_t[(plugin_ids == pid).nonzero(as_tuple=False)[0]]
+                    if self.bayesian is not None:
+                        self.bayesian.update(pid, phi, float(reward))
+            self.agent.update_lambdas(acts)
 
         act_vec = torch.zeros(len(PLUGIN_ID_REGISTRY), dtype=torch.float32)
         for name in plugin_names:
