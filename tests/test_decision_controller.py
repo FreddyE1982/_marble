@@ -33,6 +33,24 @@ class TestDecisionController(unittest.TestCase):
         print("selected with per-plugin budget:", selected)
         self.assertEqual(selected, {"B": "on"})
 
+    def test_cost_change_respected(self):
+        dc.BUDGET_LIMIT = 3.5
+        h_t1 = {"A": {"cost": 3}}
+        x_t1 = {"A": "on"}
+        history: list[dict] = []
+        recorder: dict[str, float] = {}
+        sel1 = dc.decide_actions(
+            h_t1, x_t1, history, all_plugins=h_t1.keys(), cost_recorder=recorder
+        )
+        history.append(
+            {n: {"action": a, "cost": recorder.get(n, 0.0)} for n, a in sel1.items()}
+        )
+        h_t2 = {"A": {"cost": 1}}
+        x_t2 = {"A": "on"}
+        sel2 = dc.decide_actions(h_t2, x_t2, history, all_plugins=h_t2.keys())
+        print("second selection under budget after cost change:", sel2)
+        self.assertEqual(sel2, {})
+
     def test_tau_penalty(self):
         dc.BUDGET_LIMIT = 5.0
         dc.TAU_THRESHOLD = 5.0
