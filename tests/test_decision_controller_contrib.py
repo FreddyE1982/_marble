@@ -24,6 +24,21 @@ class TestDecisionControllerContribution(unittest.TestCase):
         print('selected with auto contributions:', sel)
         self.assertEqual(sel, {names[0]: 'on'})
 
+    def test_pairwise_scores(self):
+        torch.manual_seed(0)
+        controller = dc.DecisionController(cadence=1)
+        activation = torch.tensor([
+            [0.0, 0.0],
+            [1.0, 0.0],
+            [0.0, 1.0],
+            [1.0, 1.0],
+        ])
+        outcomes = torch.tensor([0.0, 1.0, 1.0, 5.0])
+        contribs = controller.compute_contributions(activation, outcomes, ["A", "B"])
+        pair = contribs["pairwise"][("A", "B")]
+        print('pairwise contribution:', pair)
+        self.assertAlmostEqual(pair, 3.0, delta=0.1)
+
 
 if __name__ == '__main__':  # pragma: no cover
     unittest.main(verbosity=2)
