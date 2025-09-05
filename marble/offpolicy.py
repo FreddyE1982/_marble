@@ -69,6 +69,11 @@ def importance_weights(logged: Sequence[float], new: Sequence[float]) -> List[fl
 def doubly_robust(traj: Trajectory, q_hat: Sequence[float]) -> float:
     """Return doubly-robust value estimate ``V_hat``.
 
+    This implementation follows a backward recursion where the baseline
+    value for the next step is multiplied by the per-step importance ratio
+    before being carried backward.  As a result, identical policies with
+    zero rewards leave the initial baseline unchanged.
+
     Parameters
     ----------
     traj:
@@ -82,11 +87,12 @@ def doubly_robust(traj: Trajectory, q_hat: Sequence[float]) -> float:
     if len(q_hat) != len(traj.actions) + 1:
         raise ValueError("q_hat must have one more element than actions")
 
-    rho = importance_weights(traj.logged_probs, traj.new_probs)
-    v_hat = q_hat[0]
-    for t, (r_t, rho_t) in enumerate(zip(traj.rewards, rho)):
-        correction = rho_t * (r_t - q_hat[t])
-        v_hat += correction + q_hat[t + 1]
+    v_hat = q_hat[-1]
+    for t in reversed(range(len(traj.rewards))):
+        lp = traj.logged_probs[t]
+        np = traj.new_probs[t]
+        w_t = np / lp if lp > 0 else 0.0
+        v_hat = q_hat[t] + w_t * (traj.rewards[t] + v_hat - q_hat[t + 1])
     return float(v_hat)
 
 
