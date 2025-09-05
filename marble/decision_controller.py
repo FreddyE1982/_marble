@@ -17,6 +17,7 @@ from typing import Any, Dict, Iterable, List, Set
 from collections import deque
 
 import torch
+import torch.nn as nn
 import yaml
 
 from .constraints import (
@@ -301,6 +302,23 @@ WATCH_METRICS = _load_watch_metrics()
 WATCH_VARIABLES = _load_watch_variables()
 
 
+def _load_phase_count() -> int:
+    base = os.path.dirname(os.path.dirname(__file__))
+    try:
+        with open(os.path.join(base, "config.yaml"), "r", encoding="utf-8") as fh:
+            data = yaml.safe_load(fh) or {}
+    except Exception:
+        return 1
+    dc = data.get("decision_controller", {})
+    try:
+        return int(dc.get("phase_count", 1))
+    except Exception:
+        return 1
+
+
+PHASE_COUNT = _load_phase_count()
+
+
 def advance_step(cadence: int = CADENCE) -> bool:
     """Increment global step counter and enforce decision cadence."""
     global STEP_COUNTER
@@ -557,6 +575,7 @@ class DecisionController:
         sampler_mode: str = "gumbel-top-k",
         top_k: int = 1,
         lambda_lr: float = LAMBDA_LR,
+        phase_count: int = PHASE_COUNT,
         watch_metrics: Iterable[str] | None = None,
         watch_variables: Iterable[str] | None = None,
     ) -> None:
@@ -568,6 +587,7 @@ class DecisionController:
         self.top_k = int(top_k)
         self._last_phase: str | None = None
         self.lambda_lr = float(lambda_lr)
+        self.phase_count = max(1, int(phase_count))
         feat_dim = (
             self.encoder.embedding.embedding_dim
             + self.encoder.ctx_rnn.hidden_size
@@ -602,6 +622,22 @@ class DecisionController:
             lambda_lr=self.lambda_lr,
         )
         self.reward_shaper = RewardShaper()
+        self._reward_base = torch.tensor(
+            [
+                self.reward_shaper.w1,
+                self.reward_shaper.w2,
+                self.reward_shaper.w3,
+                self.reward_shaper.w4,
+                self.reward_shaper.w5,
+                self.reward_shaper.w6,
+            ],
+            dtype=torch.float32,
+        )
+        self.phase_proj = nn.Linear(feat_dim, self.phase_count)
+        self.phase_bias = nn.Linear(
+            self.phase_count, len(PLUGIN_ID_REGISTRY), bias=False
+        )
+        self.reward_phase = nn.Linear(self.phase_count, 6, bias=False)
         self.trajectory = Trajectory()
         self.history: List[Dict[str, Any]] = []
         self.past_actions: List[str] = []
@@ -696,7 +732,16 @@ class DecisionController:
         r_prev = torch.tensor([self._prev_reward], dtype=o_t.dtype, device=o_t.device)
         self._h_t = self.history_encoder(o_t, self._prev_action_vec.to(o_t), r_prev, self._h_t)
         e_a_t = self._h_t[0].squeeze(0)
-        logits = compute_logits(e_t, e_a_t)
+        u = torch.softmax(self.phase_proj(e_a_t), dim=-1)
+        phase_logits = self.phase_bias(u)
+        logits = compute_logits(e_t, e_a_t) + phase_logits[plugin_ids]
+        mod = self.reward_phase(u)
+        for attr, base, m in zip(
+            ["w1", "w2", "w3", "w4", "w5", "w6"],
+            self._reward_base,
+            mod,
+        ):
+            setattr(self.reward_shaper, attr, float((base + m).detach()))
         costs = self.cost_vec[plugin_ids]
         incompat: Dict[int, Set[int]] = {}
         name_to_idx = {n: i for i, n in enumerate(plugin_names)}
@@ -842,6 +887,7 @@ __all__ = [
     "TAU_THRESHOLD",
     "LAMBDA_LR",
     "CADENCE",
+    "PHASE_COUNT",
     "STEP_COUNTER",
     "advance_step",
     "LAST_STATE_CHANGE",
