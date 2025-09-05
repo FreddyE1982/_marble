@@ -115,7 +115,7 @@ class PolicyGradientAgent:
     # ------------------------------------------------------------------
     # Lagrange multiplier update
     # ------------------------------------------------------------------
-    def lambda_updates(self, actions: torch.Tensor) -> None:
+    def update_lambdas(self, actions: torch.Tensor) -> None:
         """Update Lagrange multipliers based on constraint violations.
 
         Each constraint ``g_j`` produces a penalty term given the selected

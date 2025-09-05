@@ -79,6 +79,10 @@
   Learning rate ``η`` for the adaptive Lagrange multipliers enforcing
   constraints in the policy-gradient agent. Higher values make penalties
   respond more aggressively to repeated constraint violations.
+- decision_controller.dwell_threshold (int, default: 1)
+  Minimum number of decision steps a plugin must remain in its current
+  state before switching. Attempts to change earlier are suppressed and
+  contribute to the dwell-time penalty.
 - decision_controller.phase_count (int, default: 1)
   Number of discrete phases the decision controller predicts. Each phase can
   bias action logits and rescale reward weights via an internal classifier.
