@@ -810,13 +810,19 @@ class DecisionController:
 
         watch_vals = self._gather_watchables()
         # Merge caller-provided metrics with values gathered from the
-        # ``watch_*`` configuration.  When no metrics are available we keep an
-        # empty dict so the caller can still inspect ``last_metrics`` without
-        # triggering reward shaping on placeholder zeros.
-        metrics = {**watch_vals, **(metrics or {})}
-        self.last_metrics = metrics
+        # ``watch_*`` configuration.  When no metrics are available we keep
+        # ``metrics`` as ``None`` so that reward shaping and history updates can
+        # be skipped entirely.
+        if not watch_vals and not metrics:
+            metrics = None
+        else:
+            metrics = {**watch_vals, **(metrics or {})}
+        if metrics is not None:
+            self.last_metrics = metrics
 
-        def _has_invalid(d: Dict[str, Any]) -> bool:
+        def _has_invalid(d: Dict[str, Any] | None) -> bool:
+            if not d:
+                return False
             for v in d.values():
                 if isinstance(v, float) and (math.isnan(v) or math.isinf(v)):
                     return True
@@ -976,8 +982,9 @@ class DecisionController:
         self._prev_action_mask = action_mask
 
         reward = 0.0
-        if metrics or self.divergence:
-            self._metric_window.append(metrics)
+        if metrics is not None or self.divergence:
+            if metrics is not None:
+                self._metric_window.append(metrics)
             window = list(self._metric_window)
             reward, _ = self.reward_shaper.update(
                 window,
