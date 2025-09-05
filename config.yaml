@@ -17,6 +17,7 @@ decision_controller:
   phase_count: 1  # number of discrete phases for gating
   watch_metrics: []  # reporter paths to monitor automatically
   watch_variables: []  # module.variable paths to observe
+  policy_mode: policy-gradient  # 'policy-gradient' or 'bayesian'
   linear_constraints:
     A: []  # constraint matrix for actions
     b: []  # upper bounds for linear constraints
