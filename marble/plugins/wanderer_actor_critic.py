@@ -76,7 +76,11 @@ class ActorCriticPlugin:
         beta_t = wanderer._walk_ctx.get("beta_t", torch.tensor(0.0, device=device))
         dist_t = wanderer._walk_ctx.get("action_distance", torch.tensor(0.0, device=device))
         r_t = -wL * loss_t + wB * beta_t + wD * dist_t
-        G = r_t + gamma * self._ret
+        # Forward-return logic: `_ret` caches the return from the next state.
+        # Keep a copy before computing the current return so that after the
+        # update we can push ``G`` forward for the following step.
+        next_ret = self._ret
+        G = r_t + gamma * next_ret
         value = self.critic_w * loss_t
         advantage = G - value
         actor_loss = -self._last_logprob * advantage.detach()
