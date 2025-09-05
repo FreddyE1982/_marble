@@ -128,6 +128,8 @@ class RewardShaper:
         action_deltas: Dict[str, int],
         h_t: Dict[str, Dict[str, float]],
         incompat: Dict[str, set] | None = None,
+        *,
+        force_divergence: bool = False,
     ) -> Tuple[float, Dict[str, float]]:
         """Compute shaped reward from ``window`` and action information.
 
@@ -146,9 +148,26 @@ class RewardShaper:
         incompat:
             Optional incompatibility mapping used to penalise conflicting
             activations.
+        force_divergence:
+            When ``True`` the update bypasses slope calculations and returns a
+            fixed penalty of ``-M_div`` regardless of the provided metrics.
         """
 
         incompat = incompat or {}
+        if force_divergence:
+            reward = -self.M_div
+            components = {
+                "latency_slope": 0.0,
+                "throughput_slope": 0.0,
+                "cost_slope": 0.0,
+                "throughput_drop": self.M_div,
+                "divergence": 1.0,
+                "toggle_penalty": 0.0,
+                "compatibility_penalty": 0.0,
+                "compute_cost_penalty": 0.0,
+                "reward": reward,
+            }
+            return reward, components
         lat = [m.get("latency", 0.0) for m in window]
         thr = [m.get("throughput", 0.0) for m in window]
         cst = [m.get("cost", 0.0) for m in window]
