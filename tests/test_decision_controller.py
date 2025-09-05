@@ -7,6 +7,8 @@ from marble.plugins import PLUGIN_ID_REGISTRY
 
 class TestDecisionController(unittest.TestCase):
     def test_incompatibility_and_capacity(self):
+        dc.LAST_STATE_CHANGE.clear()
+        dc.TAU_THRESHOLD = 0.0
         dc.BUDGET_LIMIT = 10.0
         h_t = {"A": {"cost": 2}, "B": {"cost": 1}, "C": {"cost": 4}}
         x_t = {"A": "on", "B": "on", "C": "on"}
@@ -16,6 +18,8 @@ class TestDecisionController(unittest.TestCase):
         self.assertEqual(selected, {"A": "on"})
 
     def test_budget_limit(self):
+        dc.LAST_STATE_CHANGE.clear()
+        dc.TAU_THRESHOLD = 0.0
         dc.BUDGET_LIMIT = 3.0
         h_t = {"A": {"cost": 2}, "B": {"cost": 1}, "C": {"cost": 4}}
         x_t = {"A": "on", "B": "on", "C": "on"}
@@ -25,6 +29,8 @@ class TestDecisionController(unittest.TestCase):
         self.assertEqual(selected, {"B": "on", "A": "on"})
 
     def test_per_plugin_running_cost(self):
+        dc.LAST_STATE_CHANGE.clear()
+        dc.TAU_THRESHOLD = 0.0
         dc.BUDGET_LIMIT = 5.0
         h_t = {"A": {"cost": 3}, "B": {"cost": 3}}
         x_t = {"A": "on", "B": "on"}
@@ -34,6 +40,8 @@ class TestDecisionController(unittest.TestCase):
         self.assertEqual(selected, {"B": "on"})
 
     def test_cost_change_respected(self):
+        dc.LAST_STATE_CHANGE.clear()
+        dc.TAU_THRESHOLD = 0.0
         dc.BUDGET_LIMIT = 3.5
         h_t1 = {"A": {"cost": 3}}
         x_t1 = {"A": "on"}
@@ -65,6 +73,8 @@ class TestDecisionController(unittest.TestCase):
         self.assertEqual(selected, {"B": "on"})
 
     def test_decision_controller_cadence(self):
+        dc.LAST_STATE_CHANGE.clear()
+        dc.TAU_THRESHOLD = 0.0
         names = list(PLUGIN_ID_REGISTRY.keys())[:2]
         controller = dc.DecisionController(cadence=2, top_k=1)
         h_t = {names[0]: {"cost": 1}, names[1]: {"cost": 1}}
@@ -77,6 +87,8 @@ class TestDecisionController(unittest.TestCase):
         self.assertTrue(set(sel2).issubset(set(names)))
 
     def test_dwell_bonus(self):
+        dc.LAST_STATE_CHANGE.clear()
+        dc.TAU_THRESHOLD = 0.0
         dc.BUDGET_LIMIT = 3.0
         dc.DWELL_BONUS = 1.0
         dc.DWELL_COUNT.clear()
@@ -91,6 +103,8 @@ class TestDecisionController(unittest.TestCase):
         self.assertEqual(sel2, {"A": "on"})
 
     def test_linear_constraints_accept(self):
+        dc.LAST_STATE_CHANGE.clear()
+        dc.TAU_THRESHOLD = 0.0
         dc.LINEAR_CONSTRAINTS_A = [[1, 1]]
         dc.LINEAR_CONSTRAINTS_B = [2]
         dc.BUDGET_LIMIT = 5.0
@@ -102,6 +116,8 @@ class TestDecisionController(unittest.TestCase):
         self.assertEqual(selected, {"B": "on", "C": "on"})
 
     def test_linear_constraints_reject(self):
+        dc.LAST_STATE_CHANGE.clear()
+        dc.TAU_THRESHOLD = 0.0
         dc.LINEAR_CONSTRAINTS_A = [[1, 1]]
         dc.LINEAR_CONSTRAINTS_B = [1]
         dc.BUDGET_LIMIT = 5.0
