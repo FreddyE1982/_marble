@@ -838,6 +838,13 @@ class DecisionController:
 
         plugin_names = list(h_t.keys())
         ready = set(PLUGIN_GRAPH.recommend_next_plugin(self._last_phase))
+        # If the plugin graph still contains pending nodes but none are ready
+        # to run, we return an empty selection instead of considering all
+        # plugins.  This prevents executing plugins whose prerequisites have
+        # not yet been satisfied.
+        if not ready and getattr(PLUGIN_GRAPH, "_deps", {}):
+            self.history.append({})
+            return {}
         if ready:
             plugin_names = [n for n in plugin_names if n in ready]
         if not plugin_names:

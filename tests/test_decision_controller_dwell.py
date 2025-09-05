@@ -13,6 +13,7 @@ class TestDecisionControllerDwell(unittest.TestCase):
     def test_dwell_suppresses_quick_switch(self) -> None:
         torch.manual_seed(0)
         dc.PLUGIN_GRAPH.recommend_next_plugin = lambda _: set()
+        dc.PLUGIN_GRAPH._deps.clear()
         ctrl = DecisionController(dwell_threshold=2)
         ctx = torch.zeros(1, 1, 16)
         first = ctrl.decide({"auto_target_scaler": {"action": "on"}}, ctx)
