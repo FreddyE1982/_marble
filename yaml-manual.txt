@@ -91,6 +91,10 @@
   Fully qualified ``module.attr`` names of numeric variables to observe. Their
   current values are sampled every decision and merged into the ``metrics``
   dictionary.
+- decision_controller.policy_mode (str, default: "policy-gradient")
+  Selects the controller's action-selection algorithm. ``policy-gradient``
+  trains a stochastic policy via gradient updates, while ``bayesian`` enables a
+  Thompson sampler with per-plugin Gaussian posteriors.
 - decision_controller.linear_constraints.A (list[list[float]], default: [])
   Matrix ``A`` defining linear inequality constraints ``A @ a <= b`` applied
   to the binary action vector ``a``. Each row represents one constraint.

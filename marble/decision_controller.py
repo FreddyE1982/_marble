@@ -28,10 +28,11 @@ from .constraints import (
 )
 from .plugin_graph import PLUGIN_GRAPH
 from .plugin_encoder import PluginEncoder
-from .action_sampler import select_plugins, compute_logits
+from .action_sampler import select_plugins, compute_logits, sample_actions
 from .reward_shaper import RewardShaper
 from .offpolicy import Trajectory, doubly_robust
 from .policy_gradient import PolicyGradientAgent
+from .bayesian_policy import BayesianPolicy
 from .plugins import PLUGIN_ID_REGISTRY
 from .reporter import REPORTER
 from .history_encoder import HistoryEncoder
@@ -78,6 +79,18 @@ def _load_dwell_bonus() -> float:
         return float(dc.get("dwell_bonus", 0.0))
     except Exception:
         return 0.0
+
+
+def _load_policy_mode() -> str:
+    """Load policy mode from ``config.yaml``."""
+    base = os.path.dirname(os.path.dirname(__file__))
+    try:
+        with open(os.path.join(base, "config.yaml"), "r", encoding="utf-8") as fh:
+            cfg = yaml.safe_load(fh) or {}
+    except Exception:
+        return "policy-gradient"
+    dc = cfg.get("decision_controller", {})
+    return str(dc.get("policy_mode", "policy-gradient"))
 
 
 def _load_budget() -> float:
@@ -247,6 +260,7 @@ CADENCE = _load_cadence()
 STEP_COUNTER = 0
 
 DWELL_BONUS = _load_dwell_bonus()
+POLICY_MODE = _load_policy_mode()
 DWELL_COUNT: Dict[str, int] = {}
 
 
@@ -578,6 +592,7 @@ class DecisionController:
         phase_count: int = PHASE_COUNT,
         watch_metrics: Iterable[str] | None = None,
         watch_variables: Iterable[str] | None = None,
+        policy_mode: str = POLICY_MODE,
     ) -> None:
         if encoder is None:
             encoder = PluginEncoder(len(PLUGIN_ID_REGISTRY))
@@ -588,6 +603,7 @@ class DecisionController:
         self._last_phase: str | None = None
         self.lambda_lr = float(lambda_lr)
         self.phase_count = max(1, int(phase_count))
+        self.policy_mode = policy_mode
         feat_dim = (
             self.encoder.embedding.embedding_dim
             + self.encoder.ctx_rnn.hidden_size
@@ -621,6 +637,9 @@ class DecisionController:
             constraints=[g_budget],
             lambda_lr=self.lambda_lr,
         )
+        self.bayesian: BayesianPolicy | None = None
+        if self.policy_mode == "bayesian":
+            self.bayesian = BayesianPolicy(feat_dim, len(PLUGIN_ID_REGISTRY))
         self.reward_shaper = RewardShaper()
         self._reward_base = torch.tensor(
             [
@@ -753,22 +772,33 @@ class DecisionController:
             }
             if others:
                 incompat[i] = others
-        chosen = select_plugins(
-            plugin_ids,
-            e_t,
-            e_a_t,
-            mode=self.sampler_mode,
-            top_k=self.top_k,
-            temperature=1.0,
-            costs=costs,
-            budget=BUDGET_LIMIT,
-            incompatibility=incompat,
-        )
-        x_t = {
-            name: h_t[name].get("action", "on")
-            for name in plugin_names
-            if PLUGIN_ID_REGISTRY.get(name, -1) in chosen
-        }
+        if self.policy_mode == "bayesian" and self.bayesian is not None:
+            theta = self.bayesian.sample(plugin_ids)
+            scores = (e_t * theta).sum(dim=1)
+            lam = self.agent.lambdas[0] if self.agent.lambdas else 0.0
+            scores = scores - lam * costs
+            idx = int(torch.argmax(scores))
+            chosen = {plugin_ids[idx].item()}
+            x_t = {
+                plugin_names[idx]: h_t[plugin_names[idx]].get("action", "on")
+            }
+        else:
+            mask = sample_actions(
+                logits,
+                mode=self.sampler_mode,
+                top_k=self.top_k,
+                temperature=1.0,
+                costs=costs,
+                budget=BUDGET_LIMIT,
+                incompatibility=incompat,
+            )
+            indices = (mask > 0.5).nonzero(as_tuple=False).squeeze(1)
+            chosen = plugin_ids[indices].tolist()
+            x_t = {
+                name: h_t[name].get("action", "on")
+                for name in plugin_names
+                if PLUGIN_ID_REGISTRY.get(name, -1) in chosen
+            }
 
         contrib_scores = None
         if self._activation_log and self._reward_log:
@@ -825,14 +855,24 @@ class DecisionController:
         probs = torch.sigmoid(logits)
         for name in selected:
             pid = PLUGIN_ID_REGISTRY.get(name, 0)
-            prob = float(probs[(plugin_ids == pid).nonzero(as_tuple=False)][0].detach())
+            if self.policy_mode == "bayesian":
+                prob = 1.0
+            else:
+                prob = float(
+                    probs[(plugin_ids == pid).nonzero(as_tuple=False)][0].detach()
+                )
             self.trajectory.log(pid, reward, prob, prob)
 
         if selected:
             state = e_a_t.unsqueeze(0)
             act = torch.tensor([PLUGIN_ID_REGISTRY[list(selected.keys())[0]]])
             ret = torch.tensor([reward])
-            self.agent.step(state, act, ret)
+            if self.policy_mode == "policy-gradient":
+                self.agent.step(state, act, ret)
+            else:
+                phi = e_t[(plugin_ids == act[0]).nonzero(as_tuple=False)[0]]
+                if self.bayesian is not None:
+                    self.bayesian.update(int(act[0].item()), phi, float(reward))
             self.agent.lambda_updates(act)
 
         act_vec = torch.zeros(len(PLUGIN_ID_REGISTRY), dtype=torch.float32)
@@ -888,6 +928,7 @@ __all__ = [
     "LAMBDA_LR",
     "CADENCE",
     "PHASE_COUNT",
+    "POLICY_MODE",
     "STEP_COUNTER",
     "advance_step",
     "LAST_STATE_CHANGE",
