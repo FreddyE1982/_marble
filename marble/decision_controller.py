@@ -619,12 +619,10 @@ def decide_actions(
     for name, action in ordered:
         base_cost = float(h_t.get(name, {}).get("cost", get_plugin_cost(name)))
         pen = penalty(name)
-        cost = base_cost + pen
-        if contrib_scores:
-            cost -= float(contrib_scores.get(name, 0.0))
+        real_cost = base_cost + pen
         if not check_throughput(name, usage, CAPACITY_LIMITS):
             continue
-        if not check_budget(name, cost, remaining, running_costs, BUDGET_LIMIT):
+        if not check_budget(name, real_cost, remaining, running_costs, BUDGET_LIMIT):
             continue
         if not check_incompatibility(name, active, INCOMPATIBILITY_SETS):
             continue
@@ -639,10 +637,10 @@ def decide_actions(
         selected[name] = action
         active.add(name)
         usage[name] = usage.get(name, 0) + 1
-        running_costs[name] = running_costs.get(name, 0.0) + cost
+        running_costs[name] = running_costs.get(name, 0.0) + real_cost
         if cost_recorder is not None:
-            cost_recorder[name] = cost
-        remaining -= cost
+            cost_recorder[name] = real_cost
+        remaining = max(0.0, remaining - real_cost)
         if idx is not None:
             action_vec[idx] = 1.0
         if remaining <= 0:
