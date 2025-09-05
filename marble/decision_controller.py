@@ -13,6 +13,7 @@ from __future__ import annotations
 import importlib
 import os
 import time
+import math
 from typing import Any, Dict, Iterable, List, Set
 from collections import deque
 
@@ -705,6 +706,7 @@ class DecisionController:
         # inspect them even before the first decision step has been executed.
         # ``decide`` updates this mapping in-place when new metrics arrive.
         self.last_metrics: Dict[str, float] = {}
+        self.divergence: bool = False
         # Logs used by the contribution regressor. Each entry in
         # ``_activation_log`` is a binary vector of length equal to the number
         # of registered plugins indicating which plugins were active during a
@@ -767,6 +769,26 @@ class DecisionController:
         # triggering reward shaping on placeholder zeros.
         metrics = {**watch_vals, **(metrics or {})}
         self.last_metrics = metrics
+
+        def _has_invalid(d: Dict[str, Any]) -> bool:
+            for v in d.values():
+                if isinstance(v, float) and (math.isnan(v) or math.isinf(v)):
+                    return True
+            return False
+
+        self.divergence = False
+        if _has_invalid(metrics):
+            self.divergence = True
+        else:
+            for info in h_t.values():
+                if _has_invalid(info):
+                    self.divergence = True
+                    break
+        if self.divergence:
+            try:
+                REPORTER.item[("reward_penalty", "decision_controller")] = math.inf
+            except Exception:
+                pass
 
         plugin_names = list(h_t.keys())
         ready = set(PLUGIN_GRAPH.recommend_next_plugin(self._last_phase))
@@ -878,7 +900,7 @@ class DecisionController:
         self._prev_action_mask = action_mask
 
         reward = 0.0
-        if metrics:
+        if metrics or self.divergence:
             self._metric_window.append(metrics)
             window = list(self._metric_window)
             reward, _ = self.reward_shaper.update(
@@ -887,6 +909,7 @@ class DecisionController:
                 delta_mask,
                 h_t,
                 INCOMPATIBILITY_SETS,
+                force_divergence=self.divergence,
             )
 
         probs = torch.sigmoid(logits)
