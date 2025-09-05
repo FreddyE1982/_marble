@@ -1,4 +1,5 @@
 2025-09-05
+- Load plugins in deterministic order and document that plugin IDs remain stable when the set of plugin files is unchanged.
 - Use a bounded budget when `config.yaml` is absent or invalid and expose `BUDGET_LIMIT` at the package root.
 
 2025-09-19

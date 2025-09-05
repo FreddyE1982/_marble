@@ -1,10 +1,12 @@
 """Plugin package auto-loader with automatic registration.
 
 All modules inside this package are imported and inspected for plugin
-classes. Any class whose name ends with ``Plugin`` or ``Routine`` is
+classes. Modules are processed in name-sorted order so that registration is
+deterministic. Any class whose name ends with ``Plugin`` or ``Routine`` is
 registered automatically based on the module's name. This means dropping a
 new module into :mod:`marble.plugins` immediately exposes the plugin without
-any manual ``register_*`` calls.
+any manual ``register_*`` calls.  As long as the set of plugin files remains
+unchanged, every plugin retains the same numeric identifier across runs.
 """
 
 from __future__ import annotations
@@ -51,7 +53,7 @@ def _find_plugin_class(module: Any) -> Optional[Type[Any]]:
 
 __all__: List[str] = []
 
-for mod in pkgutil.iter_modules(__path__):
+for mod in sorted(pkgutil.iter_modules(__path__), key=lambda m: m.name):
     if mod.name.startswith("_"):
         continue
     module = importlib.import_module(f"{__name__}.{mod.name}")

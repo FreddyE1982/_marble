@@ -178,6 +178,7 @@ Packaging and Layout
   - The default `BaseNeuroplasticityPlugin` resides in `marble/plugins/neuroplasticity_base.py` and self-registers under type name `base`.
   - Advanced neuroplasticity plugins (`synapse_scaler`, `random_pruner`, `bias_shift`, `connection_rewire`, `spectral_normalizer`) explore unconventional growth, pruning, and rewiring strategies. Each lives in `marble/plugins/` and exposes its tunables via `expose_learnable_params`.
   - Wanderer and brain-training plugin implementations (e.g., L2 penalty, curriculum, warmup-decay) are also hosted in their own modules under `marble/plugins/`.
+  - Plugin IDs are allocated by scanning the `marble/plugins` package in name-sorted order, guaranteeing deterministic identifiers as long as the set of plugin files remains unchanged.
 
 Operational Policy Update
 
