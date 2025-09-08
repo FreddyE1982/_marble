@@ -592,7 +592,7 @@ def decide_actions(
 
     now = time.time()
 
-    plugin_list = list(all_plugins or x_t.keys())
+    plugin_list = sorted(all_plugins or x_t.keys())
     name_to_idx = {n: i for i, n in enumerate(plugin_list)}
     action_vec = [0.0] * len(plugin_list)
 

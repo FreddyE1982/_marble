@@ -20,8 +20,8 @@ decision_controller:
   watch_variables: []  # module.variable paths to observe
   policy_mode: policy-gradient  # 'policy-gradient' or 'bayesian'
   linear_constraints:
-    A: []  # constraint matrix for actions
-    b: []  # upper bounds for linear constraints
+    A: []  # constraint matrix; columns follow sorted plugin names
+    b: []  # upper bounds paired with rows in A
 max_flat_steps: 5  # consecutive zero-delta steps before pruning/connection
 auto_scale_targets: false  # scale tiny targets to match output magnitude
 auto_max_steps_interval: 10  # recompute wanderer max_steps every N datapairs
