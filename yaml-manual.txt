@@ -55,12 +55,19 @@
 
 ## Decision Controller Settings
 
-- decision_controller.budget (float, default: 10.0)
+- decision_controller.budget (float | null, default: null)
   Maximum cumulative cost allowed for plugin actions during a single decision
-  step. Actions exceeding the remaining budget are discarded starting with the
-  highest cost. The controller recomputes plugin costs on every decision from
-  the provided ``h_t[name]['cost']`` values, and the same limit normalises the
-  soft budget penalty used by the decision controller's policy-gradient learner.
+  step. When set to ``null`` the controller infers the limit automatically from
+  observed plugin costs during a warmup phase.
+- decision_controller.warmup_steps (int, default: 10)
+  Number of initial steps executed without a budget limit to measure typical
+  plugin costs. Must be at least 1.
+- decision_controller.safety_factor (float, default: 1.2)
+  Multiplier applied to the measured average cost when determining the budget
+  in auto-mode. Values above ``1`` provide extra slack.
+- decision_controller.recalc_interval (int, default: 100)
+  Interval in steps after which the controller recalculates the budget from the
+  recent average cost. A drift greater than 20% triggers an earlier update.
 - decision_controller.contribution_l1 (float, default: 0.01)
   L1 penalty strength applied when training the plugin contribution regressor.
   Higher values yield sparser contribution weights.

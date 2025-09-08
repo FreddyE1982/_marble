@@ -112,8 +112,9 @@ def _load_auto_cost_profile() -> bool:
         return False
 
 
-def _load_budget() -> float:
-    """Load budget limit from ``config.yaml``; default to ``10.0``."""
+def _load_budget() -> tuple[float, bool]:
+    """Return configured budget and whether auto-mode is requested."""
+
     base = os.path.dirname(os.path.dirname(__file__))
     cfg: Dict[str, Dict[str, Any]] = {}
     try:
@@ -134,16 +135,87 @@ def _load_budget() -> float:
                     except Exception:
                         cfg[section][k.strip()] = v.strip()
     except Exception:
-        return 10.0
+        return 10.0, False
     dc = cfg.get("decision_controller", {})
+    val = dc.get("budget", 10.0)
+    if val is None:
+        return float("inf"), True
     try:
-        return float(dc.get("budget", 10.0))
+        return float(val), False
     except Exception:
-        return 10.0
+        return 10.0, False
 
 
 AUTO_COST_PROFILE = _load_auto_cost_profile()
-BUDGET_LIMIT = _load_budget()
+BUDGET_LIMIT, _AUTO_BUDGET_DEFAULT = _load_budget()
+
+
+def _load_warmup_steps() -> int:
+    """Load number of warmup steps for auto-budgeting."""
+
+    base = os.path.dirname(os.path.dirname(__file__))
+    cfg: Dict[str, Dict[str, Any]] = {}
+    try:
+        with open(os.path.join(base, "config.yaml"), "r", encoding="utf-8") as fh:
+            section: str | None = None
+            for raw in fh:
+                line = raw.split("#", 1)[0].rstrip()
+                if not line:
+                    continue
+                if not line.startswith(" ") and line.endswith(":"):
+                    section = line[:-1].strip()
+                    cfg[section] = {}
+                    continue
+                if section and ":" in line:
+                    k, v = line.split(":", 1)
+                    try:
+                        cfg[section][k.strip()] = float(v.strip())
+                    except Exception:
+                        cfg[section][k.strip()] = v.strip()
+    except Exception:
+        return 10
+    dc = cfg.get("decision_controller", {})
+    try:
+        return max(1, int(dc.get("warmup_steps", 10)))
+    except Exception:
+        return 10
+
+
+def _load_safety_factor() -> float:
+    """Load safety factor applied to inferred budget."""
+
+    base = os.path.dirname(os.path.dirname(__file__))
+    try:
+        with open(os.path.join(base, "config.yaml"), "r", encoding="utf-8") as fh:
+            cfg = yaml.safe_load(fh) or {}
+    except Exception:
+        return 1.2
+    dc = cfg.get("decision_controller", {})
+    try:
+        return float(dc.get("safety_factor", 1.2))
+    except Exception:
+        return 1.2
+
+
+def _load_recalc_interval() -> int:
+    """Load interval in steps for budget recalculation."""
+
+    base = os.path.dirname(os.path.dirname(__file__))
+    try:
+        with open(os.path.join(base, "config.yaml"), "r", encoding="utf-8") as fh:
+            cfg = yaml.safe_load(fh) or {}
+    except Exception:
+        return 100
+    dc = cfg.get("decision_controller", {})
+    try:
+        return max(1, int(dc.get("recalc_interval", 100)))
+    except Exception:
+        return 100
+
+
+WARMUP_STEPS = _load_warmup_steps()
+SAFETY_FACTOR = _load_safety_factor()
+RECALC_INTERVAL = _load_recalc_interval()
 
 # Cache of most recently observed per-plugin costs so that missing
 # ``h_t[name]['cost']`` entries can be populated on subsequent calls.
@@ -721,6 +793,10 @@ class DecisionController:
         watch_metrics: Iterable[str] | None = None,
         watch_variables: Iterable[str] | None = None,
         policy_mode: str = POLICY_MODE,
+        budget: float | None = None if _AUTO_BUDGET_DEFAULT else BUDGET_LIMIT,
+        warmup_steps: int = WARMUP_STEPS,
+        safety_factor: float = SAFETY_FACTOR,
+        recalc_interval: int = RECALC_INTERVAL,
     ) -> None:
         if encoder is None:
             encoder = PluginEncoder(len(PLUGIN_ID_REGISTRY))
@@ -735,6 +811,20 @@ class DecisionController:
         self.dwell_threshold = float(dwell_threshold)
         if AUTO_COST_PROFILE:
             _pcp.enable()
+        self.auto_budget = budget is None
+        self.warmup_steps = int(warmup_steps)
+        self.safety_factor = float(safety_factor)
+        self.recalc_interval = max(1, int(recalc_interval))
+        self._budget_sum = 0.0
+        self._budget_count = 0
+        self._warmup_done = False
+        if self.auto_budget:
+            globals()["BUDGET_LIMIT"] = float("inf")
+            self.budget = float("inf")
+        else:
+            self.budget = float(budget)
+            globals()["BUDGET_LIMIT"] = self.budget
+            self._warmup_done = True
         feat_dim = (
             self.encoder.embedding.embedding_dim
             + self.encoder.ctx_rnn.hidden_size
@@ -857,6 +947,31 @@ class DecisionController:
             except Exception:
                 continue
         return observed
+
+    # --------------------------------------------------------------
+    def _update_budget(self, step_cost: float) -> None:
+        """Update the dynamic budget based on observed ``step_cost``."""
+
+        if not self.auto_budget:
+            return
+        self._budget_sum += float(step_cost)
+        self._budget_count += 1
+        if not self._warmup_done:
+            if self._budget_count >= self.warmup_steps:
+                avg = self._budget_sum / self._budget_count
+                self.budget = avg * self.safety_factor
+                globals()["BUDGET_LIMIT"] = self.budget
+                self._budget_sum = 0.0
+                self._budget_count = 0
+                self._warmup_done = True
+            return
+        avg = self._budget_sum / self._budget_count
+        drift = abs(avg - self.budget) / max(self.budget, 1e-6)
+        if drift > 0.2 or self._budget_count >= self.recalc_interval:
+            self.budget = avg * self.safety_factor
+            globals()["BUDGET_LIMIT"] = self.budget
+            self._budget_sum = 0.0
+            self._budget_count = 0
 
     # --------------------------------------------------------------
     def decide(
@@ -1068,6 +1183,9 @@ class DecisionController:
             self._last_phase = next(iter(selected))
         else:
             self._last_phase = None
+
+        step_cost = sum(float(info.get("cost", 0.0)) for info in h_t.values())
+        self._update_budget(step_cost)
 
         action_mask = {
             n: 1 if selected.get(n, "off") != "off" else 0 for n in plugin_names
