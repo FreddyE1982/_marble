@@ -127,6 +127,10 @@ def _load_budget() -> float:
 
 BUDGET_LIMIT = _load_budget()
 
+# Cache of most recently observed per-plugin costs so that missing
+# ``h_t[name]['cost']`` entries can be populated on subsequent calls.
+PLUGIN_COST_CACHE: Dict[str, float] = {}
+
 
 def _load_l1_penalty() -> float:
     """Load L1 penalty for contribution regressor from ``config.yaml``."""
@@ -603,6 +607,18 @@ def decide_actions(
 
     now = time.time()
 
+    # Ensure all candidate actions carry an explicit cost value. When the
+    # caller omits ``h_t[name]['cost']`` we fall back to the plugin's intrinsic
+    # cost and store it in ``PLUGIN_COST_CACHE`` for future decisions.
+    for name in x_t:
+        info = h_t.setdefault(name, {})
+        if "cost" not in info:
+            c = PLUGIN_COST_CACHE.get(name)
+            if c is None:
+                c = get_plugin_cost(name)
+            info["cost"] = c
+            PLUGIN_COST_CACHE[name] = c
+
     plugin_list = sorted(all_plugins or x_t.keys())
     name_to_idx = {n: i for i, n in enumerate(plugin_list)}
     action_vec = [0.0] * len(plugin_list)
@@ -656,6 +672,9 @@ def decide_actions(
         running_costs[name] = running_costs.get(name, 0.0) + real_cost
         if cost_recorder is not None:
             cost_recorder[name] = real_cost
+        # Record the actual cost in the cache so subsequent calls have
+        # up-to-date values even if the caller omits them.
+        PLUGIN_COST_CACHE[name] = real_cost
         remaining = max(0.0, remaining - real_cost)
         if idx is not None:
             action_vec[idx] = 1.0
