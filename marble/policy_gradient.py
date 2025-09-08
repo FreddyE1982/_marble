@@ -130,11 +130,12 @@ class PolicyGradientAgent:
         with torch.no_grad():
             for j, g in enumerate(self.constraints):
                 g_val = g(actions).detach().to("cpu").mean().item()
+                violation = max(0.0, g_val)
                 self._g_count[j] += 1
                 count = self._g_count[j]
-                avg = self._g_avg[j] + (g_val - self._g_avg[j]) / count
+                avg = self._g_avg[j] + (violation - self._g_avg[j]) / count
                 self._g_avg[j] = avg
-                new_lam = self.lambdas[j] + self.lambda_lr * avg
+                new_lam = self.lambdas[j] + self.lambda_lr * violation
                 self.lambdas[j] = max(0.0, new_lam)
 
 
