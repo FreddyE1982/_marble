@@ -59,6 +59,26 @@ class TestDecisionController(unittest.TestCase):
         print("second selection under budget after cost change:", sel2)
         self.assertEqual(sel2, {})
 
+    def test_dynamic_cost_vector(self):
+        dc.LAST_STATE_CHANGE.clear()
+        dc.TAU_THRESHOLD = 0.0
+        dc.BUDGET_LIMIT = 10.0
+        name = list(PLUGIN_ID_REGISTRY.keys())[0]
+        idx = PLUGIN_ID_REGISTRY[name]
+        controller = dc.DecisionController(top_k=1)
+        ctx = torch.zeros(1, 1, 16)
+        h1 = {name: {"cost": 4.0}}
+        controller.decide(h1, ctx, metrics={"latency": 1, "throughput": 1, "cost": 1})
+        g_budget = controller.agent.constraints[0]
+        c1 = float(g_budget(torch.tensor([idx]))[0])
+        h2 = {name: {"cost": 1.0}}
+        controller.decide(h2, ctx, metrics={"latency": 1, "throughput": 1, "cost": 1})
+        c2 = float(g_budget(torch.tensor([idx]))[0])
+        print("budget penalties:", c1, c2)
+        self.assertAlmostEqual(c1, 4.0 / dc.BUDGET_LIMIT)
+        self.assertAlmostEqual(c2, 1.0 / dc.BUDGET_LIMIT)
+        dc.PLUGIN_GRAPH.reset()
+
     def test_tau_penalty(self):
         dc.BUDGET_LIMIT = 5.0
         dc.TAU_THRESHOLD = 5.0
