@@ -18,9 +18,11 @@ class TestHistoryEncoderState(unittest.TestCase):
         print("h1 norm:", float(h1.norm()), "h2 norm:", float(h2.norm()))
         print("metric window after no metrics:", list(controller._metric_window))
         print("last metrics after no metrics:", controller.last_metrics)
+        print("reward log after no metrics:", controller._reward_log)
         self.assertFalse(torch.allclose(h1, h2))
         self.assertEqual(len(controller._metric_window), 0)
         self.assertEqual(controller.last_metrics, {})
+        self.assertEqual(len(controller._reward_log), 0)
 
 
 if __name__ == "__main__":  # pragma: no cover

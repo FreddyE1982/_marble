@@ -982,6 +982,7 @@ class DecisionController:
         self._prev_action_mask = action_mask
 
         reward = 0.0
+        log_reward = False
         if metrics is not None or self.divergence:
             if metrics is not None:
                 self._metric_window.append(metrics)
@@ -994,6 +995,7 @@ class DecisionController:
                 INCOMPATIBILITY_SETS,
                 force_divergence=self.divergence,
             )
+            log_reward = True
 
         now = time.time()
         if selected:
@@ -1003,30 +1005,32 @@ class DecisionController:
         update_dwell_counters(selected.keys(), plugin_names)
 
         probs = torch.sigmoid(logits)
-        for name in selected:
-            pid = PLUGIN_ID_REGISTRY.get(name, 0)
-            if self.policy_mode == "bayesian":
-                prob = 1.0
-            else:
-                prob = float(
-                    probs[(plugin_ids == pid).nonzero(as_tuple=False)][0].detach()
-                )
-            self.trajectory.log(pid, reward, prob, prob)
+        if selected and log_reward:
+            for name in selected:
+                pid = PLUGIN_ID_REGISTRY.get(name, 0)
+                if self.policy_mode == "bayesian":
+                    prob = 1.0
+                else:
+                    prob = float(
+                        probs[(plugin_ids == pid).nonzero(as_tuple=False)][0].detach()
+                    )
+                self.trajectory.log(pid, reward, prob, prob)
 
         if selected:
             acts = torch.tensor(
                 [PLUGIN_ID_REGISTRY[n] for n in selected.keys()],
                 dtype=torch.long,
             )
-            state = e_a_t.unsqueeze(0).repeat(len(acts), 1)
-            rets = torch.full((len(acts),), reward, dtype=state.dtype)
-            if self.policy_mode == "policy-gradient":
-                self.agent.step(state, acts, rets)
-            else:
-                for pid in acts.tolist():
-                    phi = e_t[(plugin_ids == pid).nonzero(as_tuple=False)[0]]
-                    if self.bayesian is not None:
-                        self.bayesian.update(pid, phi, float(reward))
+            if log_reward:
+                state = e_a_t.unsqueeze(0).repeat(len(acts), 1)
+                rets = torch.full((len(acts),), reward, dtype=state.dtype)
+                if self.policy_mode == "policy-gradient":
+                    self.agent.step(state, acts, rets)
+                else:
+                    for pid in acts.tolist():
+                        phi = e_t[(plugin_ids == pid).nonzero(as_tuple=False)[0]]
+                        if self.bayesian is not None:
+                            self.bayesian.update(pid, phi, float(reward))
             self.agent.update_lambdas(acts)
 
         act_vec = torch.zeros(len(PLUGIN_ID_REGISTRY), dtype=torch.float32)
@@ -1034,10 +1038,11 @@ class DecisionController:
             idx = PLUGIN_ID_REGISTRY.get(name)
             if idx is not None:
                 act_vec[idx] = 1.0 if name in selected else 0.0
-        self._activation_log.append(act_vec)
-        self._reward_log.append(float(reward))
+        if log_reward:
+            self._activation_log.append(act_vec)
+            self._reward_log.append(float(reward))
+            self._prev_reward = float(reward)
         self._prev_action_vec = act_vec
-        self._prev_reward = float(reward)
         if isinstance(self._h_t, tuple):
             self._h_t = tuple(t.detach() for t in self._h_t)
         else:
