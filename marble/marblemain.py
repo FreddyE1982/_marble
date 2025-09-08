@@ -29,6 +29,7 @@ import hashlib
 import importlib
 import itertools
 import gc
+from . import plugin_cost_profiler as _pcp
 from .learnable_param import LearnableParam
 try:
     import msvcrt  # type: ignore
@@ -2160,10 +2161,16 @@ def _normalize_walk_overrides(d: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     return out
 
 
-def _call_safely(fn: Optional[Callable], *args, **kwargs):
+def _call_safely(fn: Optional[Callable], *args, plugin_name: Optional[str] = None, **kwargs):
     if fn is None:
         return None
     try:
+        if plugin_name is not None:
+            start = time.perf_counter()
+            try:
+                return fn(*args, **kwargs)
+            finally:
+                _pcp.record(plugin_name, time.perf_counter() - start)
         return fn(*args, **kwargs)
     except Exception:
         return None
@@ -2176,10 +2183,23 @@ def _maybe_report(group: str, item: str, data: Any, *subs: str) -> None:
         pass
 
 
-def _select_start(brain: "Brain", wanderer: "Wanderer", i: int, plugin: Optional[Any], start_selector: Optional[Callable[["Brain"], Optional["Neuron"]]]):
+def _select_start(
+    brain: "Brain",
+    wanderer: "Wanderer",
+    i: int,
+    plugin: Optional[Any],
+    start_selector: Optional[Callable[["Brain"], Optional["Neuron"]]],
+    plugin_name: Optional[str] = None,
+):
     # Plugin choice first
     if plugin is not None and hasattr(plugin, "choose_start"):
-        res = _call_safely(getattr(plugin, "choose_start"), brain, wanderer, i)
+        res = _call_safely(
+            getattr(plugin, "choose_start"),
+            brain,
+            wanderer,
+            i,
+            plugin_name=plugin_name,
+        )
         if res is not None:
             return res
     # Fallback to start_selector
@@ -2188,29 +2208,79 @@ def _select_start(brain: "Brain", wanderer: "Wanderer", i: int, plugin: Optional
     return None
 
 
-def _before_walk_overrides(plugin: Optional[Any], brain: "Brain", wanderer: "Wanderer", i: int) -> Dict[str, Any]:
+def _before_walk_overrides(
+    plugin: Optional[Any],
+    brain: "Brain",
+    wanderer: "Wanderer",
+    i: int,
+    plugin_name: Optional[str] = None,
+) -> Dict[str, Any]:
     if plugin is not None and hasattr(plugin, "before_walk"):
-        res = _call_safely(getattr(plugin, "before_walk"), brain, wanderer, i)
+        res = _call_safely(
+            getattr(plugin, "before_walk"),
+            brain,
+            wanderer,
+            i,
+            plugin_name=plugin_name,
+        )
         return _normalize_walk_overrides(res)
     return {}
 
 
-def _after_walk(plugin: Optional[Any], brain: "Brain", wanderer: "Wanderer", i: int, stats: Dict[str, Any]) -> bool:
+def _after_walk(
+    plugin: Optional[Any],
+    brain: "Brain",
+    wanderer: "Wanderer",
+    i: int,
+    stats: Dict[str, Any],
+    plugin_name: Optional[str] = None,
+) -> bool:
     if plugin is not None and hasattr(plugin, "after_walk"):
-        res = _call_safely(getattr(plugin, "after_walk"), brain, wanderer, i, stats)
+        res = _call_safely(
+            getattr(plugin, "after_walk"),
+            brain,
+            wanderer,
+            i,
+            stats,
+            plugin_name=plugin_name,
+        )
         if isinstance(res, dict) and res.get("stop"):
             return True
     return False
 
 
-def _on_init_train(plugin: Optional[Any], brain: "Brain", wanderer: "Wanderer", config: Dict[str, Any]) -> None:
+def _on_init_train(
+    plugin: Optional[Any],
+    brain: "Brain",
+    wanderer: "Wanderer",
+    config: Dict[str, Any],
+    plugin_name: Optional[str] = None,
+) -> None:
     if plugin is not None and hasattr(plugin, "on_init"):
-        _call_safely(getattr(plugin, "on_init"), brain, wanderer, config)
+        _call_safely(
+            getattr(plugin, "on_init"),
+            brain,
+            wanderer,
+            config,
+            plugin_name=plugin_name,
+        )
 
 
-def _on_end_train(plugin: Optional[Any], brain: "Brain", wanderer: "Wanderer", history: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+def _on_end_train(
+    plugin: Optional[Any],
+    brain: "Brain",
+    wanderer: "Wanderer",
+    history: List[Dict[str, Any]],
+    plugin_name: Optional[str] = None,
+) -> Optional[Dict[str, Any]]:
     if plugin is not None and hasattr(plugin, "on_end"):
-        res = _call_safely(getattr(plugin, "on_end"), brain, wanderer, history)
+        res = _call_safely(
+            getattr(plugin, "on_end"),
+            brain,
+            wanderer,
+            history,
+            plugin_name=plugin_name,
+        )
         return res if isinstance(res, dict) else None
     return None
 
@@ -2227,47 +2297,47 @@ def _brain_train(
     type_name: Optional[str],
 ) -> Dict[str, Any]:
     # Resolve stacked brain-train plugins (comma-separated str or list)
-    plugins: List[Any] = []
+    plugins: List[Tuple[str, Any]] = []
     if isinstance(type_name, str):
         names = [s.strip() for s in type_name.split(",") if s.strip()]
         for nm in names:
             p = _BRAIN_TRAIN_TYPES.get(nm)
             if p is not None:
-                plugins.append(p)
+                plugins.append((nm, p))
     elif isinstance(type_name, (list, tuple)):
         for nm in type_name:
             p = _BRAIN_TRAIN_TYPES.get(str(nm))
             if p is not None:
-                plugins.append(p)
+                plugins.append((str(nm), p))
     config = {
         "num_walks": num_walks,
         "max_steps": max_steps,
         "lr": lr,
         "type_name": type_name,
     }
-    for p in plugins:
-        _on_init_train(p, brain, wanderer, config)
+    for nm, p in plugins:
+        _on_init_train(p, brain, wanderer, config, plugin_name=nm)
     history: List[Dict[str, Any]] = []
     for i in range(num_walks):
         # Merge overrides from all plugins; later plugins win on conflicts
         overrides: Dict[str, Any] = {}
-        for p in plugins:
-            ovr = _before_walk_overrides(p, brain, wanderer, i)
+        for nm, p in plugins:
+            ovr = _before_walk_overrides(p, brain, wanderer, i, plugin_name=nm)
             overrides.update(ovr)
         ms = int(overrides.get("max_steps", max_steps))
         lr_i = float(overrides.get("lr", lr))
         # Apply additive choose_start: last non-None from plugins wins; else external selector
         sel = None
-        for p in plugins:
-            s = _select_start(brain, wanderer, i, p, None)
+        for nm, p in plugins:
+            s = _select_start(brain, wanderer, i, p, None, plugin_name=nm)
             if s is not None:
                 sel = s
         start = sel if sel is not None else _select_start(brain, wanderer, i, None, start_selector)
         stats = wanderer.walk(max_steps=ms, start=start, lr=lr_i)
         history.append(stats)
         stop = False
-        for p in plugins:
-            if _after_walk(p, brain, wanderer, i, stats):
+        for nm, p in plugins:
+            if _after_walk(p, brain, wanderer, i, stats, plugin_name=nm):
                 stop = True
         _maybe_report("training", f"brain_walk_{i}", {"loss": stats.get("loss", 0.0), "steps": stats.get("steps", 0)}, "brain")
         if callback is not None:
@@ -2277,8 +2347,8 @@ def _brain_train(
     final_loss = history[-1]["loss"] if history else 0.0
     # Merge extras; later plugins win on conflicts
     result = {"history": history, "final_loss": final_loss}
-    for p in plugins:
-        extra = _on_end_train(p, brain, wanderer, history)
+    for nm, p in plugins:
+        extra = _on_end_train(p, brain, wanderer, history, plugin_name=nm)
         result = _merge_dict_safe(result, extra)
     _maybe_report("training", "brain_summary", {"num_walks": num_walks, "final_loss": final_loss}, "brain")
     return result
@@ -2732,18 +2802,18 @@ def run_training_with_datapairs(
         pass
 
     # Resolve Brain-train plugins (comma-separated or list) and initialize
-    train_plugins: List[Any] = []
+    train_plugins: List[Tuple[str, Any]] = []
     if isinstance(train_type, str):
         names = [s.strip() for s in train_type.split(",") if s.strip()]
         for nm in names:
             p = _BRAIN_TRAIN_TYPES.get(nm)
             if p is not None:
-                train_plugins.append(p)
+                train_plugins.append((nm, p))
     elif isinstance(train_type, (list, tuple)):
         for nm in train_type:
             p = _BRAIN_TRAIN_TYPES.get(str(nm))
             if p is not None:
-                train_plugins.append(p)
+                train_plugins.append((str(nm), p))
 
     if auto_max_steps_every is None:
         auto_max_steps_every = _auto_max_steps_interval()
@@ -2759,8 +2829,8 @@ def run_training_with_datapairs(
         "lr": lr,
         "type_name": train_type,
     }
-    for p in train_plugins:
-        _on_init_train(p, brain, w, cfg)
+    for nm, p in train_plugins:
+        _on_init_train(p, brain, w, cfg, plugin_name=nm)
 
     batch: List[DataPair] = []
     batch_index = 0
@@ -2810,8 +2880,8 @@ def run_training_with_datapairs(
                         start = brain.add_neuron(idxn, tensor=0.0)
                 except Exception:
                     start = None
-        for p in train_plugins:
-            s = _select_start(brain, w, idx, p, None)
+        for nm, p in train_plugins:
+            s = _select_start(brain, w, idx, p, None, plugin_name=nm)
             if s is not None:
                 start = s
         if start is not None:
@@ -2820,8 +2890,8 @@ def run_training_with_datapairs(
             start = create_start_neuron(brain, enc_left)
 
         overrides: Dict[str, Any] = {}
-        for p in train_plugins:
-            ovr = _before_walk_overrides(p, brain, w, idx)
+        for nm, p in train_plugins:
+            ovr = _before_walk_overrides(p, brain, w, idx, plugin_name=nm)
             overrides.update(ovr)
         ms = int(overrides.get("max_steps", max_steps_cur))
         lr_i = float(overrides.get("lr", lr))
@@ -2834,8 +2904,8 @@ def run_training_with_datapairs(
         stats["delta"] = delta
         stats["plugins"] = [p.__class__.__name__ for p in getattr(w, "_wplugins", []) or []]
         history.append(stats)
-        for p in train_plugins:
-            _after_walk(p, brain, w, idx, stats)
+        for nm, p in train_plugins:
+            _after_walk(p, brain, w, idx, stats, plugin_name=nm)
         count += len(items)
         try:
             report(
@@ -2870,8 +2940,8 @@ def run_training_with_datapairs(
 
     final_loss = history[-1]["loss"] if history else 0.0
     out = {"history": history, "final_loss": final_loss, "count": count}
-    for p in train_plugins:
-        extra = _on_end_train(p, brain, w, history)
+    for nm, p in train_plugins:
+        extra = _on_end_train(p, brain, w, history, plugin_name=nm)
         out = _merge_dict_safe(out, extra)
     try:
         report("training", "datapair_summary", {"count": count, "final_loss": final_loss}, "datapair")
