@@ -53,6 +53,26 @@ class TestPolicyGradient(unittest.TestCase):
         print("lambda after updates", first, second)
         self.assertGreater(second, first)
 
+    def test_update_lambdas_stay_constant_when_satisfied(self) -> None:
+        torch.manual_seed(0)
+        g1 = lambda a: -torch.ones_like(a, dtype=torch.float)
+        agent = PolicyGradientAgent(
+            state_dim=1,
+            action_dim=2,
+            lambdas=[0.5],
+            constraints=[g1],
+            lambda_lr=0.5,
+        )
+        actions = torch.tensor([0])
+        before = agent.lambdas[0]
+        agent.update_lambdas(actions)
+        first = agent.lambdas[0]
+        agent.update_lambdas(actions)
+        second = agent.lambdas[0]
+        print("lambda satisfied", before, first, second)
+        self.assertAlmostEqual(first, before)
+        self.assertAlmostEqual(second, before)
+
 
 if __name__ == "__main__":
     unittest.main()
