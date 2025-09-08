@@ -19,6 +19,7 @@ decision_controller:
   watch_metrics: []  # reporter paths to monitor automatically
   watch_variables: []  # module.variable paths to observe
   policy_mode: policy-gradient  # 'policy-gradient' or 'bayesian'
+  auto_cost_profile: false  # profile plugin runtime to infer missing costs
   linear_constraints:
     A: []  # constraint matrix; columns follow sorted plugin names
     b: []  # upper bounds paired with rows in A

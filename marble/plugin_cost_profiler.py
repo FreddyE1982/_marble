@@ -11,6 +11,14 @@ from typing import Dict
 
 _ALPHA = 0.5
 _cost_ema: Dict[str, float] = {}
+_ENABLED = False
+
+
+def enable() -> None:
+    """Activate cost profiling."""
+
+    global _ENABLED
+    _ENABLED = True
 
 
 def record(plugin_name: str, elapsed: float) -> None:
@@ -23,6 +31,9 @@ def record(plugin_name: str, elapsed: float) -> None:
     elapsed:
         Elapsed execution time in seconds.
     """
+
+    if not _ENABLED:
+        return
 
     val = float(elapsed)
     prev = _cost_ema.get(plugin_name)
@@ -48,4 +59,4 @@ def get_cost(plugin_name: str, default: float = float("nan")) -> float:
     return float(_cost_ema.get(plugin_name, default))
 
 
-__all__ = ["record", "get_cost"]
+__all__ = ["record", "get_cost", "enable"]

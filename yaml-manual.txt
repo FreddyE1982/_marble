@@ -100,6 +100,12 @@
   Selects the controller's action-selection algorithm. ``policy-gradient``
   trains a stochastic policy via gradient updates, while ``bayesian`` enables a
   Thompson sampler with per-plugin Gaussian posteriors.
+- decision_controller.auto_cost_profile (bool, default: false)
+  When ``true`` the decision controller activates the plugin cost profiler and
+  refreshes per-plugin cost estimates on every decision. This allows execution
+  times measured at runtime to influence future selections, disabling plugins
+  whose measured cost would exceed the remaining budget. When ``false`` no
+  profiling occurs and static cost hints are used.
 - decision_controller.linear_constraints.A (list[list[float]], default: [])
   Matrix ``A`` defining linear inequality constraints ``A @ a <= b`` applied
   to the binary action vector ``a``. Each row represents one constraint.

@@ -95,6 +95,22 @@ def _load_policy_mode() -> str:
     return str(dc.get("policy_mode", "policy-gradient"))
 
 
+def _load_auto_cost_profile() -> bool:
+    """Return whether plugin cost profiling should be enabled."""
+
+    base = os.path.dirname(os.path.dirname(__file__))
+    try:
+        with open(os.path.join(base, "config.yaml"), "r", encoding="utf-8") as fh:
+            cfg = yaml.safe_load(fh) or {}
+    except Exception:
+        return False
+    dc = cfg.get("decision_controller", {})
+    try:
+        return bool(dc.get("auto_cost_profile", False))
+    except Exception:
+        return False
+
+
 def _load_budget() -> float:
     """Load budget limit from ``config.yaml``; default to ``10.0``."""
     base = os.path.dirname(os.path.dirname(__file__))
@@ -125,6 +141,7 @@ def _load_budget() -> float:
         return 10.0
 
 
+AUTO_COST_PROFILE = _load_auto_cost_profile()
 BUDGET_LIMIT = _load_budget()
 
 # Cache of most recently observed per-plugin costs so that missing
@@ -614,8 +631,12 @@ def decide_actions(
         info = h_t.setdefault(name, {})
         if "cost" not in info:
             c = PLUGIN_COST_CACHE.get(name)
-            if c is None:
+            if c is None or AUTO_COST_PROFILE:
                 c = get_plugin_cost(name)
+            info["cost"] = c
+            PLUGIN_COST_CACHE[name] = c
+        elif AUTO_COST_PROFILE:
+            c = get_plugin_cost(name)
             info["cost"] = c
             PLUGIN_COST_CACHE[name] = c
 
@@ -711,6 +732,8 @@ class DecisionController:
         self.phase_count = max(1, int(phase_count))
         self.policy_mode = policy_mode
         self.dwell_threshold = float(dwell_threshold)
+        if AUTO_COST_PROFILE:
+            _pcp.enable()
         feat_dim = (
             self.encoder.embedding.embedding_dim
             + self.encoder.ctx_rnn.hidden_size

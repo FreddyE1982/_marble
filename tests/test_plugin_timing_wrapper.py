@@ -11,6 +11,7 @@ class PluginTimingWrapperTests(unittest.TestCase):
         importlib.reload(cp)
         importlib.reload(w)
         importlib.reload(p)
+        cp.enable()
 
     def test_method_records_cost(self) -> None:
         plugin = w.WANDERER_TYPES_REGISTRY["wanderalongsynapseweights"]
