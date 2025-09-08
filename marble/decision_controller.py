@@ -852,6 +852,7 @@ class DecisionController:
                     self.divergence = True
                     break
         if self.divergence:
+            self._metric_window = deque(maxlen=self.reward_shaper.window_size)
             try:
                 REPORTER.item[("reward_penalty", "decision_controller")] = math.inf
             except Exception:
@@ -1011,9 +1012,19 @@ class DecisionController:
 
         reward = 0.0
         log_reward = False
+        if metrics is not None and not self.divergence:
+            cleaned: Dict[str, float] = {}
+            for k, v in metrics.items():
+                try:
+                    f = float(v)
+                except Exception:
+                    continue
+                if math.isnan(f) or math.isinf(f):
+                    continue
+                cleaned[k] = f
+            if cleaned:
+                self._metric_window.append(cleaned)
         if metrics is not None or self.divergence:
-            if metrics is not None:
-                self._metric_window.append(metrics)
             window = list(self._metric_window)
             reward, _ = self.reward_shaper.update(
                 window,
