@@ -69,6 +69,27 @@ class TestActionSampler(unittest.TestCase):
         self.assertLessEqual(float(mask[0] + mask[1]), 1.0)
         self.assertTrue(set(mask.tolist()) <= {0.0, 1.0})
 
+    def test_budget_respects_incompatibility(self) -> None:
+        """Lower-ranked valid actions should still be funded.
+
+        Here action 0 and 1 are incompatible. Action 2 is lower ranked but
+        valid. The budget should cover actions 0 and 2, skipping the pruned
+        action 1 without counting its cost.
+        """
+        relaxed = torch.tensor([0.9, 0.8, 0.7])
+        costs = torch.ones(3)
+        incompat = {0: {1}, 1: {0}}
+        from marble.action_sampler import _project_constraints
+
+        mask = _project_constraints(
+            relaxed,
+            costs=costs,
+            budget=2.0,
+            incompatibility=incompat,
+        ).detach()
+        print("mask respecting incompatibility:", mask)
+        self.assertEqual(mask.tolist(), [1.0, 0.0, 1.0])
+
 
 if __name__ == "__main__":  # pragma: no cover
     unittest.main(verbosity=2)
