@@ -57,7 +57,7 @@ def _project_constraints(
             spent = torch.tensor(0.0, device=relaxed.device)
             for idx in order:
                 c = costs[idx]
-                if spent + c <= budget:
+                if hard[idx] > 0 and spent + c <= budget:
                     new_hard[idx] = hard[idx]
                     spent = spent + c
             hard = new_hard
