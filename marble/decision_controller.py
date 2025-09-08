@@ -618,8 +618,13 @@ def decide_actions(
 
     for name, action in ordered:
         base_cost = float(h_t.get(name, {}).get("cost", get_plugin_cost(name)))
+        if contrib_scores:
+            disc_cost = base_cost - float(contrib_scores.get(name, 0.0))
+            disc_cost = max(disc_cost, 0.0)
+        else:
+            disc_cost = base_cost
         pen = penalty(name)
-        real_cost = base_cost + pen
+        real_cost = disc_cost + pen
         if not check_throughput(name, usage, CAPACITY_LIMITS):
             continue
         if not check_budget(name, real_cost, remaining, running_costs, BUDGET_LIMIT):
