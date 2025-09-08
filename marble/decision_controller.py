@@ -739,11 +739,16 @@ class DecisionController:
             ],
             dtype=torch.float32,
         )
-        self.phase_proj = nn.Linear(feat_dim, self.phase_count)
-        self.phase_bias = nn.Linear(
-            self.phase_count, len(PLUGIN_ID_REGISTRY), bias=False
-        )
-        self.reward_phase = nn.Linear(self.phase_count, 6, bias=False)
+        if self.phase_count > 1:
+            self.phase_proj = nn.Linear(feat_dim, self.phase_count)
+            self.phase_bias = nn.Linear(
+                self.phase_count, len(PLUGIN_ID_REGISTRY), bias=False
+            )
+            self.reward_phase = nn.Linear(self.phase_count, 6, bias=False)
+        else:
+            self.phase_proj = None
+            self.phase_bias = None
+            self.reward_phase = None
         self.trajectory = Trajectory()
         self.history: List[Dict[str, Any]] = []
         self.past_actions: List[str] = []
@@ -885,10 +890,15 @@ class DecisionController:
         r_prev = torch.tensor([self._prev_reward], dtype=o_t.dtype, device=o_t.device)
         self._h_t = self.history_encoder(o_t, self._prev_action_vec.to(o_t), r_prev, self._h_t)
         e_a_t = self._h_t[0].squeeze(0)
-        u = torch.softmax(self.phase_proj(e_a_t), dim=-1)
-        phase_logits = self.phase_bias(u)
+        if self.phase_proj is not None and self.phase_bias is not None:
+            u = torch.softmax(self.phase_proj(e_a_t), dim=-1)
+            phase_logits = self.phase_bias(u)
+            mod = self.reward_phase(u) if self.reward_phase is not None else torch.zeros(6, dtype=e_a_t.dtype, device=e_a_t.device)
+        else:
+            u = torch.zeros(1, dtype=e_a_t.dtype, device=e_a_t.device)
+            phase_logits = torch.zeros(len(PLUGIN_ID_REGISTRY), dtype=e_a_t.dtype, device=e_a_t.device)
+            mod = torch.zeros(6, dtype=e_a_t.dtype, device=e_a_t.device)
         logits = compute_logits(e_t, e_a_t) + phase_logits[plugin_ids]
-        mod = self.reward_phase(u)
         for attr, base, m in zip(
             ["w1", "w2", "w3", "w4", "w5", "w6"],
             self._reward_base,
