@@ -532,7 +532,7 @@ def get_plugin_cost(name: str) -> float:
     """Return intrinsic cost for ``name`` by inspecting its plugin module."""
 
     # Prefer dynamic measurements from ``plugin_cost_profiler``.
-    prof_cost = _pcp.get_cost(name, float("nan"))
+    prof_cost = _pcp.get_cost(name)
     if not math.isnan(prof_cost):
         return prof_cost
 

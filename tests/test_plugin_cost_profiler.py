@@ -1,4 +1,5 @@
 import importlib
+import math
 import unittest
 
 from marble import plugin_cost_profiler as cp
@@ -22,6 +23,11 @@ class PluginCostProfilerTests(unittest.TestCase):
         default = cp.get_cost("missing", 1.23)
         print("default cost:", default)
         self.assertEqual(default, 1.23)
+
+    def test_missing_returns_nan(self) -> None:
+        val = cp.get_cost("unknown")
+        print("missing cost:", val)
+        self.assertTrue(math.isnan(val))
 
 
 if __name__ == "__main__":

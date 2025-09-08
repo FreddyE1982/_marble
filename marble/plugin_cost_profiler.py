@@ -32,7 +32,7 @@ def record(plugin_name: str, elapsed: float) -> None:
         _cost_ema[plugin_name] = _ALPHA * val + (1.0 - _ALPHA) * prev
 
 
-def get_cost(plugin_name: str, default: float = 0.0) -> float:
+def get_cost(plugin_name: str, default: float = float("nan")) -> float:
     """Return the current cost estimate for ``plugin_name``.
 
     Parameters
@@ -40,7 +40,9 @@ def get_cost(plugin_name: str, default: float = 0.0) -> float:
     plugin_name:
         Name of the plugin.
     default:
-        Value returned if no cost has been recorded yet.
+        Value returned if no cost has been recorded yet.  Defaults to ``NaN`` so
+        callers can detect whether the cost is unknown and fall back to
+        alternative logic.
     """
 
     return float(_cost_ema.get(plugin_name, default))
