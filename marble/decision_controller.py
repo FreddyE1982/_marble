@@ -1081,7 +1081,11 @@ class DecisionController:
             self._activation_log.append(act_vec)
             self._reward_log.append(float(reward))
             self._prev_reward = float(reward)
-        self._prev_action_vec = act_vec
+            # Only advance the cached action vector when we also log a reward so
+            # that ``_prev_action_vec`` and ``_prev_reward`` always describe the
+            # same decision. Skipping this update keeps the pair aligned when
+            # metrics are missing and no reward is produced.
+            self._prev_action_vec = act_vec
         if isinstance(self._h_t, tuple):
             self._h_t = tuple(t.detach() for t in self._h_t)
         else:
