@@ -121,7 +121,8 @@ class PolicyGradientAgent:
         Each constraint ``g_j`` produces a penalty term given the selected
         ``actions``.  We maintain a running mean of these penalties and adjust
         ``lambda_j`` via ``lambda_j += eta * mean(g_j(a))`` clipped to be
-        non-negative.
+        non-negative.  Multipliers only increase when the violation is
+        positive, preserving the smoothing effect of the running average.
         """
 
         if not self.constraints:
@@ -135,8 +136,9 @@ class PolicyGradientAgent:
                 count = self._g_count[j]
                 avg = self._g_avg[j] + (violation - self._g_avg[j]) / count
                 self._g_avg[j] = avg
-                new_lam = self.lambdas[j] + self.lambda_lr * violation
-                self.lambdas[j] = max(0.0, new_lam)
+                if violation > 0.0:
+                    new_lam = self.lambdas[j] + self.lambda_lr * avg
+                    self.lambdas[j] = max(0.0, new_lam)
 
 
 __all__ = ["PolicyGradientAgent"]
