@@ -11,6 +11,7 @@ class GetPluginCostProfilerTests(unittest.TestCase):
     def setUp(self) -> None:
         importlib.reload(cp)
         sys.modules.pop("marble.plugins.fakeplugin", None)
+        cp.enable()
 
     def test_profiler_priority_and_zero_init(self) -> None:
         mod = types.ModuleType("marble.plugins.fakeplugin")
@@ -23,6 +24,7 @@ class GetPluginCostProfilerTests(unittest.TestCase):
         self.assertEqual(cost, 2.5)
 
         importlib.reload(cp)
+        cp.enable()
         sys.modules["marble.plugins.fakeplugin"] = mod
         cost = get_plugin_cost("fakeplugin")
         stored = cp.get_cost("fakeplugin")

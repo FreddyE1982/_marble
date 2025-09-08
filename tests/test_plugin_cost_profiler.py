@@ -8,6 +8,7 @@ from marble import plugin_cost_profiler as cp
 class PluginCostProfilerTests(unittest.TestCase):
     def setUp(self) -> None:
         importlib.reload(cp)
+        cp.enable()
 
     def test_record_and_get_cost(self) -> None:
         cp.record("test", 10.0)

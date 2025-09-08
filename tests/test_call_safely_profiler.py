@@ -10,6 +10,7 @@ class CallSafelyProfilerTests(unittest.TestCase):
     def setUp(self) -> None:
         importlib.reload(cp)
         importlib.reload(mm)
+        cp.enable()
 
     def test_records_cost_when_plugin_name_provided(self) -> None:
         def dummy() -> None:
