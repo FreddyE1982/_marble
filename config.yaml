@@ -8,7 +8,10 @@ resource_allocator:
 autoplugin:
   decision_interval: 1  # steps between plugin selector decisions
 decision_controller:
-  budget: 10.0  # maximum total cost for selected actions
+  budget: null  # null -> auto-mode
+  warmup_steps: 10
+  safety_factor: 1.2
+  recalc_interval: 100
   contribution_l1: 0.01  # L1 penalty for contribution regressor
   tau_threshold: 1.0  # minimum seconds between state changes before penalty
   cadence: 1  # walk steps between controller decisions
