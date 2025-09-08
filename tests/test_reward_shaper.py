@@ -2,7 +2,8 @@ import unittest
 import torch
 
 from marble.reward_shaper import RewardShaper
-from marble.decision_controller import INCOMPATIBILITY_SETS
+from marble.decision_controller import INCOMPATIBILITY_SETS, DecisionController
+from marble.plugins import PLUGIN_ID_REGISTRY
 
 
 class TestRewardShaper(unittest.TestCase):
@@ -36,6 +37,26 @@ class TestRewardShaper(unittest.TestCase):
         ]
         r, comps = rs.update(window, {}, {}, {})
         self.assertEqual(comps["divergence"], 1.0)
+
+    def test_nan_inf_metrics_recovery(self):
+        dc = DecisionController(top_k=1)
+        name = list(PLUGIN_ID_REGISTRY.keys())[0]
+        h_t = {name: {"cost": 1.0}}
+        ctx = torch.zeros(1, 1, 16)
+
+        dc.decide(h_t, ctx, metrics={"latency": 1.0, "throughput": 1.0, "cost": 1.0})
+        self.assertEqual(len(dc._metric_window), 1)
+
+        dc.decide(
+            h_t,
+            ctx,
+            metrics={"latency": float("nan"), "throughput": float("inf"), "cost": 1.0},
+        )
+        self.assertTrue(dc.divergence)
+        self.assertEqual(len(dc._metric_window), 0)
+
+        dc.decide(h_t, ctx, metrics={"latency": 1.0, "throughput": 1.0, "cost": 1.0})
+        self.assertFalse(dc.divergence)
 
 
 if __name__ == "__main__":  # pragma: no cover
