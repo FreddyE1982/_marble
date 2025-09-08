@@ -92,7 +92,10 @@ def doubly_robust(traj: Trajectory, q_hat: Sequence[float]) -> float:
         lp = traj.logged_probs[t]
         np = traj.new_probs[t]
         w_t = np / lp if lp > 0 else 0.0
-        v_hat = q_hat[t] + w_t * (traj.rewards[t] + v_hat - q_hat[t + 1])
+        # Subtract the step's baseline before applying the importance ratio so
+        # that identical policies with accurate ``q_hat`` do not double-count
+        # future rewards.
+        v_hat = q_hat[t] + w_t * (traj.rewards[t] + v_hat - q_hat[t])
     return float(v_hat)
 
 

@@ -11,7 +11,7 @@ class TestOffPolicy(unittest.TestCase):
         print("weights:", weights)
         v = doubly_robust(traj, [1.5, 0.5, 0.0])
         print("V_hat:", v)
-        self.assertAlmostEqual(v, 4.5, places=6)
+        self.assertAlmostEqual(v, 2.625, places=6)
 
     def test_baseline_stable_with_identical_policies(self):
         traj = Trajectory()
@@ -19,6 +19,16 @@ class TestOffPolicy(unittest.TestCase):
         traj.log(0, 0.0, 0.5, 0.5)
         traj.log(1, 0.0, 0.5, 0.5)
         baseline = [5.0, 3.0, 1.0]
+        v = doubly_robust(traj, baseline)
+        print("baseline:", baseline[-1], "V_hat:", v)
+        self.assertAlmostEqual(v, baseline[-1], places=6)
+
+    def test_no_double_count_with_rewards_and_identical_policies(self):
+        traj = Trajectory()
+        # two steps with rewards, identical probabilities, perfect baseline
+        traj.log(0, 1.0, 0.7, 0.7)
+        traj.log(1, 2.0, 0.3, 0.3)
+        baseline = [3.0, 2.0, 0.0]
         v = doubly_robust(traj, baseline)
         print("baseline:", baseline[0], "V_hat:", v)
         self.assertAlmostEqual(v, baseline[0], places=6)
