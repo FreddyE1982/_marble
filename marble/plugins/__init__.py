@@ -14,6 +14,8 @@ from __future__ import annotations
 import importlib
 import inspect
 import pkgutil
+import time
+from functools import wraps
 from typing import List, Optional, Type, Any
 
 from ..graph import register_neuron_type, register_synapse_type
@@ -22,6 +24,7 @@ from ..selfattention import register_selfattention_type
 from ..marblemain import register_brain_train_type
 from ..buildingblock import register_buildingblock_type
 from ..plugin_graph import PLUGIN_GRAPH
+from .. import plugin_cost_profiler as _pcp
 
 # Global registry assigning a unique numeric ID to every plugin.  The IDs are
 # stable across runs as long as the set of available plugins does not change.
@@ -51,6 +54,34 @@ def _find_plugin_class(module: Any) -> Optional[Type[Any]]:
     return None
 
 
+def _wrap_public_methods(inst: Any, pname: str) -> None:
+    """Wrap public methods of ``inst`` to record execution cost.
+
+    The wrapper measures execution time via :func:`time.perf_counter` and
+    forwards the elapsed duration to :func:`plugin_cost_profiler.record`.
+    Return values and exceptions are propagated unchanged.
+    """
+
+    for attr in dir(inst):
+        if attr.startswith("_"):
+            continue
+        try:
+            meth = getattr(inst, attr)
+        except AttributeError:
+            continue
+        if not callable(meth):
+            continue
+
+        @wraps(meth)
+        def _wrapper(*args, __m=meth, **kwargs):
+            start = time.perf_counter()
+            try:
+                return __m(*args, **kwargs)
+            finally:
+                _pcp.record(pname, time.perf_counter() - start)
+
+        setattr(inst, attr, _wrapper)
+
 __all__: List[str] = []
 
 for mod in sorted(pkgutil.iter_modules(__path__), key=lambda m: m.name):
@@ -69,6 +100,7 @@ for mod in sorted(pkgutil.iter_modules(__path__), key=lambda m: m.name):
         pname = plugin_name or base
         pid = _assign_plugin_id(pname, cls)
         inst = cls()
+        _wrap_public_methods(inst, pname)
         inst.plugin_id = pid
         register_wanderer_type(pname, inst)
     elif name.startswith("neuroplasticity_"):
@@ -76,6 +108,7 @@ for mod in sorted(pkgutil.iter_modules(__path__), key=lambda m: m.name):
         pname = plugin_name or base
         pid = _assign_plugin_id(pname, cls)
         inst = cls()
+        _wrap_public_methods(inst, pname)
         inst.plugin_id = pid
         register_neuroplasticity_type(pname, inst)
     elif name.startswith("selfattention_"):
@@ -83,6 +116,7 @@ for mod in sorted(pkgutil.iter_modules(__path__), key=lambda m: m.name):
         pname = plugin_name or base
         pid = _assign_plugin_id(pname, cls)
         inst = cls()
+        _wrap_public_methods(inst, pname)
         inst.plugin_id = pid
         register_selfattention_type(pname, inst)
     elif name.startswith("synapse_"):
@@ -90,6 +124,7 @@ for mod in sorted(pkgutil.iter_modules(__path__), key=lambda m: m.name):
         pname = plugin_name or base
         pid = _assign_plugin_id(pname, cls)
         inst = cls()
+        _wrap_public_methods(inst, pname)
         inst.plugin_id = pid
         register_synapse_type(pname, inst)
     elif name.startswith("brain_train_"):
@@ -97,6 +132,7 @@ for mod in sorted(pkgutil.iter_modules(__path__), key=lambda m: m.name):
         pname = plugin_name or base
         pid = _assign_plugin_id(pname, cls)
         inst = cls()
+        _wrap_public_methods(inst, pname)
         inst.plugin_id = pid
         register_brain_train_type(pname, inst)
     elif name.startswith("buildingblock_"):
@@ -104,6 +140,7 @@ for mod in sorted(pkgutil.iter_modules(__path__), key=lambda m: m.name):
         pname = plugin_name or base
         pid = _assign_plugin_id(pname, cls)
         inst = cls()
+        _wrap_public_methods(inst, pname)
         inst.plugin_id = pid
         register_buildingblock_type(pname, inst)
     else:
@@ -111,6 +148,7 @@ for mod in sorted(pkgutil.iter_modules(__path__), key=lambda m: m.name):
         pname = plugin_name or name
         pid = _assign_plugin_id(pname, cls)
         inst = cls()
+        _wrap_public_methods(inst, pname)
         inst.plugin_id = pid
         register_neuron_type(pname, inst)
 
