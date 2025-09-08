@@ -41,6 +41,8 @@ from marble.plugins.selfattention_noise_profiler import ContextAwareNoiseRoutine
 from marble.plugins.wanderer_resource_allocator import clear as clear_resources
 from marble.plugins.auto_target_scaler import AutoTargetScalerPlugin
 from marble.decision_controller import DecisionController
+from marble.plugin_encoder import PluginEncoder
+from marble.plugins import PLUGIN_ID_REGISTRY
 from examples.utils import decide_with_pred
 from marble import plugin_cost_profiler as cost_profiler
 
@@ -252,7 +254,10 @@ def main(
     if "synthetictrainer" in wplugins:
         wplugins.remove("synthetictrainer")
 
-    dc = DecisionController(top_k=5)
+    dc = DecisionController(
+        top_k=5,
+        encoder=PluginEncoder(len(PLUGIN_ID_REGISTRY), ctx_dim=2),
+    )
     neuro_cfg = {
         "grow_on_step_when_stuck": True,
         "max_new_per_walk": 1,
@@ -312,10 +317,17 @@ def main(
             idx = br.available_indices()[0]
         except Exception:
             idx = (0,) * int(getattr(br, "n", 1))
-        if idx in getattr(br, "neurons", {}):
-            n = br.neurons[idx]
+        neurons = getattr(br, "neurons", {})
+        if idx in neurons:
+            n = neurons[idx]
         else:
-            n = br.add_neuron(idx, tensor=0.0, type_name="autoneuron")
+            connect_to = next(iter(neurons.keys())) if neurons else None
+            n = br.add_neuron(
+                idx,
+                tensor=0.0,
+                type_name="autoneuron",
+                connect_to=connect_to,
+            )
         n.receive(enc)
         return n
     
