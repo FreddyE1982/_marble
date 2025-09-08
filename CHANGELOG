@@ -1,3 +1,7 @@
+2025-09-26
+- Decision controller now rebuilds its cost vector each step from real ``h_t``
+  costs so budget penalties and policy sampling use up-to-date spending.
+
 2025-09-05
 - Load plugins in deterministic order and document that plugin IDs remain stable when the set of plugin files is unchanged.
 - Use a bounded budget when `config.yaml` is absent or invalid and expose `BUDGET_LIMIT` at the package root.

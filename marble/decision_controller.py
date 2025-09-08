@@ -695,18 +695,18 @@ class DecisionController:
         self._prev_reward = 0.0
         self._steps_since_change = int(self.dwell_threshold)
 
-        # Build a cost vector so the policy-gradient agent can impose a soft
-        # budget constraint through its generic ``constraints`` interface.
-        cost_vec = torch.tensor(
-            [get_plugin_cost(n) for n in PLUGIN_ID_REGISTRY.keys()],
-            dtype=torch.float32,
+        # ``cost_vec`` stores the per-plugin cost used by the policy-gradient
+        # agent's budget constraint.  It is populated in :meth:`decide` from
+        # the actual ``h_t[name]['cost']`` values supplied for the current
+        # decision step so that penalties reflect real, up-to-date spending.
+        self.cost_vec = torch.zeros(
+            len(PLUGIN_ID_REGISTRY), dtype=torch.float32
         )
-        self.cost_vec = cost_vec
 
         def g_budget(actions: torch.Tensor) -> torch.Tensor:
             """Return normalised cost for the selected ``actions``."""
 
-            return cost_vec[actions] / max(1.0, BUDGET_LIMIT)
+            return self.cost_vec[actions] / max(1.0, BUDGET_LIMIT)
 
         def g_dwell(actions: torch.Tensor) -> torch.Tensor:
             """Return dwell penalty based on action changes."""
@@ -807,7 +807,12 @@ class DecisionController:
         *,
         metrics: Dict[str, float] | None = None,
     ) -> Dict[str, Any]:
-        """Return selected actions using embeddings and stochastic policy."""
+        """Return selected actions using embeddings and stochastic policy.
+
+        Per-call costs from ``h_t[name]["cost"]`` populate the controller's
+        internal ``cost_vec`` so the soft budget constraint always reflects the
+        current step's spending.
+        """
 
         if not self._advance():
             self.history.append({})
@@ -848,6 +853,14 @@ class DecisionController:
                 pass
 
         plugin_names = list(h_t.keys())
+        # Refresh ``cost_vec`` using the per-step costs provided in ``h_t`` so
+        # budget penalties and sampling reflect the latest spending.
+        new_cost_vec = torch.zeros(len(PLUGIN_ID_REGISTRY), dtype=torch.float32)
+        for name, info in h_t.items():
+            idx = PLUGIN_ID_REGISTRY.get(name)
+            if idx is not None:
+                new_cost_vec[idx] = float(info.get("cost", 0.0))
+        self.cost_vec = new_cost_vec
         ready = set(PLUGIN_GRAPH.recommend_next_plugin(self._last_phase))
         # If the plugin graph still contains pending nodes but none are ready
         # to run, we return an empty selection instead of considering all
