@@ -148,6 +148,20 @@ class TestDecisionController(unittest.TestCase):
         print("selection under tight linear constraint:", selected)
         self.assertEqual(selected, {"B": "on"})
 
+    def test_missing_cost_populates_and_caches(self):
+        dc.LAST_STATE_CHANGE.clear()
+        dc.TAU_THRESHOLD = 0.0
+        dc.BUDGET_LIMIT = 5.0
+        dc.PLUGIN_COST_CACHE.clear()
+        name = list(PLUGIN_ID_REGISTRY.keys())[0]
+        h_t: dict[str, dict] = {}
+        x_t = {name: "on"}
+        history: list[dict] = []
+        selected = dc.decide_actions(h_t, x_t, history, all_plugins=x_t.keys())
+        print("selected with implicit cost:", selected)
+        self.assertIn("cost", h_t[name])
+        self.assertEqual(h_t[name]["cost"], dc.PLUGIN_COST_CACHE.get(name))
+
     def test_multiple_selection_learning(self):
         dc.LAST_STATE_CHANGE.clear()
         dc.TAU_THRESHOLD = 0.0
