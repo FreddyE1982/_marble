@@ -10,12 +10,18 @@ class PluginCostProfilerTests(unittest.TestCase):
 
     def test_record_and_get_cost(self) -> None:
         cp.record("test", 10.0)
-        self.assertEqual(cp.get_cost("test"), 10.0)
+        cost1 = cp.get_cost("test")
+        print("first cost:", cost1)
+        self.assertEqual(cost1, 10.0)
         cp.record("test", 6.0)
-        self.assertEqual(cp.get_cost("test"), 8.0)
+        cost2 = cp.get_cost("test")
+        print("ema cost:", cost2)
+        self.assertEqual(cost2, 8.0)
 
     def test_default_value(self) -> None:
-        self.assertEqual(cp.get_cost("missing", 1.23), 1.23)
+        default = cp.get_cost("missing", 1.23)
+        print("default cost:", default)
+        self.assertEqual(default, 1.23)
 
 
 if __name__ == "__main__":

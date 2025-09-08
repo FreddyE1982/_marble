@@ -37,6 +37,7 @@ from .bayesian_policy import BayesianPolicy
 from .plugins import PLUGIN_ID_REGISTRY
 from .reporter import REPORTER
 from .history_encoder import HistoryEncoder
+from . import plugin_cost_profiler as _pcp
 
 # Incompatibility sets I_t: mapping plugin name to set of incompatible plugins
 INCOMPATIBILITY_SETS: Dict[str, Set[str]] = {
@@ -530,22 +531,32 @@ def estimate_plugin_contributions_bayesian(
 def get_plugin_cost(name: str) -> float:
     """Return intrinsic cost for ``name`` by inspecting its plugin module."""
 
+    # Prefer dynamic measurements from ``plugin_cost_profiler``.
+    prof_cost = _pcp.get_cost(name, float("nan"))
+    if not math.isnan(prof_cost):
+        return prof_cost
+
     try:
         mod = importlib.import_module(f"marble.plugins.{name}")
     except Exception:
+        _pcp.record(name, 0.0)
         return 0.0
 
     for attr in ("PLUGIN_COST", "COST"):
         if hasattr(mod, attr):
             try:
-                return float(getattr(mod, attr))
+                cost = float(getattr(mod, attr))
             except Exception:
-                return 0.0
+                cost = 0.0
+            _pcp.record(name, 0.0)
+            return cost
     try:
         fn = getattr(mod, "estimate_cost")
-        return float(fn())
+        cost = float(fn())
     except Exception:
-        return 0.0
+        cost = 0.0
+    _pcp.record(name, 0.0)
+    return cost
 
 
 def decide_actions(
