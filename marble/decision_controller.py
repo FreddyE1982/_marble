@@ -14,11 +14,12 @@ import importlib
 import os
 import time
 import math
-from typing import Any, Dict, Iterable, List, Set
+from typing import Any, Dict, Iterable, List, Optional, Set
 from collections import deque
 
 import torch
 import torch.nn as nn
+from torch import Tensor
 import yaml
 
 from .constraints import (
@@ -861,16 +862,41 @@ class DecisionController:
     def decide(
         self,
         h_t: Dict[str, Dict[str, float]],
-        ctx_seq: torch.Tensor,
+        ctx_seq: Optional[Tensor] = None,
         *,
         metrics: Dict[str, float] | None = None,
+        pred: Optional[Tensor] = None,
+        target: Optional[Tensor] = None,
     ) -> Dict[str, Any]:
         """Return selected actions using embeddings and stochastic policy.
+
+        Either ``ctx_seq`` or ``pred`` must be provided. When ``ctx_seq`` is
+        omitted the context sequence is constructed from ``pred`` and, if
+        supplied, ``target``. This allows callers to pass raw model outputs
+        instead of a pre-built context tensor.
 
         Per-call costs from ``h_t[name]["cost"]`` populate the controller's
         internal ``cost_vec`` so the soft budget constraint always reflects the
         current step's spending.
+
+        Args:
+            h_t: Mapping of plugin names to per-step hints such as cost.
+            ctx_seq: Pre-encoded context sequence. Required when ``pred`` is
+                omitted.
+            metrics: Optional metrics for reward shaping and history updates.
+            pred: Prediction tensor used to build ``ctx_seq`` when the latter is
+                not supplied.
+            target: Optional target tensor concatenated with ``pred`` to form
+                the context sequence.
         """
+
+        if ctx_seq is None:
+            if pred is None:
+                raise ValueError("decide requires either ctx_seq or pred")
+            ctx_seq = pred.detach()
+            if target is not None:
+                ctx_seq = torch.cat([ctx_seq, target.detach()], dim=-1)
+            ctx_seq = ctx_seq.view(1, 1, -1)
 
         if not self._advance():
             self.history.append({})
