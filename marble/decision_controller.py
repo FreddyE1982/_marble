@@ -116,24 +116,9 @@ def _load_budget() -> tuple[float, bool]:
     """Return configured budget and whether auto-mode is requested."""
 
     base = os.path.dirname(os.path.dirname(__file__))
-    cfg: Dict[str, Dict[str, Any]] = {}
     try:
         with open(os.path.join(base, "config.yaml"), "r", encoding="utf-8") as fh:
-            section: str | None = None
-            for raw in fh:
-                line = raw.split("#", 1)[0].rstrip()
-                if not line:
-                    continue
-                if not line.startswith(" ") and line.endswith(":"):
-                    section = line[:-1].strip()
-                    cfg[section] = {}
-                    continue
-                if section and ":" in line:
-                    k, v = line.split(":", 1)
-                    try:
-                        cfg[section][k.strip()] = float(v.strip())
-                    except Exception:
-                        cfg[section][k.strip()] = v.strip()
+            cfg = yaml.safe_load(fh) or {}
     except Exception:
         return 10.0, False
     dc = cfg.get("decision_controller", {})
@@ -819,8 +804,12 @@ class DecisionController:
         self._budget_count = 0
         self._warmup_done = False
         if self.auto_budget:
-            globals()["BUDGET_LIMIT"] = float("inf")
-            self.budget = float("inf")
+            # Preserve an explicitly configured ``BUDGET_LIMIT`` instead of
+            # blindly resetting it to infinity.  This allows tests or callers
+            # to override the global budget before instantiating the controller
+            # (e.g. to enforce a very small limit) while still benefiting from
+            # automatic budget updates once enough data has been observed.
+            self.budget = float(globals().get("BUDGET_LIMIT", float("inf")))
         else:
             self.budget = float(budget)
             globals()["BUDGET_LIMIT"] = self.budget
