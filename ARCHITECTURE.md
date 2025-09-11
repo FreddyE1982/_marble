@@ -59,7 +59,7 @@ Helper and Analysis Tools
 
 Core Components
 
-- `UniversalTensorCodec`: Serializes any Python object via pickle to bytes and compresses repeating byte sequences with an on-the-fly dictionary (LZW-style) so that each repeated sequence maps to a single token. If PyTorch is available, returns tensors on CUDA when available, else CPU; otherwise returns Python lists. Supports `export_vocab`/`import_vocab` for reproducible vocabularies.
+- `UniversalTensorCodec`: Serializes any Python object via pickle and compresses the bytes with `zlib`. Each compressed byte maps to a single token ID, yielding a fixed 256-entry vocabulary for deterministic decoding. If PyTorch is available, returns tensors on CUDA when available, else CPU; otherwise returns Python lists. Supports `export_vocab`/`import_vocab` for reproducible vocabularies.
 
 - `DataPair` + helpers: Lightweight container for two arbitrary Python objects with dependency-injected codec. Helpers: `make_datapair`, `encode_datapair`, `decode_datapair`. All encode/decode events are logged under reporter group `datapair/events`.
 
@@ -479,7 +479,7 @@ Built-in Plugins
 
 Key Components
 
-- UniversalTensorCodec: Pickle-based serializer that maps bytes to integer token IDs with an on-the-fly byte vocabulary. Encodes to a tensor if PyTorch is available (prefers CUDA when available) or to a Python list otherwise. Supports `export_vocab`/`import_vocab` for deterministic decoding across processes.
+- UniversalTensorCodec: Pickle-based serializer that compresses data with `zlib` and maps each compressed byte to an integer token ID. Encodes to a tensor if PyTorch is available (prefers CUDA when available) or to a Python list otherwise. Supports `export_vocab`/`import_vocab` for deterministic decoding across processes.
 - Device Behavior: All tensor creation prefers CUDA when `torch.cuda.is_available()`; otherwise falls back to CPU. Helpers ensure inputs are moved to the selected device by default.
 - Neuron: Holds a tensor plus scalar `weight`, `bias`, and `age`. Provides `forward` (default y = w*x + b), `receive`, and connection helpers. Supports neuron plugins via a registry with optional `on_init`, `receive`, and `forward` hooks.
   - Conv1D plugin (strict): Conv1D neurons require exactly 5 incoming parameter synapses and exactly 1 outgoing synapse. This is enforced during plugin initialization (`on_init`); creation fails (raises) if the wiring is not exact. Parameter roles (sorted deterministically by the parameter source neuron): kernel, stride, padding, dilation, bias. The conv input signal comes from the neuron's `input_value` (or tensor), not from an incoming data-carrying synapse.

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import pickle
+import zlib
 from typing import Any, Dict, Iterable, List, Sequence, Union
 
 # Pre-computed single-byte sequences to avoid allocating new objects during
@@ -98,40 +99,14 @@ class UniversalTensorCodec:
                 token_to_seq.append(seq)
 
     def _bytes_to_tokens(self, data: bytes) -> List[int]:
-        self._ensure_base_vocab()
-        tokens: List[int] = []
-        if not data:
-            return tokens
-        dict_ = self._seq_to_token
-        token_to_seq = self._token_to_seq
-        byte_table = _BYTE_TABLE
-        tokens_append = tokens.append
-        token_to_seq_append = token_to_seq.append
-        dict_get = dict_.get
-        w = byte_table[data[0]]
-        w_token = dict_[w]
-        next_token = len(token_to_seq)
-        for i in range(1, len(data)):
-            c = byte_table[data[i]]
-            wc = w + c
-            token = dict_get(wc)
-            if token is not None:
-                w = wc
-                w_token = token
-            else:
-                tokens_append(w_token)
-                dict_[wc] = next_token
-                token_to_seq_append(wc)
-                next_token += 1
-                w = c
-                w_token = dict_[w]
-        tokens_append(w_token)
-        return tokens
+        compressed = zlib.compress(data)
+        return list(compressed)
 
     def _tokens_to_bytes(self, tokens: Iterable[int]) -> bytes:
         try:
-            return b"".join(self._token_to_seq[t] for t in tokens)
-        except (IndexError, TypeError) as e:
+            data = bytes(tokens)
+            return zlib.decompress(data)
+        except Exception as e:
             raise ValueError("Token id out of range for current vocabulary") from e
 
     def _to_tensor(self, values: List[int]) -> TensorLike:
