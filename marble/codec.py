@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import pickle
+import marshal
 import zlib
 from typing import Any, Dict, List, Sequence, Union
 
@@ -42,10 +43,14 @@ class UniversalTensorCodec:
         return len(self._token_to_seq)
 
     def encode(self, obj: Any) -> TensorLike:
-        dumps = pickle.dumps
-        compress = zlib.compress
-        data = dumps(obj, protocol=pickle.HIGHEST_PROTOCOL, fix_imports=False)
-        tokens = compress(data, _COMPRESSION_LEVEL)
+        serializer = 1
+        try:
+            data = marshal.dumps(obj)
+        except Exception:
+            data = pickle.dumps(obj, protocol=pickle.HIGHEST_PROTOCOL, fix_imports=False)
+            serializer = 0
+        raw = bytes([serializer]) + data
+        tokens = zlib.compress(raw, _COMPRESSION_LEVEL)
         out = self._to_tensor(tokens)
         try:
             ln = int(out.numel()) if hasattr(out, "numel") else len(out)  # type: ignore[arg-type]
@@ -56,7 +61,14 @@ class UniversalTensorCodec:
 
     def decode(self, tokens: Union[TensorLike, Sequence[int]]) -> Any:
         data = self._tokens_to_bytes(tokens)
-        obj = pickle.loads(data)
+        if data[:1] in (b"\x00", b"\x01"):
+            marker, payload = data[0], data[1:]
+            if marker == 1:
+                obj = marshal.loads(payload)
+            else:
+                obj = pickle.loads(payload)
+        else:  # backward compatibility with old tokens
+            obj = pickle.loads(data)
         _safe_report("codec", "decode", {"ok": True, "vocab_size": self.vocab_size()}, "events")
         return obj
 
@@ -124,11 +136,11 @@ class UniversalTensorCodec:
         if self._torch is not None:
             torch = self._torch
             if isinstance(values, (bytes, bytearray, memoryview)):
-                buf = values if isinstance(values, bytearray) else bytearray(values)
+                buf = values if isinstance(values, (bytearray, memoryview)) else bytearray(values)
                 t = torch.frombuffer(buf, dtype=torch.uint8)
                 if self._device != "cpu":
                     t = t.to(self._device)
-                return t.clone()
+                return t
             return torch.tensor(values, dtype=torch.uint8, device=self._device)
         return list(values) if not isinstance(values, list) else values
 
