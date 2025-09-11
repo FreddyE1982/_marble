@@ -1,4 +1,5 @@
 import unittest
+from typing import List, Sequence
 
 
 class TestSelfAttentionConv1D(unittest.TestCase):
@@ -27,9 +28,15 @@ class TestSelfAttentionConv1D(unittest.TestCase):
         avail = b.available_indices()
         needed = 6
         assert len(avail) >= needed, "test brain must provide enough indices"
-        created = []
+        created: List[Sequence[int]] = []
         for i in range(needed):
-            created.append(b.add_neuron(avail[i], tensor=[float(i)]))
+            idx = avail[i]
+            connect_to = created[-1] if created else None
+            if connect_to is None:
+                b.add_neuron(idx, tensor=[float(i)])
+            else:
+                b.add_neuron(idx, tensor=[float(i)], connect_to=connect_to, direction="bi")
+            created.append(idx)
 
         # Connect a unidirectional synapse to ensure the wanderer takes a step
         b.connect(avail[0], avail[1], direction="uni")
