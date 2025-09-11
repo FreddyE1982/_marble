@@ -9,6 +9,9 @@ from typing import Any, Dict, List, Sequence, Union
 # encoding. Index ``i`` contains ``bytes([i])``.
 _BYTE_TABLE: List[bytes] = [bytes([i]) for i in range(256)]
 
+# Lower compression level speeds up encoding while keeping deterministic output.
+_COMPRESSION_LEVEL = 1
+
 TensorLike = Union[List[int], "_TorchTensor"]
 
 
@@ -98,8 +101,7 @@ class UniversalTensorCodec:
                 token_to_seq.append(seq)
 
     def _bytes_to_tokens(self, data: bytes) -> Union[bytes, List[int]]:
-        compressed = zlib.compress(data)
-        return compressed
+        return zlib.compress(data, _COMPRESSION_LEVEL)
 
     def _tokens_to_bytes(self, tokens: Union[TensorLike, Sequence[int]]) -> bytes:
         try:
