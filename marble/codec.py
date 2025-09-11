@@ -40,7 +40,7 @@ class UniversalTensorCodec:
         return len(self._token_to_seq)
 
     def encode(self, obj: Any) -> TensorLike:
-        data = pickle.dumps(obj, protocol=pickle.HIGHEST_PROTOCOL)
+        data = pickle.dumps(obj, protocol=pickle.HIGHEST_PROTOCOL, fix_imports=False)
         tokens = self._bytes_to_tokens(data)
         out = self._to_tensor(tokens)
         try:

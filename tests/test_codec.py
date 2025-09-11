@@ -87,6 +87,19 @@ class TestUniversalTensorCodec(unittest.TestCase):
         print("package import ok; module:", marble.__file__)
         self.assertTrue(hasattr(marblemain, "UniversalTensorCodec"))
 
+    def test_encode_deterministic(self):
+        codec = self.Codec()
+        obj = [1, 2, 3, {"k": "v"}]
+        t1 = codec.encode(obj)
+        t2 = codec.encode(obj)
+        try:
+            self.assertEqual(t1.tolist(), t2.tolist())
+            ln = t1.numel()
+        except Exception:
+            self.assertEqual(list(t1), list(t2))
+            ln = len(t1)
+        print("deterministic tokens:", ln)
+
     def test_encode_performance(self):
         from marble.marblemain import UniversalTensorCodec
         codec = UniversalTensorCodec()
