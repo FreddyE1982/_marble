@@ -66,9 +66,16 @@ class QualityAwareRoutine:
 
 def quality_loss(pred: torch.Tensor, target: torch.Tensor, delta: float = 0.5) -> torch.Tensor:
     """Huber-style loss for quality scores."""
+    # ``pred`` carries the neuron's output which, depending on the encoded
+    # payload size, may be a high dimensional tensor.  ``target`` on the other
+    # hand encodes a single float quality score.  Subtracting mismatched shapes
+    # would raise and silently yield a zero loss upstream.  Flatten both sides
+    # to scalars so the Huber loss always operates on compatible shapes.
+    pred = pred.float().view(-1).mean()
+    target = target.float().view(-1).mean()
     diff = pred - target
     abs_diff = torch.abs(diff)
-    return torch.mean(torch.where(abs_diff < delta, 0.5 * diff ** 2, delta * (abs_diff - 0.5 * delta)))
+    return torch.where(abs_diff < delta, 0.5 * diff ** 2, delta * (abs_diff - 0.5 * delta))
 
 
 def _sample_pairs(ds, max_pairs: int | None = None) -> Iterator:
