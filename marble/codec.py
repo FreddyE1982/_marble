@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import pickle
 import zlib
-from typing import Any, Dict, Iterable, List, Sequence, Union
+from typing import Any, Dict, List, Sequence, Union
 
 # Pre-computed single-byte sequences to avoid allocating new objects during
 # encoding. Index ``i`` contains ``bytes([i])``.
@@ -48,8 +48,7 @@ class UniversalTensorCodec:
         return out
 
     def decode(self, tokens: Union[TensorLike, Sequence[int]]) -> Any:
-        token_list = self._to_list(tokens)
-        data = self._tokens_to_bytes(token_list)
+        data = self._tokens_to_bytes(tokens)
         obj = pickle.loads(data)
         _safe_report("codec", "decode", {"ok": True, "vocab_size": self.vocab_size()}, "events")
         return obj
@@ -98,21 +97,31 @@ class UniversalTensorCodec:
                 seq_to_token[seq] = i
                 token_to_seq.append(seq)
 
-    def _bytes_to_tokens(self, data: bytes) -> List[int]:
+    def _bytes_to_tokens(self, data: bytes) -> Union[bytes, List[int]]:
         compressed = zlib.compress(data)
-        return list(compressed)
+        return compressed
 
-    def _tokens_to_bytes(self, tokens: Iterable[int]) -> bytes:
+    def _tokens_to_bytes(self, tokens: Union[TensorLike, Sequence[int]]) -> bytes:
         try:
-            data = bytes(tokens)
+            if self._torch is not None and self._is_torch_tensor(tokens):
+                t = tokens.detach().to(self._torch.uint8)
+                if t.device.type != "cpu":
+                    t = t.to("cpu")
+                data = t.numpy().tobytes()
+            else:
+                data = bytes(tokens)
             return zlib.decompress(data)
         except Exception as e:
             raise ValueError("Token id out of range for current vocabulary") from e
 
-    def _to_tensor(self, values: List[int]) -> TensorLike:
+    def _to_tensor(self, values: Union[List[int], bytes]) -> TensorLike:
         if self._torch is not None:
+            if isinstance(values, (bytes, bytearray, memoryview)):
+                buf = bytearray(values)
+                t = self._torch.frombuffer(buf, dtype=self._torch.uint8)
+                return t.to(self._device, dtype=self._torch.long)
             return self._torch.tensor(values, dtype=self._torch.long, device=self._device)
-        return values
+        return list(values) if not isinstance(values, list) else values
 
     def _to_list(self, maybe_tensor: Union[TensorLike, Sequence[int]]) -> List[int]:
         if self._torch is not None and self._is_torch_tensor(maybe_tensor):

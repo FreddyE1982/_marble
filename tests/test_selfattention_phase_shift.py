@@ -31,8 +31,7 @@ class PhaseShiftRoutineTests(unittest.TestCase):
         idxs = list(b.available_indices())
         b.add_neuron(idxs[0], tensor=[0.0])
         if len(idxs) > 1:
-            b.add_neuron(idxs[1], tensor=[0.0])
-            b.connect(idxs[0], idxs[1], direction="bi")
+            b.add_neuron(idxs[1], tensor=[0.0], connect_to=idxs[0], direction="bi")
 
         sa = self.SelfAttention(routines=[self.PhaseShiftRoutine()])
         codec = self.Codec()
