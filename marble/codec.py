@@ -18,12 +18,23 @@ _COMPRESSION_LEVEL = 2
 TensorLike = Union[List[int], "_TorchTensor"]
 
 
+_REPORT_FN = None
+_REPORT_FAILED = False
+
+
 def _safe_report(groupname: str, itemname: str, data: Any, *subgroups: str) -> None:
-    try:
-        from .marblemain import report  # lazy to avoid circular import at module import time
-        report(groupname, itemname, data, *subgroups)
-    except Exception:
-        pass
+    global _REPORT_FN, _REPORT_FAILED
+    if _REPORT_FN is None and not _REPORT_FAILED:
+        try:
+            from .marblemain import report as _REPORT_FN  # type: ignore
+        except Exception:
+            _REPORT_FAILED = True
+            return
+    if _REPORT_FN is not None:
+        try:
+            _REPORT_FN(groupname, itemname, data, *subgroups)
+        except Exception:
+            pass
 
 
 class UniversalTensorCodec:
@@ -45,11 +56,13 @@ class UniversalTensorCodec:
     def encode(self, obj: Any) -> TensorLike:
         serializer = 1
         try:
+            if isinstance(obj, list) and len(obj) > 1000:
+                raise ValueError
             data = marshal.dumps(obj)
         except Exception:
             data = pickle.dumps(obj, protocol=pickle.HIGHEST_PROTOCOL, fix_imports=False)
             serializer = 0
-        compressor = zlib.compressobj(_COMPRESSION_LEVEL)
+        compressor = zlib.compressobj(_COMPRESSION_LEVEL, strategy=zlib.Z_HUFFMAN_ONLY)
         tokens = bytearray()
         # stream serializer marker and payload separately to avoid copying large buffers
         tokens.extend(compressor.compress(_BYTE_TABLE[serializer]))
