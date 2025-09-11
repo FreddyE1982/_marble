@@ -4,6 +4,10 @@ import json
 import pickle
 from typing import Any, Dict, Iterable, List, Sequence, Union
 
+# Pre-computed single-byte sequences to avoid allocating new objects during
+# encoding. Index ``i`` contains ``bytes([i])``.
+_BYTE_TABLE: List[bytes] = [bytes([i]) for i in range(256)]
+
 TensorLike = Union[List[int], "_TorchTensor"]
 
 
@@ -87,29 +91,36 @@ class UniversalTensorCodec:
     # Internal helpers
     def _ensure_base_vocab(self) -> None:
         if not self._token_to_seq:
-            for i in range(256):
-                seq = bytes([i])
-                self._seq_to_token[seq] = i
-                self._token_to_seq.append(seq)
+            seq_to_token = self._seq_to_token
+            token_to_seq = self._token_to_seq
+            for i, seq in enumerate(_BYTE_TABLE):
+                seq_to_token[seq] = i
+                token_to_seq.append(seq)
 
     def _bytes_to_tokens(self, data: bytes) -> List[int]:
         self._ensure_base_vocab()
         dict_ = self._seq_to_token
+        token_to_seq = self._token_to_seq
         tokens: List[int] = []
         if not data:
             return tokens
-        w = bytes([data[0]])
+        w = _BYTE_TABLE[data[0]]
+        tokens_append = tokens.append
+        token_to_seq_append = token_to_seq.append
+        next_token = len(token_to_seq)
         for b in data[1:]:
-            c = bytes([b])
+            c = _BYTE_TABLE[b]
             wc = w + c
-            if wc in dict_:
+            token = dict_.get(wc)
+            if token is not None:
                 w = wc
             else:
-                tokens.append(dict_[w])
-                dict_[wc] = len(self._token_to_seq)
-                self._token_to_seq.append(wc)
+                tokens_append(dict_[w])
+                dict_[wc] = next_token
+                token_to_seq_append(wc)
+                next_token += 1
                 w = c
-        tokens.append(dict_[w])
+        tokens_append(dict_[w])
         return tokens
 
     def _tokens_to_bytes(self, tokens: Iterable[int]) -> bytes:
