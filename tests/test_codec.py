@@ -111,6 +111,32 @@ class TestUniversalTensorCodec(unittest.TestCase):
         print("encode time:", duration)
         self.assertGreater(duration, 0.0)
 
+    def test_encode_text_performance(self):
+        codec = self.Codec()
+        text = (
+            "Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. "
+            * 100
+        )
+        import time
+        start = time.perf_counter()
+        codec.encode(text)
+        duration = time.perf_counter() - start
+        print("text encode time:", duration)
+        self.assertLess(duration, 0.009)
+
+    def test_encode_image_performance(self):
+        codec = self.Codec()
+        import base64, time
+        img_b64 = (
+            "iVBORw0KGgoAAAANSUhEUgAAAAoAAAAKCAIAAAACUFjqAAAAF0lEQVR4nGP4//8/AzQAQID/RBkwAAAMAQIBBnTMEQAAAABJRU5ErkJggg=="
+        )
+        image_bytes = base64.b64decode(img_b64)
+        start = time.perf_counter()
+        codec.encode(image_bytes)
+        duration = time.perf_counter() - start
+        print("image encode time:", duration)
+        self.assertLess(duration, 0.009)
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
