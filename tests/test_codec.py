@@ -137,6 +137,18 @@ class TestUniversalTensorCodec(unittest.TestCase):
         print("image encode time:", duration)
         self.assertLess(duration, 0.009)
 
+    def test_encode_decode_custom_text(self):
+        codec = self.Codec()
+        text = "The cat is dancing in a moonlight shadow"
+        tokens = codec.encode(text)
+        decoded = codec.decode(tokens)
+        try:
+            ln = int(tokens.numel()) if hasattr(tokens, "numel") else len(tokens)
+        except Exception:
+            ln = -1
+        print("custom text roundtrip tokens:", ln)
+        self.assertEqual(decoded, text)
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
