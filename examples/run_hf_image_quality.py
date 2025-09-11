@@ -99,25 +99,48 @@ def _sample_pairs(ds, max_pairs: int | None = None) -> Iterator:
     """
 
     count = 0
+    get_dp = make_datapair  # local bind for speed
     for ex in ds:
         if max_pairs is not None and count >= max_pairs:
             break
         try:
-            prompt = ex.get_raw("prompt")
-            img1 = ex["image1"]
-            img2 = ex["image2"]
-            pref1 = float(ex.get_raw("weighted_results_image1_preference"))
-            pref2 = float(ex.get_raw("weighted_results_image2_preference"))
-            al1 = float(ex.get_raw("weighted_results_image1_alignment"))
-            al2 = float(ex.get_raw("weighted_results_image2_alignment"))
-            q1 = (pref1 + al1) / 2.0
-            q2 = (pref2 + al2) / 2.0
+            raw = getattr(ex, "_data", None)
+            if raw is None:
+                raw = {
+                    "prompt": ex.get_raw("prompt"),
+                    "weighted_results_image1_preference": ex.get_raw(
+                        "weighted_results_image1_preference"
+                    ),
+                    "weighted_results_image2_preference": ex.get_raw(
+                        "weighted_results_image2_preference"
+                    ),
+                    "weighted_results_image1_alignment": ex.get_raw(
+                        "weighted_results_image1_alignment"
+                    ),
+                    "weighted_results_image2_alignment": ex.get_raw(
+                        "weighted_results_image2_alignment"
+                    ),
+                }
+
+            prompt = raw["prompt"]
+            img1, img2 = ex["image1"], ex["image2"]
+            pref1, pref2, al1, al2 = map(
+                float,
+                (
+                    raw["weighted_results_image1_preference"],
+                    raw["weighted_results_image2_preference"],
+                    raw["weighted_results_image1_alignment"],
+                    raw["weighted_results_image2_alignment"],
+                ),
+            )
+            q1 = 0.5 * (pref1 + al1)
+            q2 = 0.5 * (pref2 + al2)
         except Exception as err:
             print(f"skipping example due to: {err}; example={ex}")
             continue
 
-        yield make_datapair({"prompt": prompt, "image": img1}, q1)
-        yield make_datapair({"prompt": prompt, "image": img2}, q2)
+        yield get_dp({"prompt": prompt, "image": img1}, q1)
+        yield get_dp({"prompt": prompt, "image": img2}, q2)
         count += 2
 def main(
     epochs: int = 1,
