@@ -1,3 +1,8 @@
+2025-09-11
+- Benchmarked zlib compression levels 1-9 and selected level 2 as the best
+  speed/size compromise for `UniversalTensorCodec`, improving encode times
+  without altering determinism.
+
 2025-09-26
 - Decision controller now rebuilds its cost vector each step from real ``h_t``
   costs so budget penalties and policy sampling use up-to-date spending.
