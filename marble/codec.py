@@ -57,7 +57,13 @@ class UniversalTensorCodec:
     def encode(self, obj: Any) -> TensorLike:
         serializer = 1
         try:
-            if isinstance(obj, list) and len(obj) > 1000:
+            if isinstance(obj, bytes):
+                serializer = 3
+                data = obj
+            elif isinstance(obj, str):
+                serializer = 4
+                data = obj.encode("utf-8")
+            elif isinstance(obj, list) and len(obj) > 1000:
                 ln = len(obj)
                 first = obj[0]
                 if (
@@ -71,29 +77,25 @@ class UniversalTensorCodec:
                 ):
                     serializer = 2
                     header = struct.pack("<qi", first, ln)
-                    compressor = zlib.compressobj(_COMPRESSION_LEVEL, strategy=zlib.Z_HUFFMAN_ONLY)
-                    tokens = bytearray()
-                    tokens.extend(compressor.compress(_BYTE_TABLE[serializer]))
-                    tokens.extend(compressor.compress(header))
-                    tokens.extend(compressor.flush())
+                    payload = _BYTE_TABLE[serializer] + header
+                    tokens = zlib.compress(payload, _COMPRESSION_LEVEL)
                     out = self._to_tensor(tokens)
                     try:
                         ln = int(out.numel()) if hasattr(out, "numel") else len(out)  # type: ignore[arg-type]
                     except Exception:
                         ln = -1
-                    _safe_report("codec", "encode", {"obj_type": type(obj).__name__, "tokens": ln}, "events")
+                    _safe_report(
+                        "codec", "encode", {"obj_type": type(obj).__name__, "tokens": ln}, "events"
+                    )
                     return out
                 raise ValueError
-            data = marshal.dumps(obj)
+            else:
+                data = marshal.dumps(obj)
         except Exception:
             data = pickle.dumps(obj, protocol=pickle.HIGHEST_PROTOCOL, fix_imports=False)
             serializer = 0
-        compressor = zlib.compressobj(_COMPRESSION_LEVEL, strategy=zlib.Z_HUFFMAN_ONLY)
-        tokens = bytearray()
-        # stream serializer marker and payload separately to avoid copying large buffers
-        tokens.extend(compressor.compress(_BYTE_TABLE[serializer]))
-        tokens.extend(compressor.compress(data))
-        tokens.extend(compressor.flush())
+        payload = _BYTE_TABLE[serializer] + data
+        tokens = zlib.compress(payload, _COMPRESSION_LEVEL)
         out = self._to_tensor(tokens)
         try:
             ln = int(out.numel()) if hasattr(out, "numel") else len(out)  # type: ignore[arg-type]
@@ -104,15 +106,19 @@ class UniversalTensorCodec:
 
     def decode(self, tokens: Union[TensorLike, Sequence[int]]) -> Any:
         data = self._tokens_to_bytes(tokens)
-        if data[:1] in (b"\x00", b"\x01", b"\x02"):
+        if data[:1] in (b"\x00", b"\x01", b"\x02", b"\x03", b"\x04"):
             marker, payload = data[0], data[1:]
             if marker == 1:
                 obj = marshal.loads(payload)
             elif marker == 0:
                 obj = pickle.loads(payload)
-            else:
+            elif marker == 2:
                 start, length = struct.unpack("<qi", payload)
                 obj = list(range(start, start + length))
+            elif marker == 3:
+                obj = payload
+            else:
+                obj = payload.decode("utf-8")
         else:  # backward compatibility with old tokens
             obj = pickle.loads(data)
         _safe_report("codec", "decode", {"ok": True, "vocab_size": self.vocab_size()}, "events")
