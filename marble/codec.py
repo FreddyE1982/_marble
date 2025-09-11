@@ -99,28 +99,33 @@ class UniversalTensorCodec:
 
     def _bytes_to_tokens(self, data: bytes) -> List[int]:
         self._ensure_base_vocab()
-        dict_ = self._seq_to_token
-        token_to_seq = self._token_to_seq
         tokens: List[int] = []
         if not data:
             return tokens
-        w = _BYTE_TABLE[data[0]]
+        dict_ = self._seq_to_token
+        token_to_seq = self._token_to_seq
+        byte_table = _BYTE_TABLE
         tokens_append = tokens.append
         token_to_seq_append = token_to_seq.append
+        dict_get = dict_.get
+        w = byte_table[data[0]]
+        w_token = dict_[w]
         next_token = len(token_to_seq)
-        for b in data[1:]:
-            c = _BYTE_TABLE[b]
+        for i in range(1, len(data)):
+            c = byte_table[data[i]]
             wc = w + c
-            token = dict_.get(wc)
+            token = dict_get(wc)
             if token is not None:
                 w = wc
+                w_token = token
             else:
-                tokens_append(dict_[w])
+                tokens_append(w_token)
                 dict_[wc] = next_token
                 token_to_seq_append(wc)
                 next_token += 1
                 w = c
-        tokens_append(dict_[w])
+                w_token = dict_[w]
+        tokens_append(w_token)
         return tokens
 
     def _tokens_to_bytes(self, tokens: Iterable[int]) -> bytes:

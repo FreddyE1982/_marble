@@ -87,6 +87,17 @@ class TestUniversalTensorCodec(unittest.TestCase):
         print("package import ok; module:", marble.__file__)
         self.assertTrue(hasattr(marblemain, "UniversalTensorCodec"))
 
+    def test_encode_performance(self):
+        from marble.marblemain import UniversalTensorCodec
+        codec = UniversalTensorCodec()
+        obj = list(range(100000))
+        import time
+        start = time.perf_counter()
+        codec.encode(obj)
+        duration = time.perf_counter() - start
+        print("encode time:", duration)
+        self.assertGreater(duration, 0.0)
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
