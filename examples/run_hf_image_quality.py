@@ -23,8 +23,10 @@ import subprocess
 import threading
 import shutil
 import time
+import types
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor
+from queue import Queue
 from operator import getitem
 from datasets import DownloadConfig
 import torch
@@ -47,6 +49,7 @@ from marble.plugins.wanderer_autoplugin import AutoPlugin
 from marble.plugins.wanderer_resource_allocator import clear as clear_resources
 
 print("...complete")
+PREP_TIMES: list[float] = []
 class QualityAwareRoutine:
     """Adjust LR based on recent loss trend for stability."""
 
@@ -135,7 +138,9 @@ def _sample_pairs(ds, max_pairs: int | None = None) -> Iterator:
                 print(f"skipping example due to: {err}; example={ex}")
                 continue
 
+            PREP_TIMES.append(time.perf_counter())
             yield get_dp({"prompt": prompt, "image": img1}, q1)
+            PREP_TIMES.append(time.perf_counter())
             yield get_dp({"prompt": prompt, "image": img2}, q2)
             count += 2
 def main(
@@ -325,7 +330,9 @@ def main(
             print("Kuzu Explorer could not be started")
 
     def _start_neuron(left: Dict[str, Any], br):
-        # Combine the raw prompt with the already encoded image
+        if PREP_TIMES:
+            latency = time.perf_counter() - PREP_TIMES.pop(0)
+            print(f"prep-to-train latency: {latency:.4f}s")
         payload = (left.get("prompt"), left.get("image"))
         enc = codec.encode(payload)
         try:
@@ -340,26 +347,65 @@ def main(
         return n
     
     print("Starting training loop...")
+    use_async = os.environ.get("MARBLE_ASYNC_PIPELINE", "1").strip() not in ("0", "false", "False")
     for _ in range(int(epochs)):
-        pairs = _sample_pairs(ds, max_pairs=max_pairs)
-        start_time = time.perf_counter()
-        res = run_training_with_datapairs(
-            brain,
-            pairs,
-            codec,
-            steps_per_pair=20,
-            auto_max_steps_every=20,
-            lr=1e-3,
-            loss=quality_loss,
-            wanderer_type=",".join(wplugins),
-            train_type="warmup_decay,curriculum,qualityaware",
-            neuro_config=neuro_cfg,
-            selfattention=sa,
-            streaming=True,
-            batch_size=batch_size,
-            left_to_start=_start_neuron,
-           
-        )
+        if use_async:
+            pair_q: Queue = Queue(maxsize=4)
+
+            def _pair_iter():
+                while True:
+                    item = pair_q.get()
+                    if item is None:
+                        break
+                    yield item
+
+            res_holder: dict[str, Any] = {}
+
+            def _train():
+                res_holder["res"] = run_training_with_datapairs(
+                    brain,
+                    _pair_iter(),
+                    codec,
+                    steps_per_pair=20,
+                    auto_max_steps_every=20,
+                    lr=1e-3,
+                    loss=quality_loss,
+                    wanderer_type=",".join(wplugins),
+                    train_type="warmup_decay,curriculum,qualityaware",
+                    neuro_config=neuro_cfg,
+                    selfattention=sa,
+                    streaming=True,
+                    batch_size=batch_size,
+                    left_to_start=_start_neuron,
+                )
+
+            t = threading.Thread(target=_train)
+            t.start()
+
+            start_time = time.perf_counter()
+            for dp in _sample_pairs(ds, max_pairs=max_pairs):
+                pair_q.put(dp)
+            pair_q.put(None)
+            t.join()
+            res = res_holder.get("res", {})
+        else:
+            start_time = time.perf_counter()
+            res = run_training_with_datapairs(
+                brain,
+                _sample_pairs(ds, max_pairs=max_pairs),
+                codec,
+                steps_per_pair=20,
+                auto_max_steps_every=20,
+                lr=1e-3,
+                loss=quality_loss,
+                wanderer_type=",".join(wplugins),
+                train_type="warmup_decay,curriculum,qualityaware",
+                neuro_config=neuro_cfg,
+                selfattention=sa,
+                streaming=True,
+                batch_size=batch_size,
+                left_to_start=_start_neuron,
+            )
         duration = time.perf_counter() - start_time
         cnt = res.get("count", 0)
         walks = len(res.get("history", [])) or 1
