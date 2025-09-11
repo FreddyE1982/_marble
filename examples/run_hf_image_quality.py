@@ -103,7 +103,9 @@ def _sample_pairs(ds, max_pairs: int | None = None) -> Iterator:
     count = 0
     get_dp = make_datapair  # local bind for speed
     codec = UniversalTensorCodec()
-    with ThreadPoolExecutor(max_workers=2) as pool:
+    # Parallelize image encoding and numeric conversions with a slightly
+    # larger thread pool to shrink per-sample latency.
+    with ThreadPoolExecutor(max_workers=4) as pool:
         for ex in ds:
             if max_pairs is not None and count >= max_pairs:
                 break
@@ -112,15 +114,21 @@ def _sample_pairs(ds, max_pairs: int | None = None) -> Iterator:
                 prompt = raw["prompt"]
                 img_raw1 = raw["image1"]
                 img_raw2 = raw["image2"]
+                f = float
+                # Launch image encodes and float conversions concurrently.
                 f1 = pool.submit(codec.encode, img_raw1)
                 f2 = pool.submit(codec.encode, img_raw2)
+                pref1, pref2, al1, al2 = pool.map(
+                    f,
+                    [
+                        raw["weighted_results_image1_preference"],
+                        raw["weighted_results_image2_preference"],
+                        raw["weighted_results_image1_alignment"],
+                        raw["weighted_results_image2_alignment"],
+                    ],
+                )
                 img1 = f1.result()
                 img2 = f2.result()
-                f = float
-                pref1 = f(raw["weighted_results_image1_preference"])
-                pref2 = f(raw["weighted_results_image2_preference"])
-                al1 = f(raw["weighted_results_image1_alignment"])
-                al2 = f(raw["weighted_results_image2_alignment"])
                 q1 = 0.5 * (pref1 + al1)
                 q2 = 0.5 * (pref2 + al2)
             except Exception as err:
