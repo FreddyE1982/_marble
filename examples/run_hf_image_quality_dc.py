@@ -39,7 +39,6 @@ from marble.plugins.selfattention_adaptive_grad_clip import AdaptiveGradClipRout
 from marble.plugins.selfattention_findbestneurontype import FindBestNeuronTypeRoutine
 from marble.plugins.selfattention_noise_profiler import ContextAwareNoiseRoutine
 from marble.plugins.wanderer_resource_allocator import clear as clear_resources
-from marble.plugins.auto_target_scaler import AutoTargetScalerPlugin
 from marble.decision_controller import DecisionController
 from marble.plugin_encoder import PluginEncoder
 from marble.plugins import PLUGIN_ID_REGISTRY
@@ -47,11 +46,6 @@ from examples.utils import decide_with_pred
 from marble import plugin_cost_profiler as cost_profiler
 
 print("...complete")
-
-
-scaler: AutoTargetScalerPlugin | None = None
-last_pred: torch.Tensor | None = None
-last_target: torch.Tensor | None = None
 
 
 class QualityAwareRoutine:
@@ -83,34 +77,17 @@ class QualityAwareRoutine:
 
 
 def quality_loss(pred: torch.Tensor, target: torch.Tensor, delta: float = 0.5) -> torch.Tensor:
-    """Huber-style loss with optional target scaling.
-
-    When a global ``AutoTargetScalerPlugin`` instance is present, its
-    ``scale`` factor is applied to the target before loss computation to
-    keep magnitudes compatible with model outputs and avoid exploding
-    losses.
-    """
-
-    global scaler, last_pred, last_target
-    last_pred = pred.detach()
-    last_target = target.detach()
-    if scaler is not None:
-        try:
-            dummy = types.SimpleNamespace(
-                _target_provider=lambda _y: target,
-                _torch=torch,
-                _device=pred.device,
-            )
-            scaler._orig_tp = lambda _y: target  # type: ignore[attr-defined]
-            scaler.loss(dummy, [pred])
-            target = target * float(getattr(scaler, "scale", 1.0))
-        except Exception:
-            pass
+    """Huber-style loss for quality scores."""
+    # ``pred`` carries the neuron's output which, depending on the encoded
+    # payload size, may be a high dimensional tensor.  ``target`` on the other
+    # hand encodes a single float quality score.  Subtracting mismatched shapes
+    # would raise and silently yield a zero loss upstream.  Flatten both sides
+    # to scalars so the Huber loss always operates on compatible shapes.
+    pred = pred.float().view(-1).mean()
+    target = target.float().view(-1).mean()
     diff = pred - target
     abs_diff = torch.abs(diff)
-    return torch.mean(
-        torch.where(abs_diff < delta, 0.5 * diff ** 2, delta * (abs_diff - 0.5 * delta))
-    )
+    return torch.where(abs_diff < delta, 0.5 * diff ** 2, delta * (abs_diff - 0.5 * delta))
 
 
 
@@ -230,8 +207,6 @@ def main(
             ContextAwareNoiseRoutine(),
         ]
     )
-    global scaler
-    scaler = AutoTargetScalerPlugin(observe_steps=2)
     # enable runtime cost profiling so the controller can infer plugin costs
     cost_profiler.enable()
 
@@ -374,13 +349,6 @@ def main(
         print(
             f"processed datapairs: {cnt} in {duration:.2f}s ({duration/walks:.2f}s per walk)"
         )
-        if hasattr(scaler, "scale"):
-            print(
-                "auto target scaler stats:",
-                f"scale={scaler.scale:.4f}",
-                f"std_out={getattr(scaler, 'std_out', 0):.4f}",
-                f"std_tgt={getattr(scaler, 'std_tgt', 0):.4f}",
-            )
         if cnt == 0:
             raise RuntimeError("run_training_with_datapairs returned count=0")
 
@@ -388,8 +356,6 @@ def main(
         prev_loss = float(last_hist.get("loss", 0.0))
         step_metrics = last_hist.get("step_metrics", [])
         prev_dt = float(step_metrics[-1].get("dt", 0.0)) if step_metrics else 0.0
-        prev_pred = last_pred if last_pred is not None else torch.zeros(1)
-        prev_target = last_target if last_target is not None else torch.zeros(1)
         clear_resources()
     print("streamed quality training complete")
     clear_resources()

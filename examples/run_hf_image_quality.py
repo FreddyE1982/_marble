@@ -19,7 +19,6 @@ print("Importing packages..")
 from typing import Iterator, Any, Dict
 import os
 import re
-import types
 import subprocess
 import threading
 import shutil
@@ -44,14 +43,8 @@ from marble.plugins.selfattention_findbestneurontype import FindBestNeuronTypeRo
 from marble.plugins.selfattention_noise_profiler import ContextAwareNoiseRoutine
 from marble.plugins.wanderer_autoplugin import AutoPlugin
 from marble.plugins.wanderer_resource_allocator import clear as clear_resources
-from marble.plugins.auto_target_scaler import AutoTargetScalerPlugin
 
 print("...complete")
-
-
-scaler: AutoTargetScalerPlugin | None = None
-
-
 class QualityAwareRoutine:
     """Adjust LR based on recent loss trend for stability."""
 
@@ -81,32 +74,17 @@ class QualityAwareRoutine:
 
 
 def quality_loss(pred: torch.Tensor, target: torch.Tensor, delta: float = 0.5) -> torch.Tensor:
-    """Huber-style loss with optional target scaling.
-
-    When a global ``AutoTargetScalerPlugin`` instance is present, its
-    ``scale`` factor is applied to the target before loss computation to
-    keep magnitudes compatible with model outputs and avoid exploding
-    losses.
-    """
-
-    global scaler
-    if scaler is not None:
-        try:
-            dummy = types.SimpleNamespace(
-                _target_provider=lambda _y: target,
-                _torch=torch,
-                _device=pred.device,
-            )
-            scaler._orig_tp = lambda _y: target  # type: ignore[attr-defined]
-            scaler.loss(dummy, [pred])
-            target = target * float(getattr(scaler, "scale", 1.0))
-        except Exception:
-            pass
+    """Huber-style loss for quality scores."""
+    # ``pred`` carries the neuron's output which, depending on the encoded
+    # payload size, may be a high dimensional tensor.  ``target`` on the other
+    # hand encodes a single float quality score.  Subtracting mismatched shapes
+    # would raise and silently yield a zero loss upstream.  Flatten both sides
+    # to scalars so the Huber loss always operates on compatible shapes.
+    pred = pred.float().view(-1).mean()
+    target = target.float().view(-1).mean()
     diff = pred - target
     abs_diff = torch.abs(diff)
-    return torch.mean(
-        torch.where(abs_diff < delta, 0.5 * diff ** 2, delta * (abs_diff - 0.5 * delta))
-    )
+    return torch.where(abs_diff < delta, 0.5 * diff ** 2, delta * (abs_diff - 0.5 * delta))
 
 
 
@@ -258,8 +236,6 @@ def main(
         else:
             ap._mandatory = set(mandatory_plugins)
     register_wanderer_type("autoplugin_logger", ap)
-    global scaler
-    scaler = AutoTargetScalerPlugin(observe_steps=2)
     wplugins = [
         "batchtrainer",
         "qualityweightedloss",
@@ -371,13 +347,6 @@ def main(
         print(
             f"processed datapairs: {cnt} in {duration:.2f}s ({duration/walks:.2f}s per walk)"
         )
-        if hasattr(scaler, "scale"):
-            print(
-                "auto target scaler stats:",
-                f"scale={scaler.scale:.4f}",
-                f"std_out={getattr(scaler, 'std_out', 0):.4f}",
-                f"std_tgt={getattr(scaler, 'std_tgt', 0):.4f}",
-            )
         if cnt == 0:
             raise RuntimeError("run_training_with_datapairs returned count=0")
         clear_resources()
