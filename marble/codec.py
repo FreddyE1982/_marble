@@ -49,8 +49,12 @@ class UniversalTensorCodec:
         except Exception:
             data = pickle.dumps(obj, protocol=pickle.HIGHEST_PROTOCOL, fix_imports=False)
             serializer = 0
-        raw = bytes([serializer]) + data
-        tokens = zlib.compress(raw, _COMPRESSION_LEVEL)
+        compressor = zlib.compressobj(_COMPRESSION_LEVEL)
+        tokens = bytearray()
+        # stream serializer marker and payload separately to avoid copying large buffers
+        tokens.extend(compressor.compress(_BYTE_TABLE[serializer]))
+        tokens.extend(compressor.compress(data))
+        tokens.extend(compressor.flush())
         out = self._to_tensor(tokens)
         try:
             ln = int(out.numel()) if hasattr(out, "numel") else len(out)  # type: ignore[arg-type]
