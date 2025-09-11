@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import pickle
 import marshal
+import struct
 import zlib
 from typing import Any, Dict, List, Sequence, Union
 
@@ -57,6 +58,31 @@ class UniversalTensorCodec:
         serializer = 1
         try:
             if isinstance(obj, list) and len(obj) > 1000:
+                ln = len(obj)
+                first = obj[0]
+                if (
+                    ln > 1
+                    and isinstance(first, int)
+                    and isinstance(obj[1], int)
+                    and isinstance(obj[-1], int)
+                    and obj[1] == first + 1
+                    and obj[-1] == first + ln - 1
+                    and obj[ln // 2] == first + ln // 2
+                ):
+                    serializer = 2
+                    header = struct.pack("<qi", first, ln)
+                    compressor = zlib.compressobj(_COMPRESSION_LEVEL, strategy=zlib.Z_HUFFMAN_ONLY)
+                    tokens = bytearray()
+                    tokens.extend(compressor.compress(_BYTE_TABLE[serializer]))
+                    tokens.extend(compressor.compress(header))
+                    tokens.extend(compressor.flush())
+                    out = self._to_tensor(tokens)
+                    try:
+                        ln = int(out.numel()) if hasattr(out, "numel") else len(out)  # type: ignore[arg-type]
+                    except Exception:
+                        ln = -1
+                    _safe_report("codec", "encode", {"obj_type": type(obj).__name__, "tokens": ln}, "events")
+                    return out
                 raise ValueError
             data = marshal.dumps(obj)
         except Exception:
@@ -78,12 +104,15 @@ class UniversalTensorCodec:
 
     def decode(self, tokens: Union[TensorLike, Sequence[int]]) -> Any:
         data = self._tokens_to_bytes(tokens)
-        if data[:1] in (b"\x00", b"\x01"):
+        if data[:1] in (b"\x00", b"\x01", b"\x02"):
             marker, payload = data[0], data[1:]
             if marker == 1:
                 obj = marshal.loads(payload)
-            else:
+            elif marker == 0:
                 obj = pickle.loads(payload)
+            else:
+                start, length = struct.unpack("<qi", payload)
+                obj = list(range(start, start + length))
         else:  # backward compatibility with old tokens
             obj = pickle.loads(data)
         _safe_report("codec", "decode", {"ok": True, "vocab_size": self.vocab_size()}, "events")
