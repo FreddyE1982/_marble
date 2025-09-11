@@ -8,7 +8,7 @@ class TestWandererFlatDelta(unittest.TestCase):
     def test_flat_delta_marks_neuron(self) -> None:
         b = Brain(1, mode="sparse", sparse_bounds=((0.0, None),))
         n1 = b.add_neuron((0.0,), tensor=[0.0])
-        n2 = b.add_neuron((1.0,), tensor=[0.0])
+        n2 = b.add_neuron((1.0,), tensor=[0.0], connect_to=(0.0,))
         b.connect((0.0,), (0.0,), direction="uni")
         w = Wanderer(b, seed=123, neuro_config={"max_flat_steps": 1})
         w._compute_loss = lambda outputs, override_loss=None: torch.tensor(0.0)
