@@ -42,8 +42,10 @@ class UniversalTensorCodec:
         return len(self._token_to_seq)
 
     def encode(self, obj: Any) -> TensorLike:
-        data = pickle.dumps(obj, protocol=pickle.HIGHEST_PROTOCOL, fix_imports=False)
-        tokens = self._bytes_to_tokens(data)
+        dumps = pickle.dumps
+        compress = zlib.compress
+        data = dumps(obj, protocol=pickle.HIGHEST_PROTOCOL, fix_imports=False)
+        tokens = compress(data, _COMPRESSION_LEVEL)
         out = self._to_tensor(tokens)
         try:
             ln = int(out.numel()) if hasattr(out, "numel") else len(out)  # type: ignore[arg-type]
@@ -120,11 +122,14 @@ class UniversalTensorCodec:
 
     def _to_tensor(self, values: Union[List[int], bytes]) -> TensorLike:
         if self._torch is not None:
+            torch = self._torch
             if isinstance(values, (bytes, bytearray, memoryview)):
-                buf = bytearray(values)
-                t = self._torch.frombuffer(buf, dtype=self._torch.uint8)
-                return t.to(self._device, dtype=self._torch.long)
-            return self._torch.tensor(values, dtype=self._torch.long, device=self._device)
+                buf = values if isinstance(values, bytearray) else bytearray(values)
+                t = torch.frombuffer(buf, dtype=torch.uint8)
+                if self._device != "cpu":
+                    t = t.to(self._device)
+                return t.clone()
+            return torch.tensor(values, dtype=torch.uint8, device=self._device)
         return list(values) if not isinstance(values, list) else values
 
     def _to_list(self, maybe_tensor: Union[TensorLike, Sequence[int]]) -> List[int]:
