@@ -24,6 +24,8 @@ import threading
 import shutil
 import time
 from pathlib import Path
+from concurrent.futures import ThreadPoolExecutor
+from operator import getitem
 from datasets import DownloadConfig
 import torch
 
@@ -100,48 +102,34 @@ def _sample_pairs(ds, max_pairs: int | None = None) -> Iterator:
 
     count = 0
     get_dp = make_datapair  # local bind for speed
-    for ex in ds:
-        if max_pairs is not None and count >= max_pairs:
-            break
-        try:
-            raw = getattr(ex, "_data", None)
-            if raw is None:
-                raw = {
-                    "prompt": ex.get_raw("prompt"),
-                    "weighted_results_image1_preference": ex.get_raw(
-                        "weighted_results_image1_preference"
-                    ),
-                    "weighted_results_image2_preference": ex.get_raw(
-                        "weighted_results_image2_preference"
-                    ),
-                    "weighted_results_image1_alignment": ex.get_raw(
-                        "weighted_results_image1_alignment"
-                    ),
-                    "weighted_results_image2_alignment": ex.get_raw(
-                        "weighted_results_image2_alignment"
-                    ),
-                }
+    codec = UniversalTensorCodec()
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        for ex in ds:
+            if max_pairs is not None and count >= max_pairs:
+                break
+            try:
+                raw = ex._data
+                prompt = raw["prompt"]
+                img_raw1 = raw["image1"]
+                img_raw2 = raw["image2"]
+                f1 = pool.submit(codec.encode, img_raw1)
+                f2 = pool.submit(codec.encode, img_raw2)
+                img1 = f1.result()
+                img2 = f2.result()
+                f = float
+                pref1 = f(raw["weighted_results_image1_preference"])
+                pref2 = f(raw["weighted_results_image2_preference"])
+                al1 = f(raw["weighted_results_image1_alignment"])
+                al2 = f(raw["weighted_results_image2_alignment"])
+                q1 = 0.5 * (pref1 + al1)
+                q2 = 0.5 * (pref2 + al2)
+            except Exception as err:
+                print(f"skipping example due to: {err}; example={ex}")
+                continue
 
-            prompt = raw["prompt"]
-            img1, img2 = ex["image1"], ex["image2"]
-            pref1, pref2, al1, al2 = map(
-                float,
-                (
-                    raw["weighted_results_image1_preference"],
-                    raw["weighted_results_image2_preference"],
-                    raw["weighted_results_image1_alignment"],
-                    raw["weighted_results_image2_alignment"],
-                ),
-            )
-            q1 = 0.5 * (pref1 + al1)
-            q2 = 0.5 * (pref2 + al2)
-        except Exception as err:
-            print(f"skipping example due to: {err}; example={ex}")
-            continue
-
-        yield get_dp({"prompt": prompt, "image": img1}, q1)
-        yield get_dp({"prompt": prompt, "image": img2}, q2)
-        count += 2
+            yield get_dp({"prompt": prompt, "image": img1}, q1)
+            yield get_dp({"prompt": prompt, "image": img2}, q2)
+            count += 2
 def main(
     epochs: int = 1,
     max_pairs: int | None = None,
