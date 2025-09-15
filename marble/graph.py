@@ -319,11 +319,22 @@ class Synapse(_DeviceHelper):
             raise ValueError("direction must be 'forward' or 'backward'")
 
         val = self._ensure_tensor(value)
-        if self._torch is not None and self._is_torch_tensor(val):
-            val = val * float(self.weight) + float(self.bias)
-        else:
-            vl = np.asarray(val, dtype=np.float32)
-            val = vl * float(self.weight) + float(self.bias)
+        try:
+            from .plugins.wanderer_resource_allocator import track_tensor as _tt
+            holder = {"val": val}
+            with _tt(holder, "val"):
+                if self._torch is not None and self._is_torch_tensor(holder["val"]):
+                    holder["val"] = holder["val"] * float(self.weight) + float(self.bias)
+                else:
+                    vl = np.asarray(holder["val"], dtype=np.float32)
+                    holder["val"] = vl * float(self.weight) + float(self.bias)
+            val = holder["val"]
+        except Exception:
+            if self._torch is not None and self._is_torch_tensor(val):
+                val = val * float(self.weight) + float(self.bias)
+            else:
+                vl = np.asarray(val, dtype=np.float32)
+                val = vl * float(self.weight) + float(self.bias)
 
         if direction == "forward":
             if self.direction not in ("uni", "bi"):
