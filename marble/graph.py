@@ -310,7 +310,13 @@ class Synapse(_DeviceHelper):
     def __deepcopy__(self, memo):
         raise TypeError("Synapse instances are immutable and cannot be deep-copied")
 
-    def transmit(self, value: Union[TensorLike, Sequence[float], float, int], *, direction: str = "forward") -> Neuron:
+    def transmit(
+        self,
+        value: Union[TensorLike, Sequence[float], float, int],
+        *,
+        direction: str = "forward",
+        visited: Optional[Dict["Synapse", "Neuron"]] = None,
+    ) -> Neuron:
         plugin = _SYNAPSE_TYPES.get(self.type_name) if self.type_name else None
         if plugin is not None and hasattr(plugin, "transmit"):
             return plugin.transmit(self, value, direction=direction)  # type: ignore[attr-defined]
@@ -318,10 +324,16 @@ class Synapse(_DeviceHelper):
         if direction not in ("forward", "backward"):
             raise ValueError("direction must be 'forward' or 'backward'")
 
+        if visited is None:
+            visited = {}
+        if self in visited:
+            return visited[self]
+
         val = self._ensure_tensor(value)
+        holder = {"val": val}
+        applied = False
         try:
             from .plugins.wanderer_resource_allocator import track_tensor as _tt
-            holder = {"val": val}
             with _tt(holder, "val"):
                 if self._torch is not None and self._is_torch_tensor(holder["val"]):
                     holder["val"].mul_(float(self.weight)).add_(float(self.bias))
@@ -330,22 +342,24 @@ class Synapse(_DeviceHelper):
                     vl *= float(self.weight)
                     vl += float(self.bias)
                     holder["val"] = vl
-            val = holder["val"]
+                applied = True
         except Exception:
-            if self._torch is not None and self._is_torch_tensor(val):
-                val.mul_(float(self.weight)).add_(float(self.bias))
-            else:
-                vl = np.asarray(val, dtype=np.float32)
-                vl *= float(self.weight)
-                vl += float(self.bias)
-                val = vl
+            if not applied:
+                if self._torch is not None and self._is_torch_tensor(holder["val"]):
+                    holder["val"].mul_(float(self.weight)).add_(float(self.bias))
+                else:
+                    vl = np.asarray(holder["val"], dtype=np.float32)
+                    vl *= float(self.weight)
+                    vl += float(self.bias)
+                    holder["val"] = vl
+        val = holder["val"]
 
         if direction == "forward":
             if self.direction not in ("uni", "bi"):
                 raise ValueError("This synapse does not allow forward transmission")
             dest = self.target
             if isinstance(dest, Synapse):
-                out_neuron = dest.transmit(val, direction="forward")
+                out_neuron = dest.transmit(val, direction="forward", visited=visited)
             else:
                 dest.receive(val)
                 out_neuron = dest
@@ -354,12 +368,18 @@ class Synapse(_DeviceHelper):
                 raise ValueError("This synapse does not allow backward transmission")
             dest = self.source
             if isinstance(dest, Synapse):
-                out_neuron = dest.transmit(val, direction="backward")
+                out_neuron = dest.transmit(val, direction="backward", visited=visited)
             else:
                 dest.receive(val)
                 out_neuron = dest
+        visited[self] = out_neuron
         try:
-            self._report("synapse", "transmit", {"dir": direction, "weight": float(self.weight), "bias": float(self.bias)}, "events")
+            self._report(
+                "synapse",
+                "transmit",
+                {"dir": direction, "weight": float(self.weight), "bias": float(self.bias)},
+                "events",
+            )
         except Exception:
             pass
         return out_neuron
