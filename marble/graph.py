@@ -336,9 +336,11 @@ class Synapse(_DeviceHelper):
             from .plugins.wanderer_resource_allocator import track_tensor as _tt
             with _tt(holder, "val"):
                 if self._torch is not None and self._is_torch_tensor(holder["val"]):
-                    holder["val"].mul_(float(self.weight)).add_(float(self.bias))
+                    out = holder["val"] * float(self.weight)
+                    out.add_(float(self.bias))
+                    holder["val"] = out
                 else:
-                    vl = np.asarray(holder["val"], dtype=np.float32)
+                    vl = np.array(holder["val"], dtype=np.float32, copy=True)
                     vl *= float(self.weight)
                     vl += float(self.bias)
                     holder["val"] = vl
@@ -346,9 +348,11 @@ class Synapse(_DeviceHelper):
         except Exception:
             if not applied:
                 if self._torch is not None and self._is_torch_tensor(holder["val"]):
-                    holder["val"].mul_(float(self.weight)).add_(float(self.bias))
+                    out = holder["val"] * float(self.weight)
+                    out.add_(float(self.bias))
+                    holder["val"] = out
                 else:
-                    vl = np.asarray(holder["val"], dtype=np.float32)
+                    vl = np.array(holder["val"], dtype=np.float32, copy=True)
                     vl *= float(self.weight)
                     vl += float(self.bias)
                     holder["val"] = vl
