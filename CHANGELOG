@@ -1,3 +1,7 @@
+2025-10-01
+- Added ``snapshot_to_image`` helper to render network topology PNGs from
+  ``.marble`` snapshot files.
+
 2025-09-11
 - Benchmarked zlib compression levels 1-9 and selected level 2 as the best
   speed/size compromise for `UniversalTensorCodec`, improving encode times
