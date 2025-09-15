@@ -4,6 +4,7 @@ import importlib
 import os
 import hashlib
 import shutil
+import gc
 from collections import OrderedDict
 from typing import Any, Dict, Optional, Sequence, Tuple, Union, Set
 
@@ -222,11 +223,15 @@ class HFStreamingDatasetWrapper:
         for ex in self._ds:
             if isinstance(ex, dict):
                 ex, enc = self._encode_all_image_fields(ex)
-                yield HFEncodedExample(ex, self._codec, self, enc)
+                result = HFEncodedExample(ex, self._codec, self, enc)
             else:
                 ex_dict = {"value": ex}
                 ex_dict, enc = self._encode_all_image_fields(ex_dict)
-                yield HFEncodedExample(ex_dict, self._codec, self, enc)
+                result = HFEncodedExample(ex_dict, self._codec, self, enc)
+            ex = None  # release reference to raw example
+            yield result
+            del result
+            gc.collect()
 
     def __getitem__(self, idx):
         ex = self._ds[idx]
