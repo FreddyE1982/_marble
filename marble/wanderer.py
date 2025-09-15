@@ -823,6 +823,12 @@ class Wanderer(_DeviceHelper):
             carried_value = out
             steps += 1
             moved_last = True
+            for plug in getattr(self, "_wplugins", []) or []:
+                try:
+                    if hasattr(plug, "rebalance_all"):
+                        plug.rebalance_all(self)  # type: ignore[attr-defined]
+                except Exception:
+                    pass
 
         try:
             if moved_last and current is not None:
