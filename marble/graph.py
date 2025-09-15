@@ -359,6 +359,7 @@ class Synapse(_DeviceHelper):
                 raise ValueError("This synapse does not allow forward transmission")
             dest = self.target
             if isinstance(dest, Synapse):
+                visited[self] = None
                 out_neuron = dest.transmit(val, direction="forward", visited=visited)
             else:
                 dest.receive(val)
@@ -368,6 +369,7 @@ class Synapse(_DeviceHelper):
                 raise ValueError("This synapse does not allow backward transmission")
             dest = self.source
             if isinstance(dest, Synapse):
+                visited[self] = None
                 out_neuron = dest.transmit(val, direction="backward", visited=visited)
             else:
                 dest.receive(val)
