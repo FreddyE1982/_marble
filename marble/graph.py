@@ -324,17 +324,21 @@ class Synapse(_DeviceHelper):
             holder = {"val": val}
             with _tt(holder, "val"):
                 if self._torch is not None and self._is_torch_tensor(holder["val"]):
-                    holder["val"] = holder["val"] * float(self.weight) + float(self.bias)
+                    holder["val"].mul_(float(self.weight)).add_(float(self.bias))
                 else:
                     vl = np.asarray(holder["val"], dtype=np.float32)
-                    holder["val"] = vl * float(self.weight) + float(self.bias)
+                    vl *= float(self.weight)
+                    vl += float(self.bias)
+                    holder["val"] = vl
             val = holder["val"]
         except Exception:
             if self._torch is not None and self._is_torch_tensor(val):
-                val = val * float(self.weight) + float(self.bias)
+                val.mul_(float(self.weight)).add_(float(self.bias))
             else:
                 vl = np.asarray(val, dtype=np.float32)
-                val = vl * float(self.weight) + float(self.bias)
+                vl *= float(self.weight)
+                vl += float(self.bias)
+                val = vl
 
         if direction == "forward":
             if self.direction not in ("uni", "bi"):
