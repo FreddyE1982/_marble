@@ -342,7 +342,13 @@ def main(
         if idx in getattr(br, "neurons", {}):
             n = br.neurons[idx]
         else:
-            n = br.add_neuron(idx, tensor=0.0, type_name="autoneuron")
+            existing = next(iter(br.neurons)) if getattr(br, "neurons", None) else None
+            n = br.add_neuron(
+                idx,
+                tensor=0.0,
+                type_name="autoneuron",
+                connect_to=existing,
+            )
         n.receive(enc)
         return n
     
