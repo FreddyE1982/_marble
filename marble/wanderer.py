@@ -761,7 +761,7 @@ class Wanderer(_DeviceHelper):
                 try:
                     start_dev = time.perf_counter()
                     dev_val = out.detach().to(self._device)
-                    dev_val = dev_val * float(getattr(next_syn, "weight", 1.0)) + float(getattr(next_syn, "bias", 0.0))
+                    dev_val.mul_(float(getattr(next_syn, "weight", 1.0))).add_(float(getattr(next_syn, "bias", 0.0)))
                     compute_time = time.perf_counter() - start_dev
                     start_transfer = time.perf_counter()
                     _ = dev_val.to(self._device)
