@@ -5,6 +5,7 @@ import math
 import random
 import time
 import threading
+import gc
 from threading import Lock
 
 LockType = type(Lock())
@@ -313,6 +314,10 @@ def run_training_with_datapairs(
                     pass
             if (steps_per_pair is None or steps_per_pair <= 0) and auto_max_steps_every and count % auto_max_steps_every == 0:
                 current_max_steps = max(1, brain.longest_path_steps())
+            if streaming:
+                # Drop references to processed datapairs to free memory immediately
+                del dp, enc_l, enc_r, start
+                gc.collect()
 
         final_loss = history[-1]["loss"] if history else 0.0
         out = {"history": history, "final_loss": final_loss, "count": count}
