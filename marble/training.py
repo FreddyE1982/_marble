@@ -141,6 +141,7 @@ def run_training_with_datapairs(
 ) -> Dict[str, Any]:
     from .marblemain import Wanderer  # lazy import
     def _inner() -> Dict[str, Any]:
+        from .plugins import wanderer_resource_allocator as resource_allocator
         history: List[Dict[str, Any]] = []
         count = 0
         nonlocal auto_max_steps_every
@@ -286,7 +287,13 @@ def run_training_with_datapairs(
         for item in datapairs:
             brain._progress_walk = count  # type: ignore[attr-defined]
             dp = _normalize_pair(item)
-            enc_l, enc_r = dp.encode(codec)
+            class _Holder(dict):
+                pass
+            holder: Dict[str, Any] = _Holder()
+            with resource_allocator.track_tensor(holder, "enc_l"):
+                with resource_allocator.track_tensor(holder, "enc_r"):
+                    holder["enc_l"], holder["enc_r"] = dp.encode(codec)
+            enc_l, enc_r = holder["enc_l"], holder["enc_r"]
 
             if enc_r is not None:
                 def _tp(_y, target=enc_r):
@@ -297,9 +304,11 @@ def run_training_with_datapairs(
 
             start = left_to_start(dp.left, brain) if left_to_start is not None else create_start_neuron(brain, enc_l)
             stats = w.walk(max_steps=current_max_steps, start=start, lr=lr, lobe=lobe)
-            finish_loss, delta = w.walkfinish()
-            stats["loss"] = finish_loss
-            stats["delta"] = delta
+            with resource_allocator.track_tensor(stats, "loss"):
+                with resource_allocator.track_tensor(stats, "delta"):
+                    finish_loss, delta = w.walkfinish()
+                    stats["loss"] = finish_loss
+                    stats["delta"] = delta
             stats["plugins"] = [p.__class__.__name__ for p in getattr(w, "_wplugins", []) or []]
             history.append(stats)
             count += 1
