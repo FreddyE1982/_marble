@@ -524,6 +524,12 @@ class Wanderer(_DeviceHelper):
                         pass
             except Exception:
                 pass
+            try:
+                for plug in getattr(self, "_wplugins", []) or []:
+                    if hasattr(plug, "rebalance_all"):
+                        plug.rebalance_all(self)
+            except Exception:
+                pass
             self._visited.append(current)
             w_param, b_param = params_for(current)
 
