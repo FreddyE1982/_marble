@@ -20,6 +20,7 @@ dependencies = [
   "tqdm",
   "kuzu",
   "pyyaml",
+  "Pillow",
 ]
 
 [project.urls]

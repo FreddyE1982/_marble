@@ -11,6 +11,7 @@ from .action_sampler import compute_logits, sample_actions, select_plugins
 from .offpolicy import Trajectory, importance_weights, doubly_robust
 from .policy_gradient import PolicyGradientAgent
 from .decision_controller import BUDGET_LIMIT
+from .snapshot_viz import snapshot_to_image
 
 __all__ = [
     "enable_auto_param_learning",
@@ -23,4 +24,5 @@ __all__ = [
     "doubly_robust",
     "PolicyGradientAgent",
     "BUDGET_LIMIT",
+    "snapshot_to_image",
 ]
