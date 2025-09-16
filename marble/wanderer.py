@@ -250,6 +250,15 @@ class Wanderer(_DeviceHelper):
         self._last_step_time: Optional[float] = None
         self._walk_loss_sum: float = 0.0
         self._walk_step_count: int = 0
+        self._global_walk_loss_sum: float = 0.0
+        self._global_walk_count: int = 0
+        self._display_loss: float = 0.0
+        self._display_mean_loss: float = 0.0
+        self._last_loss_speed: float = 0.0
+        self._last_mean_loss_speed: float = 0.0
+        self._display_path_index: Optional[int] = None
+        self._last_walk_end_time: Optional[float] = None
+        self._walk_start_time: Optional[float] = None
         self._global_step_counter: int = 0
         self.neuron_fire_count: int = 0
         self._last_walk_mean_loss: Optional[float] = None
@@ -381,6 +390,7 @@ class Wanderer(_DeviceHelper):
         self._finish_stats = None
         self._walk_ctx = {}
         self._last_step_time = time.time()
+        self._walk_start_time = self._last_step_time
         self._walk_loss_sum = 0.0
         self._walk_step_count = 0
         amp_enabled = bool(getattr(self, '_use_mixed_precision', False))
@@ -646,6 +656,17 @@ class Wanderer(_DeviceHelper):
             loss_speed = -(delta / dt) if dt and delta is not None and dt != 0 else 0.0
             mean_delta = mean_loss - (prev_mean if prev_mean is not None else mean_loss)
             mean_loss_speed = -(mean_delta / dt) if dt and dt != 0 else 0.0
+            if self._global_walk_count > 0:
+                progress_loss = self._display_loss
+                progress_mean_loss = self._display_mean_loss
+                progress_loss_speed = self._last_loss_speed
+                progress_mean_loss_speed = self._last_mean_loss_speed
+            else:
+                progress_loss = cur_loss
+                progress_mean_loss = mean_loss
+                progress_loss_speed = loss_speed
+                progress_mean_loss_speed = mean_loss_speed
+            progress_path_index = self._display_path_index
             try:
                 from .dashboard import update_metrics, dashboard_active
                 if dashboard_active():
@@ -655,13 +676,14 @@ class Wanderer(_DeviceHelper):
                         self,
                         steps,
                         max_steps,
-                        cur_loss,
-                        mean_loss,
-                        loss_speed,
-                        mean_loss_speed,
+                        progress_loss,
+                        progress_mean_loss,
+                        progress_loss_speed,
+                        progress_mean_loss_speed,
                         cuda_available=torch.cuda.is_available(),
                         available_plugins=len(WANDERER_TYPES_REGISTRY) + len(NEURO_TYPES_REGISTRY),
                         neuron_types_available=len(_NEURON_TYPES),
+                        path_index=progress_path_index,
                     )
             except Exception:
                 pass
@@ -687,14 +709,15 @@ class Wanderer(_DeviceHelper):
                 tot_walks=tot_walks,
                 cur_size=cur_size,
                 cap=cap,
-                cur_loss=cur_loss,
-                mean_loss=mean_loss,
-                loss_speed=loss_speed,
-                mean_loss_speed=mean_loss_speed,
+                cur_loss=progress_loss,
+                mean_loss=progress_mean_loss,
+                loss_speed=progress_loss_speed,
+                mean_loss_speed=progress_mean_loss_speed,
                 status=status,
                 synapses=syn_count,
                 paths=syn_count,
                 mean_speed=mean_speed,
+                path_index=progress_path_index,
             )
             prev_mean = mean_loss
 
@@ -715,10 +738,13 @@ class Wanderer(_DeviceHelper):
                         "applied_settings": self._last_applied_settings,
                         "current_lr": (float(self.current_lr) if isinstance(self.current_lr, (int, float)) or self.current_lr is not None else None),
                         "previous_loss": (float(prev_loss) if prev_loss is not None else None),
-                        "mean_loss": float(mean_loss),
+                        "mean_loss": float(progress_mean_loss),
+                        "loss_speed": float(progress_loss_speed),
+                        "mean_loss_speed": float(progress_mean_loss_speed),
                         "neuron_count": int(len(getattr(self.brain, "neurons", {}))),
                         "synapse_count": int(len(getattr(self.brain, "synapses", []))),
                         "walk_step_index": int(self._walk_step_count - 1),
+                        "path_index": (int(progress_path_index) if progress_path_index is not None else None),
                     },
                     "logs",
                 )
@@ -886,19 +912,7 @@ class Wanderer(_DeviceHelper):
                     loss = self._finish_stats["loss_tensor"]
                 else:
                     loss = self._compute_loss(outputs, override_loss=loss_fn)
-
-        cur_walk = int(getattr(self.brain, "_progress_walk", 0)) + 1
-        tot_walks = int(getattr(self.brain, "_progress_total_walks", 1))
-        cur_ep = int(getattr(self.brain, "_progress_epoch", 0)) + 1
-        tot_ep = int(getattr(self.brain, "_progress_total_epochs", 1))
-        pbar.end(
-            cur_ep=cur_ep,
-            tot_ep=tot_ep,
-            cur_walk=cur_walk,
-            tot_walks=tot_walks,
-            loss=float(loss.detach().to('cpu').item()),
-            steps=int(steps),
-        )
+        final_loss_val = float(loss.detach().to("cpu").item())
 
         if amp_enabled and scaler is not None and not self.tiling:
             scaler.scale(loss).backward()
@@ -980,7 +994,79 @@ class Wanderer(_DeviceHelper):
         except Exception:
             pass
 
-        final_loss_val = float(loss.detach().cpu().item())
+        walk_end_time = time.time()
+        prev_walk_loss = self._last_walk_loss
+        prev_mean_loss = self._display_mean_loss
+        prev_walk_count = self._global_walk_count
+        dt_for_speed = None
+        if self._last_walk_end_time is not None:
+            dt_for_speed = walk_end_time - self._last_walk_end_time
+        elif self._walk_start_time is not None:
+            dt_for_speed = walk_end_time - self._walk_start_time
+        if dt_for_speed is not None and dt_for_speed <= 0:
+            dt_for_speed = None
+        new_sum = self._global_walk_loss_sum + final_loss_val
+        new_count = prev_walk_count + 1
+        new_mean = new_sum / new_count if new_count > 0 else final_loss_val
+        if prev_walk_loss is not None and dt_for_speed:
+            self._last_loss_speed = -((final_loss_val - prev_walk_loss) / dt_for_speed)
+        else:
+            self._last_loss_speed = 0.0
+        if prev_walk_count > 0 and dt_for_speed:
+            self._last_mean_loss_speed = -((new_mean - prev_mean_loss) / dt_for_speed)
+        else:
+            self._last_mean_loss_speed = 0.0
+        self._global_walk_loss_sum = new_sum
+        self._global_walk_count = new_count
+        self._display_loss = final_loss_val
+        self._display_mean_loss = new_mean
+        self._last_walk_end_time = walk_end_time
+        self._walk_start_time = None
+
+        mean_speed = self._walk_step_count / total_dt if total_dt > 0 else 0.0
+        try:
+            cur_size, cap = self.brain.size_stats()  # type: ignore[attr-defined]
+        except Exception:
+            cur_size = len(getattr(self.brain, "neurons", {}))
+            cap = None
+        syn_count = len(getattr(self.brain, "synapses", []))
+        try:
+            status = getattr(self.brain, "status", lambda: {})()
+        except Exception:
+            status = {}
+
+        raw_path_index = getattr(self.brain, "_progress_walk", 0)
+        try:
+            cur_walk = int(raw_path_index) + 1
+        except Exception:
+            cur_walk = 1
+            raw_path_index = 0
+        tot_walks = int(getattr(self.brain, "_progress_total_walks", 1))
+        cur_ep = int(getattr(self.brain, "_progress_epoch", 0)) + 1
+        tot_ep = int(getattr(self.brain, "_progress_total_epochs", 1))
+        try:
+            self._display_path_index = int(raw_path_index)
+        except Exception:
+            self._display_path_index = None
+        pbar.end(
+            cur_ep=cur_ep,
+            tot_ep=tot_ep,
+            cur_walk=cur_walk,
+            tot_walks=tot_walks,
+            loss=final_loss_val,
+            steps=int(steps),
+            mean_loss=self._display_mean_loss,
+            loss_speed=self._last_loss_speed,
+            mean_loss_speed=self._last_mean_loss_speed,
+            cur_size=cur_size,
+            cap=cap,
+            synapses=syn_count,
+            status=status,
+            mean_speed=mean_speed,
+            paths=syn_count,
+            path_index=self._display_path_index,
+        )
+
         self._last_walk_loss = final_loss_val
         try:
             if step_metrics:
@@ -1000,6 +1086,10 @@ class Wanderer(_DeviceHelper):
                     "mean_step_loss": (self._last_walk_mean_loss if self._last_walk_mean_loss is not None else None),
                     "steps": int(steps),
                     "visited": int(len(self._visited)),
+                    "mean_loss_all_walks": self._display_mean_loss,
+                    "loss_speed": self._last_loss_speed,
+                    "mean_loss_speed": self._last_mean_loss_speed,
+                    "path_index": self._display_path_index,
                     "timestamp": time.time(),
                 },
                 "walks",
@@ -1018,6 +1108,10 @@ class Wanderer(_DeviceHelper):
             "steps": int(steps),
             "visited": int(len(self._visited)),
             "step_metrics": step_metrics,
+            "mean_loss_all_walks": self._display_mean_loss,
+            "loss_speed": self._last_loss_speed,
+            "mean_loss_speed": self._last_mean_loss_speed,
+            "path_index": self._display_path_index,
         }
 
         for nplug in getattr(self, "_neuro_plugins", []) or []:

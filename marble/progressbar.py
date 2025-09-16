@@ -137,6 +137,7 @@ class ProgressBar(ProgressBarBase):
         # the ``update`` call so the bar is rewritten exactly once per step.
         self._bar.set_description(desc, refresh=False)
         status: Dict[str, Any] = data.get("status", {})
+        path_idx = data.get("path_index")
         try:
             self._bar.set_postfix(
                 neurons=f"{data.get('cur_size', 0)}/{data.get('cap', '-')}",
@@ -150,6 +151,7 @@ class ProgressBar(ProgressBarBase):
                 neurons_pruned=status.get("neurons_pruned", 0),
                 synapses_pruned=status.get("synapses_pruned", 0),
                 paths=data.get("paths", 0),
+                path_index=path_idx if path_idx is not None else "-",
                 speed=f"{data.get('mean_speed', 0.0):.2f}",
                 refresh=False,
             )
@@ -160,11 +162,36 @@ class ProgressBar(ProgressBarBase):
     def end(self, **meta: Any) -> None:  # type: ignore[override]
         if self._bar is None:
             return
+        status: Dict[str, Any] = meta.get("status", {})
+        path_idx = meta.get("path_index")
+        try:
+            self._bar.set_postfix(
+                neurons=f"{meta.get('cur_size', 0)}/{meta.get('cap', '-')}",
+                loss=f"{meta.get('loss', 0.0):.4f}",
+                mean_loss=f"{meta.get('mean_loss', 0.0):.4f}",
+                loss_speed=f"{meta.get('loss_speed', 0.0):.4f}",
+                mean_loss_speed=f"{meta.get('mean_loss_speed', 0.0):.4f}",
+                neurons_added=status.get("neurons_added", 0),
+                synapses=meta.get("synapses", 0),
+                synapses_added=status.get("synapses_added", 0),
+                neurons_pruned=status.get("neurons_pruned", 0),
+                synapses_pruned=status.get("synapses_pruned", 0),
+                paths=meta.get("paths", 0),
+                path_index=path_idx if path_idx is not None else "-",
+                speed=f"{meta.get('mean_speed', 0.0):.2f}",
+                refresh=True,
+            )
+        except Exception:  # pragma: no cover - cosmetic only
+            pass
         self._bar.close()
         if self.verbose:
-            self._bar.write(
+            msg = (
                 f"{meta.get('cur_ep', 1)}/{meta.get('tot_ep', 1)} epochs "
                 f"{meta.get('cur_walk', 1)}/{meta.get('tot_walks', 1)} walks: end "
-                f"(loss={meta.get('loss')}, steps={meta.get('steps')})"
+                f"(loss={meta.get('loss')}, steps={meta.get('steps')}"
             )
+            if path_idx is not None:
+                msg += f", path_index={path_idx}"
+            msg += ")"
+            self._bar.write(msg)
         self._bar = None
