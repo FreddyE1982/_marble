@@ -17,6 +17,7 @@ from __future__ import annotations
 print("Importing packages..")
 
 from typing import Iterator, Any, Dict
+import io
 import os
 import re
 import subprocess
@@ -29,6 +30,7 @@ from concurrent.futures import ThreadPoolExecutor
 from queue import Queue
 from operator import getitem
 from datasets import DownloadConfig
+from PIL import Image
 import torch
 
 from marble.marblemain import (
@@ -94,6 +96,53 @@ def quality_loss(pred: torch.Tensor, target: torch.Tensor, delta: float = 0.5) -
 
 
 
+def _scale_image_max_side(image: Any, target: int = 500) -> Any:
+    """Return a copy of ``image`` whose larger side equals ``target`` pixels."""
+
+    try:
+        target = int(target)
+    except Exception:
+        target = 500
+    target = max(1, target)
+
+    pil_img: Image.Image | None
+    if isinstance(image, Image.Image):
+        pil_img = image
+    elif hasattr(image, "shape"):
+        try:
+            pil_img = Image.fromarray(image)  # type: ignore[arg-type]
+        except Exception:
+            pil_img = None
+    elif isinstance(image, (bytes, bytearray)):
+        try:
+            with io.BytesIO(image) as buffer:
+                pil_img = Image.open(buffer)
+                pil_img = pil_img.copy()
+        except Exception:
+            pil_img = None
+    else:
+        pil_img = None
+
+    if pil_img is None:
+        return image
+
+    width, height = pil_img.size
+    if not width or not height:
+        return pil_img
+
+    if width >= height:
+        new_width = target
+        new_height = max(1, int(round(height * target / width)))
+    else:
+        new_height = target
+        new_width = max(1, int(round(width * target / height)))
+
+    if (width, height) == (new_width, new_height):
+        return pil_img
+
+    return pil_img.resize((new_width, new_height), Image.LANCZOS)
+
+
 def _sample_pairs(ds, max_pairs: int | None = None) -> Iterator:
     """Yield datapairs of (prompt, image) with quality scores.
 
@@ -115,8 +164,8 @@ def _sample_pairs(ds, max_pairs: int | None = None) -> Iterator:
             try:
                 raw = ex._data
                 prompt = raw["prompt"]
-                img_raw1 = raw["image1"]
-                img_raw2 = raw["image2"]
+                img_raw1 = _scale_image_max_side(raw["image1"])
+                img_raw2 = _scale_image_max_side(raw["image2"])
                 f = float
                 # Launch image encodes and float conversions concurrently.
                 f1 = pool.submit(codec.encode, img_raw1)
