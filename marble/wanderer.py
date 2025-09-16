@@ -455,6 +455,13 @@ class Wanderer(_DeviceHelper):
             key = id(n)
             holder = self._param_map.get(key)
             if holder is not None:
+                try:
+                    from .plugins.wanderer_resource_allocator import restore_tensor as _rt
+
+                    _rt(holder, "w", self._device)
+                    _rt(holder, "b", self._device)
+                except Exception:
+                    pass
                 return holder.w, holder.b
             try:
                 wt_val = (
@@ -536,7 +543,12 @@ class Wanderer(_DeviceHelper):
             except Exception:
                 pass
             try:
-                with (torch.autocast(device_type=amp_device, dtype=amp_dtype) if amp_enabled else contextlib.nullcontext()):
+                with contextlib.ExitStack() as stack:
+                    if hasattr(torch.autograd, "graph") and hasattr(torch.autograd.graph, "save_on_cpu"):
+                        stack.enter_context(torch.autograd.graph.save_on_cpu())
+                    stack.enter_context(
+                        torch.autocast(device_type=amp_device, dtype=amp_dtype) if amp_enabled else contextlib.nullcontext()
+                    )
                     out = current.forward(carried_value)
             finally:
                 pass
@@ -718,6 +730,7 @@ class Wanderer(_DeviceHelper):
                 "outputs": outputs,
                 "steps": steps,
                 "cur_loss_tensor": step_loss_t,
+                "current_output": out,
             }
             from .plugins.wanderer_resource_allocator import track_tensor as _tt
             with _tt(self, "_cur_loss_tensor"):
@@ -821,6 +834,8 @@ class Wanderer(_DeviceHelper):
 
             current = next_neuron
             carried_value = out
+            if isinstance(self._walk_ctx, dict):
+                self._walk_ctx["carried_value"] = carried_value
             steps += 1
             moved_last = True
             for plug in getattr(self, "_wplugins", []) or []:
@@ -836,7 +851,13 @@ class Wanderer(_DeviceHelper):
                     current._plugin_state["wanderer"] = self
                 except Exception:
                     pass
-                out_tail = current.forward(None)
+                with contextlib.ExitStack() as stack:
+                    if hasattr(torch.autograd, "graph") and hasattr(torch.autograd.graph, "save_on_cpu"):
+                        stack.enter_context(torch.autograd.graph.save_on_cpu())
+                    stack.enter_context(
+                        torch.autocast(device_type=amp_device, dtype=amp_dtype) if amp_enabled else contextlib.nullcontext()
+                    )
+                    out_tail = current.forward(None)
                 outputs.append(out_tail)
         except Exception:
             pass
@@ -899,6 +920,13 @@ class Wanderer(_DeviceHelper):
                     loss = torch.tensor(float(loss), device=self._device, requires_grad=True)
             loss.backward()
             loss = loss.detach()
+
+        try:
+            for plug in getattr(self, "_wplugins", []) or []:
+                if hasattr(plug, "rebalance_all"):
+                    plug.rebalance_all(self)  # type: ignore[attr-defined]
+        except Exception:
+            pass
 
         try:
             gc = getattr(self, "_grad_clip", {}) or {}
