@@ -101,7 +101,10 @@ def _scale_image_max_side(image: Any, target: int = 500) -> Any:
 
     Byte inputs are re-encoded after resizing so callers relying on the
     ``bytes`` fast-path of :class:`UniversalTensorCodec` keep benefiting from
-    compressed payloads.
+    compressed payloads.  When the source image is a JPEG, reuse its original
+    quantization tables (falling back to lossless PNG if unavailable) so the
+    saved pixels retain the compression artefacts encoded in the quality
+    labels.
     """
 
     try:
@@ -145,10 +148,37 @@ def _scale_image_max_side(image: Any, target: int = 500) -> Any:
                 fmt = opened.format or "PNG"
                 save_format = fmt.upper()
                 to_save = resized
-                if save_format == "JPEG" and resized.mode not in ("RGB", "L"):
-                    to_save = resized.convert("RGB")
+                info: Dict[str, Any] = dict(getattr(opened, "info", {}) or {})
+                save_kwargs: Dict[str, Any] = {}
+                if save_format == "JPEG":
+                    if to_save.mode not in ("RGB", "L"):
+                        to_save = to_save.convert("RGB")
+                    quantization = getattr(opened, "quantization", None)
+                    if quantization:
+                        save_kwargs["qtables"] = quantization
+                        subsampling = info.get("subsampling")
+                        if subsampling is not None:
+                            save_kwargs["subsampling"] = subsampling
+                    else:
+                        quality = info.get("quality")
+                        subsampling = info.get("subsampling")
+                        if quality is not None:
+                            save_kwargs["quality"] = quality
+                            if subsampling is not None:
+                                save_kwargs["subsampling"] = subsampling
+                        else:
+                            save_format = "PNG"
+                            to_save = to_save.convert("RGB") if to_save.mode == "CMYK" else to_save
+                            save_kwargs = {}
+                    if save_format == "JPEG":
+                        for key in ("progressive", "optimize", "dpi", "icc_profile", "exif"):
+                            value = info.get(key)
+                            if value is not None:
+                                save_kwargs[key] = value
+                if save_format == "PNG" and to_save.mode == "CMYK":
+                    to_save = to_save.convert("RGB")
                 with io.BytesIO() as out:
-                    to_save.save(out, format=save_format)
+                    to_save.save(out, format=save_format, **save_kwargs)
                     data = out.getvalue()
                 return type(image)(data)
         except Exception:
