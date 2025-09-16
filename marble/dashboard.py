@@ -2,7 +2,7 @@ from __future__ import annotations
 import json, os, threading, time, datetime, tempfile
 from pathlib import Path
 from collections import defaultdict
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 # Global path to share metrics between training process and Streamlit app
 _METRICS_FILE = Path(tempfile.gettempdir()) / "marble_dashboard_metrics.json"
@@ -48,6 +48,7 @@ def update_metrics(
     cuda_available: bool,
     available_plugins: int,
     neuron_types_available: int,
+    path_index: Optional[int] = None,
 ) -> None:
     """Write latest training metrics to the shared metrics file."""
     global _plugin_actions
@@ -96,6 +97,7 @@ def update_metrics(
         "cuda": bool(cuda_available),
         "last_snapshot_time": snapshot_time,
         "last_snapshot_size_mb": snapshot_size,
+        "path_index": (int(path_index) if path_index is not None else None),
     }
     try:
         _METRICS_FILE.write_text(json.dumps(data))

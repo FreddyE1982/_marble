@@ -10,7 +10,7 @@ class TestWandererTiling(unittest.TestCase):
     def test_wanderer_tiling_basic(self):
         b = self.Brain(2, mode="sparse", sparse_bounds=((0.0, None), (0.0, None)))
         n1 = b.add_neuron((0.0, 0.0), tensor=[1.0, 2.0], weight=1.0, bias=0.5)
-        n2 = b.add_neuron((1.0, 0.0), tensor=[0.5, 1.5], weight=0.8, bias=-0.2)
+        n2 = b.add_neuron((1.0, 0.0), tensor=[0.5, 1.5], weight=0.8, bias=-0.2, connect_to=(0.0, 0.0), direction="bi")
         b.connect((0.0, 0.0), (1.0, 0.0), direction="bi")
 
         orig = {id(n1): (n1.weight, n1.bias), id(n2): (n2.weight, n2.bias)}
