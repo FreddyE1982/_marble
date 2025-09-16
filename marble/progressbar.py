@@ -96,8 +96,11 @@ class ProgressBar(ProgressBarBase):
     """Concrete progress bar replicating Wanderer's original output."""
 
     def __init__(self) -> None:
+        if getattr(self, "_initialized", False):
+            return
         self._bar: Optional[Any] = None
         self.verbose = False
+        self._initialized = True
 
     # ---- ProgressBarBase API -------------------------------------------------
     def start(self, total: int, *, leave: bool = False, verbose: bool = False, **meta: Any) -> None:
