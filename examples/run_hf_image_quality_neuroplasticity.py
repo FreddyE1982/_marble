@@ -15,14 +15,17 @@ from __future__ import annotations
 print("Importing packages..")
 
 from typing import Iterator, Any, Dict
+import io
 import os
 import re
 import time
 import subprocess
 import threading
 import shutil
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from datasets import DownloadConfig
+from PIL import Image
 import torch
 
 from marble.marblemain import (
@@ -36,6 +39,8 @@ from marble.marblemain import (
 import marble.plugins  # ensure plugin discovery
 
 print("...complete")
+
+PREP_TIMES: list[float] = []
 
 
 class QualityAwareRoutine:
@@ -80,28 +85,129 @@ def quality_loss(pred: torch.Tensor, target: torch.Tensor, delta: float = 0.5) -
     return torch.where(abs_diff < delta, 0.5 * diff ** 2, delta * (abs_diff - 0.5 * delta))
 
 
+def _scale_image_max_side(image: Any, target: int = 500) -> Any:
+    """Return ``image`` with its larger side clamped to ``target`` pixels."""
+
+    try:
+        target = int(target)
+    except Exception:
+        target = 500
+    target = max(1, target)
+
+    def _resize_if_needed(pil_img: Image.Image) -> tuple[Image.Image, bool]:
+        width, height = pil_img.size
+        if not width or not height:
+            return pil_img, False
+        if width >= height:
+            new_width = target
+            new_height = max(1, int(round(height * target / width)))
+        else:
+            new_height = target
+            new_width = max(1, int(round(width * target / height)))
+        if (width, height) == (new_width, new_height):
+            return pil_img, False
+        return pil_img.resize((new_width, new_height), Image.LANCZOS), True
+
+    if isinstance(image, Image.Image):
+        resized, changed = _resize_if_needed(image)
+        return resized if changed else image
+
+    if hasattr(image, "shape"):
+        try:
+            pil_img = Image.fromarray(image)  # type: ignore[arg-type]
+        except Exception:
+            return image
+        resized, _ = _resize_if_needed(pil_img)
+        return resized
+
+    if isinstance(image, (bytes, bytearray)):
+        try:
+            with Image.open(io.BytesIO(image)) as opened:
+                resized, changed = _resize_if_needed(opened)
+                if not changed:
+                    return image
+                fmt = opened.format or "PNG"
+                save_format = fmt.upper()
+                to_save = resized
+                info: Dict[str, Any] = dict(getattr(opened, "info", {}) or {})
+                save_kwargs: Dict[str, Any] = {}
+                if save_format == "JPEG":
+                    if to_save.mode not in ("RGB", "L"):
+                        to_save = to_save.convert("RGB")
+                    quantization = getattr(opened, "quantization", None)
+                    if quantization:
+                        save_kwargs["qtables"] = quantization
+                        subsampling = info.get("subsampling")
+                        if subsampling is not None:
+                            save_kwargs["subsampling"] = subsampling
+                    else:
+                        quality = info.get("quality")
+                        subsampling = info.get("subsampling")
+                        if quality is not None:
+                            save_kwargs["quality"] = quality
+                            if subsampling is not None:
+                                save_kwargs["subsampling"] = subsampling
+                        else:
+                            save_format = "PNG"
+                            to_save = to_save.convert("RGB") if to_save.mode == "CMYK" else to_save
+                            save_kwargs = {}
+                    if save_format == "JPEG":
+                        for key in ("progressive", "optimize", "dpi", "icc_profile", "exif"):
+                            value = info.get(key)
+                            if value is not None:
+                                save_kwargs[key] = value
+                if save_format == "PNG" and to_save.mode == "CMYK":
+                    to_save = to_save.convert("RGB")
+                with io.BytesIO() as out:
+                    to_save.save(out, format=save_format, **save_kwargs)
+                    data = out.getvalue()
+                return type(image)(data)
+        except Exception:
+            return image
+
+    return image
+
+
 def _sample_pairs(ds, max_pairs: int | None = None) -> Iterator:
     """Yield datapairs of (prompt, image) with quality scores."""
+
     count = 0
-    for ex in ds:
-        if max_pairs is not None and count >= max_pairs:
-            break
-        try:
-            prompt = ex.get_raw("prompt")
-            img1 = ex["image1"]
-            img2 = ex["image2"]
-            pref1 = float(ex.get_raw("weighted_results_image1_preference"))
-            pref2 = float(ex.get_raw("weighted_results_image2_preference"))
-            al1 = float(ex.get_raw("weighted_results_image1_alignment"))
-            al2 = float(ex.get_raw("weighted_results_image2_alignment"))
-            q1 = (pref1 + al1) / 2.0
-            q2 = (pref2 + al2) / 2.0
-        except Exception as err:
-            print(f"skipping example due to: {err}; example={ex}")
-            continue
-        yield make_datapair({"prompt": prompt, "image": img1}, q1)
-        yield make_datapair({"prompt": prompt, "image": img2}, q2)
-        count += 2
+    get_dp = make_datapair
+    codec = UniversalTensorCodec()
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        for ex in ds:
+            if max_pairs is not None and count >= max_pairs:
+                break
+            try:
+                raw = ex._data
+                prompt = raw["prompt"]
+                img_raw1 = _scale_image_max_side(raw["image1"])
+                img_raw2 = _scale_image_max_side(raw["image2"])
+                f = float
+                f1 = pool.submit(codec.encode, img_raw1)
+                f2 = pool.submit(codec.encode, img_raw2)
+                pref1, pref2, al1, al2 = pool.map(
+                    f,
+                    [
+                        raw["weighted_results_image1_preference"],
+                        raw["weighted_results_image2_preference"],
+                        raw["weighted_results_image1_alignment"],
+                        raw["weighted_results_image2_alignment"],
+                    ],
+                )
+                img1 = f1.result()
+                img2 = f2.result()
+                q1 = 0.5 * (pref1 + al1)
+                q2 = 0.5 * (pref2 + al2)
+            except Exception as err:
+                print(f"skipping example due to: {err}; example={ex}")
+                continue
+
+            PREP_TIMES.append(time.perf_counter())
+            yield get_dp({"prompt": prompt, "image": img1}, q1)
+            PREP_TIMES.append(time.perf_counter())
+            yield get_dp({"prompt": prompt, "image": img2}, q2)
+            count += 2
 
 
 def main(
@@ -193,6 +299,9 @@ def main(
             print("Kuzu Explorer could not be started")
 
     def _start_neuron(left: Dict[str, Any], br):
+        if PREP_TIMES:
+            latency = time.perf_counter() - PREP_TIMES.pop(0)
+            print(f"prep-to-train latency: {latency:.4f}s")
         payload = (left.get("prompt"), left.get("image"))
         enc = codec.encode(payload)
         try:
