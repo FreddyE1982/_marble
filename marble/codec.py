@@ -5,7 +5,7 @@ import pickle
 import marshal
 import struct
 import zlib
-from typing import Any, Dict, List, Sequence, Union
+from typing import Any, Dict, List, Optional, Sequence, Union
 
 # Pre-computed single-byte sequences to avoid allocating new objects during
 # encoding. Index ``i`` contains ``bytes([i])``.
@@ -15,6 +15,8 @@ _BYTE_TABLE: List[bytes] = [bytes([i]) for i in range(256)]
 # Benchmarks across levels 1-9 showed level 2 offering the fastest encode
 # times while retaining essentially identical compression ratio.
 _COMPRESSION_LEVEL = 2
+
+_ENCODED_MAGIC = b"UTC1"
 
 TensorLike = Union[List[int], "_TorchTensor"]
 
@@ -55,6 +57,10 @@ class UniversalTensorCodec:
         return len(self._token_to_seq)
 
     def encode(self, obj: Any) -> TensorLike:
+        if self._looks_like_encoded(obj):
+            raise ValueError(
+                "Trying to re-encode an object that was already encoded using this or another instance of UniversalTensorCodec"
+            )
         serializer = 1
         try:
             if isinstance(obj, bytes):
@@ -94,7 +100,7 @@ class UniversalTensorCodec:
         except Exception:
             data = pickle.dumps(obj, protocol=pickle.HIGHEST_PROTOCOL, fix_imports=False)
             serializer = 0
-        payload = _BYTE_TABLE[serializer] + data
+        payload = _ENCODED_MAGIC + _BYTE_TABLE[serializer] + data
         tokens = zlib.compress(payload, _COMPRESSION_LEVEL)
         out = self._to_tensor(tokens)
         try:
@@ -180,7 +186,10 @@ class UniversalTensorCodec:
                 data = t.numpy().tobytes()
             else:
                 data = bytes(tokens)
-            return zlib.decompress(data)
+            decompressed = zlib.decompress(data)
+            if not decompressed.startswith(_ENCODED_MAGIC):
+                raise ValueError("Encoded tokens missing UniversalTensorCodec header")
+            return decompressed[len(_ENCODED_MAGIC) :]
         except Exception as e:
             raise ValueError("Token id out of range for current vocabulary") from e
 
@@ -232,6 +241,50 @@ class UniversalTensorCodec:
         except Exception:
             pass
         return "cpu"
+
+    def _looks_like_encoded(self, candidate: Any) -> bool:
+        compressed = self._extract_compressed_bytes(candidate)
+        if compressed is None:
+            return False
+        try:
+            decompressor = zlib.decompressobj()
+            needed = len(_ENCODED_MAGIC)
+            chunk = decompressor.decompress(compressed, needed)
+            if len(chunk) < needed:
+                tail = decompressor.unconsumed_tail
+                while len(chunk) < needed and tail:
+                    prev_len = len(chunk)
+                    chunk += decompressor.decompress(tail, needed - len(chunk))
+                    if len(chunk) == prev_len:
+                        break
+                    tail = decompressor.unconsumed_tail
+            if len(chunk) < needed:
+                return False
+            return chunk.startswith(_ENCODED_MAGIC)
+        except Exception:
+            return False
+
+    def _extract_compressed_bytes(self, candidate: Any) -> Optional[bytes]:
+        if isinstance(candidate, (bytes, bytearray, memoryview)):
+            return bytes(candidate)
+        if self._torch is not None and self._is_torch_tensor(candidate):
+            try:
+                if getattr(candidate, "dtype", None) is not self._torch.uint8:
+                    return None
+                t = candidate.detach()
+                if t.device.type != "cpu":
+                    t = t.to("cpu")
+                return t.contiguous().view(-1).numpy().tobytes()
+            except Exception:
+                return None
+        if isinstance(candidate, Sequence) and not isinstance(
+            candidate, (str, bytes, bytearray, memoryview)
+        ):
+            try:
+                return bytes(candidate)
+            except Exception:
+                return None
+        return None
 
 
 __all__ = ["UniversalTensorCodec", "TensorLike"]
