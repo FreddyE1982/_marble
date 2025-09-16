@@ -97,7 +97,12 @@ def quality_loss(pred: torch.Tensor, target: torch.Tensor, delta: float = 0.5) -
 
 
 def _scale_image_max_side(image: Any, target: int = 500) -> Any:
-    """Return a copy of ``image`` whose larger side equals ``target`` pixels."""
+    """Return ``image`` with its larger side clamped to ``target`` pixels.
+
+    Byte inputs are re-encoded after resizing so callers relying on the
+    ``bytes`` fast-path of :class:`UniversalTensorCodec` keep benefiting from
+    compressed payloads.
+    """
 
     try:
         target = int(target)
@@ -105,42 +110,51 @@ def _scale_image_max_side(image: Any, target: int = 500) -> Any:
         target = 500
     target = max(1, target)
 
-    pil_img: Image.Image | None
+    def _resize_if_needed(pil_img: Image.Image) -> tuple[Image.Image, bool]:
+        width, height = pil_img.size
+        if not width or not height:
+            return pil_img, False
+        if width >= height:
+            new_width = target
+            new_height = max(1, int(round(height * target / width)))
+        else:
+            new_height = target
+            new_width = max(1, int(round(width * target / height)))
+        if (width, height) == (new_width, new_height):
+            return pil_img, False
+        return pil_img.resize((new_width, new_height), Image.LANCZOS), True
+
     if isinstance(image, Image.Image):
-        pil_img = image
-    elif hasattr(image, "shape"):
+        resized, changed = _resize_if_needed(image)
+        return resized if changed else image
+
+    if hasattr(image, "shape"):
         try:
             pil_img = Image.fromarray(image)  # type: ignore[arg-type]
         except Exception:
-            pil_img = None
-    elif isinstance(image, (bytes, bytearray)):
+            return image
+        resized, _ = _resize_if_needed(pil_img)
+        return resized
+
+    if isinstance(image, (bytes, bytearray)):
         try:
-            with io.BytesIO(image) as buffer:
-                pil_img = Image.open(buffer)
-                pil_img = pil_img.copy()
+            with Image.open(io.BytesIO(image)) as opened:
+                resized, changed = _resize_if_needed(opened)
+                if not changed:
+                    return image
+                fmt = opened.format or "PNG"
+                save_format = fmt.upper()
+                to_save = resized
+                if save_format == "JPEG" and resized.mode not in ("RGB", "L"):
+                    to_save = resized.convert("RGB")
+                with io.BytesIO() as out:
+                    to_save.save(out, format=save_format)
+                    data = out.getvalue()
+                return type(image)(data)
         except Exception:
-            pil_img = None
-    else:
-        pil_img = None
+            return image
 
-    if pil_img is None:
-        return image
-
-    width, height = pil_img.size
-    if not width or not height:
-        return pil_img
-
-    if width >= height:
-        new_width = target
-        new_height = max(1, int(round(height * target / width)))
-    else:
-        new_height = target
-        new_width = max(1, int(round(width * target / height)))
-
-    if (width, height) == (new_width, new_height):
-        return pil_img
-
-    return pil_img.resize((new_width, new_height), Image.LANCZOS)
+    return image
 
 
 def _sample_pairs(ds, max_pairs: int | None = None) -> Iterator:
