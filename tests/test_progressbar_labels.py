@@ -21,5 +21,12 @@ class TestProgressBarLabels(unittest.TestCase):
         self.assertIn("neurons=1/2", postfix)
         p.end(cur_ep=1, tot_ep=1, cur_walk=1, tot_walks=1, loss=0.0, steps=1)
 
+    def test_singleton_does_not_reset_existing_bar(self):
+        p = ProgressBar()
+        p.start(1)
+        with self.assertRaises(RuntimeError):
+            ProgressBar().start(1)
+        p.end(cur_ep=1, tot_ep=1, cur_walk=1, tot_walks=1, loss=0.0, steps=1)
+
 if __name__ == "__main__":
     unittest.main()
