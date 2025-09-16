@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import pickle
 import marshal
+import secrets
 import struct
 import zlib
 from typing import Any, Dict, List, Optional, Sequence, Union
@@ -17,6 +18,10 @@ _BYTE_TABLE: List[bytes] = [bytes([i]) for i in range(256)]
 _COMPRESSION_LEVEL = 2
 
 _ENCODED_MAGIC = b"UTC1"
+_INSTANCE_TOKEN_LENGTH = 16
+_DECODE_INSTANCE_ERROR = (
+    "DECODE ERROR: Only the instance of UniversalTensorCodec that was used to encode this object can decode"
+)
 
 TensorLike = Union[List[int], "_TorchTensor"]
 
@@ -46,6 +51,8 @@ class UniversalTensorCodec:
         self._token_to_seq: List[bytes] = []
         self._torch = self._try_import_torch()
         self._device = self._select_device()
+        self._instance_token = secrets.token_bytes(_INSTANCE_TOKEN_LENGTH)
+        self._instance_token_length = len(self._instance_token)
         self._ensure_base_vocab()
 
     def reset_vocab(self) -> None:
@@ -83,7 +90,7 @@ class UniversalTensorCodec:
                 ):
                     serializer = 2
                     header = struct.pack("<qi", first, ln)
-                    payload = _BYTE_TABLE[serializer] + header
+                    payload = _ENCODED_MAGIC + self._instance_token + _BYTE_TABLE[serializer] + header
                     tokens = zlib.compress(payload, _COMPRESSION_LEVEL)
                     out = self._to_tensor(tokens)
                     try:
@@ -100,7 +107,7 @@ class UniversalTensorCodec:
         except Exception:
             data = pickle.dumps(obj, protocol=pickle.HIGHEST_PROTOCOL, fix_imports=False)
             serializer = 0
-        payload = _ENCODED_MAGIC + _BYTE_TABLE[serializer] + data
+        payload = _ENCODED_MAGIC + self._instance_token + _BYTE_TABLE[serializer] + data
         tokens = zlib.compress(payload, _COMPRESSION_LEVEL)
         out = self._to_tensor(tokens)
         try:
@@ -112,21 +119,35 @@ class UniversalTensorCodec:
 
     def decode(self, tokens: Union[TensorLike, Sequence[int]]) -> Any:
         data = self._tokens_to_bytes(tokens)
-        if data[:1] in (b"\x00", b"\x01", b"\x02", b"\x03", b"\x04"):
-            marker, payload = data[0], data[1:]
-            if marker == 1:
+        if not data:
+            raise ValueError("Encoded payload is empty")
+
+        token_length = self._instance_token_length
+        if len(data) <= token_length:
+            raise ValueError(_DECODE_INSTANCE_ERROR)
+
+        encoded_token = data[:token_length]
+        if encoded_token != self._instance_token:
+            raise ValueError(_DECODE_INSTANCE_ERROR)
+
+        marker = data[token_length : token_length + 1]
+        payload = data[token_length + 1 :]
+
+        if marker in (b"\x00", b"\x01", b"\x02", b"\x03", b"\x04"):
+            marker_value = marker[0]
+            if marker_value == 1:
                 obj = marshal.loads(payload)
-            elif marker == 0:
+            elif marker_value == 0:
                 obj = pickle.loads(payload)
-            elif marker == 2:
+            elif marker_value == 2:
                 start, length = struct.unpack("<qi", payload)
                 obj = list(range(start, start + length))
-            elif marker == 3:
+            elif marker_value == 3:
                 obj = payload
             else:
                 obj = payload.decode("utf-8")
-        else:  # backward compatibility with old tokens
-            obj = pickle.loads(data)
+        else:
+            raise ValueError("Encoded tokens missing serializer marker")
         _safe_report("codec", "decode", {"ok": True, "vocab_size": self.vocab_size()}, "events")
         return obj
 
@@ -148,6 +169,35 @@ class UniversalTensorCodec:
         self._token_to_seq = [bytes(seq) for seq in token_to_seq]
         self._seq_to_token = {seq: i for i, seq in enumerate(self._token_to_seq)}
         _safe_report("codec", "import_vocab", {"path": path, "size": self.vocab_size()}, "io")
+
+    def export_state(self) -> Dict[str, Any]:
+        """Return a serializable snapshot of the codec, including its secret token."""
+
+        return {
+            "instance_token": list(self._instance_token),
+            "vocab": self.dump_vocab(),
+        }
+
+    def import_state(self, state: Dict[str, Any]) -> None:
+        """Restore codec state previously produced by :meth:`export_state`."""
+
+        if not isinstance(state, dict):
+            raise ValueError("Invalid codec state")
+
+        token = state.get("instance_token")
+        if not isinstance(token, Sequence) or not all(isinstance(x, int) for x in token):
+            raise ValueError("Invalid codec state token")
+        try:
+            instance_token = bytes(int(x) & 0xFF for x in token)
+        except Exception as exc:  # pragma: no cover - defensive guard
+            raise ValueError("Invalid codec state token") from exc
+        if not instance_token:
+            raise ValueError("Invalid codec state token")
+        vocab = state.get("vocab")
+        if vocab is not None:
+            self.load_vocab(vocab)
+        self._instance_token = instance_token
+        self._instance_token_length = len(self._instance_token)
 
     # In-memory vocabulary helpers
     def dump_vocab(self) -> List[List[int]]:

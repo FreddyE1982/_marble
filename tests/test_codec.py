@@ -32,6 +32,7 @@ class TestUniversalTensorCodec(unittest.TestCase):
             [1, 2, 3, {"a": 1}],
             {"k": (1, 2), "s": {1, 2}},
             CustomThing({"nested": [1, 2, 3]}),
+            list(range(1500)),
         ]
         for obj in samples:
             t = codec.encode(obj)
@@ -50,6 +51,8 @@ class TestUniversalTensorCodec(unittest.TestCase):
         codec1 = UniversalTensorCodec()
         obj = {"alpha": [1, 2, 3], "beta": CustomThing(99)}
         tokens = codec1.encode(obj)
+        decoded_same_instance = codec1.decode(tokens)
+        self.assertEqual(decoded_same_instance, obj)
 
         # Export vocab
         out_path = Path("vocab_test.json")
@@ -60,9 +63,12 @@ class TestUniversalTensorCodec(unittest.TestCase):
             # Import vocab into a fresh codec and decode using same tokens
             codec2 = UniversalTensorCodec()
             codec2.import_vocab(str(out_path))
-            obj_back = codec2.decode(tokens)
+            with self.assertRaisesRegex(
+                ValueError,
+                "DECODE ERROR: Only the instance of UniversalTensorCodec that was used to encode this object can decode",
+            ):
+                codec2.decode(tokens)
             print("vocab roundtrip size=", codec1.vocab_size())
-            self.assertEqual(obj_back, obj)
         finally:
             if out_path.exists():
                 os.remove(out_path)

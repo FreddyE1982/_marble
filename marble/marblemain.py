@@ -1870,9 +1870,14 @@ class Brain:
                     "weight": syn.weight,
                 }
             )
-        if getattr(self, "codec", None) is not None:
+        codec_obj = getattr(self, "codec", None)
+        if codec_obj is not None:
             try:
-                data["codec_vocab"] = self.codec.dump_vocab()
+                data["codec_state"] = codec_obj.export_state()
+            except Exception:
+                pass
+            try:
+                data["codec_vocab"] = codec_obj.dump_vocab()
             except Exception:
                 pass
         with open(target, "wb") as f:
@@ -1960,14 +1965,23 @@ class Brain:
                 type_name=syn.get("type_name"),
                 weight=syn.get("weight", 1.0),
             )
-        vocab = data.get("codec_vocab")
-        if vocab is not None:
+        codec_state = data.get("codec_state")
+        if codec_state is not None:
             try:
                 codec = UniversalTensorCodec()
-                codec.load_vocab(vocab)
+                codec.import_state(codec_state)
                 brain.codec = codec
             except Exception:
                 pass
+        else:
+            vocab = data.get("codec_vocab")
+            if vocab is not None:
+                try:
+                    codec = UniversalTensorCodec()
+                    codec.load_vocab(vocab)
+                    brain.codec = codec
+                except Exception:
+                    pass
         return brain
 
     # --- Occupancy/grid helpers ---
