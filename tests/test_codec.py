@@ -73,6 +73,21 @@ class TestUniversalTensorCodec(unittest.TestCase):
             if out_path.exists():
                 os.remove(out_path)
 
+    def test_reencode_rejected(self):
+        codec = self.Codec()
+        payload = {"payload": [1, 2, 3], "label": "encoded"}
+        tokens = codec.encode(payload)
+        try:
+            ln = int(tokens.numel()) if hasattr(tokens, "numel") else len(tokens)
+        except Exception:
+            ln = len(tokens)
+        print("re-encode guard tokens:", ln)
+        with self.assertRaisesRegex(
+            ValueError,
+            "Trying to re-encode an object that was already encoded using this or another instance of UniversalTensorCodec",
+        ):
+            codec.encode(tokens)
+
     def test_repeating_sequence_compression(self):
         codec = self.Codec()
         data = b"A" * 100
