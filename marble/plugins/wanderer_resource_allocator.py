@@ -355,6 +355,29 @@ class ResourceAllocatorPlugin:
             tensor = tensor.detach()
         return tensor
 
+    @staticmethod
+    def _preserve_grad(source: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+        """Copy gradient data from ``source`` onto ``target`` when available."""
+
+        if hasattr(source, "is_leaf") and not source.is_leaf:
+            return target
+        grad = getattr(source, "grad", None)
+        if grad is None:
+            return target
+        if not torch.is_tensor(grad):
+            target.grad = grad
+            return target
+        try:
+            if grad.device != target.device or grad.dtype != target.dtype:
+                grad = grad.to(target.device, dtype=target.dtype)
+            target.grad = grad
+        except Exception:
+            try:
+                target.grad = grad.detach().clone().to(target.device, dtype=target.dtype)
+            except Exception:
+                target.grad = grad.detach() if hasattr(grad, "detach") else grad
+        return target
+
     def _normalise_meta(self, meta: Any, tensor: torch.Tensor, fallback_dtype: torch.dtype) -> Dict[str, Any]:
         """Return a normalised metadata dictionary for an offloaded tensor."""
 
@@ -441,6 +464,7 @@ class ResourceAllocatorPlugin:
                     restored = restored.to(target_dtype)
                 req_flag = bool(meta_dict.get("requires_grad", False) or meta_dict.get("had_grad_fn", False))
                 restored = self._finalize_tensor(restored, req_flag)
+                restored = self._preserve_grad(tensor, restored)
                 setattr(obj, attr, restored)
                 setattr(obj, off_attr, None)
                 setattr(obj, meta_attr, None)
@@ -468,6 +492,7 @@ class ResourceAllocatorPlugin:
                     setattr(obj, meta_attr, meta)
                     req_meta = bool(meta["requires_grad"] or meta["had_grad_fn"])
                     cpu_tensor = self._finalize_tensor(cpu_tensor, req_meta)
+                    cpu_tensor = self._preserve_grad(tensor, cpu_tensor)
                     setattr(obj, attr, cpu_tensor)
                     if cpu_dtype != orig_dtype:
                         setattr(obj, dtype_attr, orig_dtype)
@@ -482,6 +507,7 @@ class ResourceAllocatorPlugin:
                     data = data.to(orig_dtype_override)
                     setattr(obj, dtype_attr, None)
                 data = self._finalize_tensor(data, needs_grad)
+                data = self._preserve_grad(tensor, data)
                 setattr(obj, attr, data)
                 setattr(obj, meta_attr, {
                     "shape": tuple(data.shape),
@@ -505,6 +531,7 @@ class ResourceAllocatorPlugin:
                 else:
                     setattr(obj, dtype_attr, None)
                 moved = self._finalize_tensor(moved, needs_grad)
+                moved = self._preserve_grad(tensor, moved)
                 setattr(obj, attr, moved)
                 setattr(obj, meta_attr, {
                     "shape": tuple(moved.shape),
@@ -548,9 +575,11 @@ class ResourceAllocatorPlugin:
                     setattr(obj, meta_attr, meta)
                     req_meta = bool(meta["requires_grad"] or meta["had_grad_fn"])
                     cpu_tensor = self._finalize_tensor(cpu_tensor, req_meta)
+                    cpu_tensor = self._preserve_grad(tensor, cpu_tensor)
                     setattr(obj, attr, cpu_tensor)
             else:
                 cpu_tensor = self._finalize_tensor(cpu_tensor, needs_grad)
+                cpu_tensor = self._preserve_grad(tensor, cpu_tensor)
                 setattr(obj, attr, cpu_tensor)
                 setattr(obj, meta_attr, {
                     "shape": tuple(cpu_tensor.shape),
@@ -567,9 +596,13 @@ class ResourceAllocatorPlugin:
             try:
                 fallback = tensor.to("cpu") if needs_grad else tensor.detach().to("cpu")
                 fallback = self._finalize_tensor(fallback, needs_grad)
+                fallback = self._preserve_grad(tensor, fallback)
                 setattr(obj, attr, fallback)
             except Exception:
-                setattr(obj, attr, torch.zeros(orig_shape, dtype=orig_dtype))
+                zeros = torch.zeros(orig_shape, dtype=orig_dtype)
+                zeros = self._finalize_tensor(zeros, needs_grad)
+                zeros = self._preserve_grad(tensor, zeros)
+                setattr(obj, attr, zeros)
             setattr(obj, meta_attr, {
                 "shape": orig_shape,
                 "dtype": orig_dtype,
@@ -611,6 +644,7 @@ class ResourceAllocatorPlugin:
                 restored = restored.to(dtype)
             req_flag = bool(meta.get("requires_grad", False) or meta.get("had_grad_fn", False))
             restored = self._finalize_tensor(restored, req_flag)
+            restored = self._preserve_grad(tensor, restored)
             setattr(obj, attr, restored)
             setattr(obj, meta_attr, None)
             setattr(obj, dtype_attr, None)
@@ -772,6 +806,7 @@ def restore_tensor(obj: Any, attr: str, device: torch.device | str):
             moved = tensor.to(device)
             if getattr(tensor, "requires_grad", False) and not moved.requires_grad:
                 moved.requires_grad_(True)
+            moved = ResourceAllocatorPlugin._preserve_grad(tensor, moved)
             setattr(obj, attr, moved)
             return moved
         except Exception:
