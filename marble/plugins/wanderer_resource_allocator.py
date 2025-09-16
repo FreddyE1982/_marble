@@ -340,72 +340,182 @@ class ResourceAllocatorPlugin:
         self._disk_used_mb += size_mb
         return path
 
-    def _safe_transfer(self, obj: Any, attr: str, tensor: torch.Tensor, device: str) -> None:
-        """Move ``tensor`` to ``device`` handling VRAM/RAM pressure.
+    @staticmethod
+    def _finalize_tensor(tensor: torch.Tensor, requires_grad: bool) -> torch.Tensor:
+        """Ensure ``tensor`` is a leaf with the requested ``requires_grad`` state."""
 
-        On CUDA out-of-memory errors the tensor is first moved to CPU. If RAM
-        is also exhausted the tensor is serialized to disk and the attribute is
-        cleared while the disk path is stored on the object under
-        ``_<attr>_offload`` for later retrieval.
-        """
+        if requires_grad:
+            if not tensor.is_leaf or not tensor.requires_grad:
+                tensor = tensor.detach()
+                tensor.requires_grad_(True)
+            else:
+                tensor.requires_grad_(True)
+            return tensor
+        if tensor.requires_grad:
+            tensor = tensor.detach()
+        return tensor
+
+    def _normalise_meta(self, meta: Any, tensor: torch.Tensor, fallback_dtype: torch.dtype) -> Dict[str, Any]:
+        """Return a normalised metadata dictionary for an offloaded tensor."""
+
+        if isinstance(meta, dict):
+            info = dict(meta)
+            info.setdefault("shape", tuple(tensor.shape))
+            info.setdefault("dtype", fallback_dtype)
+            info.setdefault("storage_dtype", info.get("dtype", tensor.dtype))
+            info.setdefault("requires_grad", bool(getattr(tensor, "requires_grad", False)))
+            info.setdefault("had_grad_fn", getattr(tensor, "grad_fn", None) is not None)
+            return info
+        if isinstance(meta, tuple) and len(meta) == 2:
+            shape, stored_dtype = meta
+            try:
+                norm_shape = tuple(int(s) for s in shape)
+            except Exception:
+                norm_shape = tuple(tensor.shape)
+            return {
+                "shape": norm_shape,
+                "dtype": fallback_dtype,
+                "storage_dtype": stored_dtype,
+                "requires_grad": bool(getattr(tensor, "requires_grad", False)),
+                "had_grad_fn": getattr(tensor, "grad_fn", None) is not None,
+                "storage": "disk",
+            }
+        return {
+            "shape": tuple(tensor.shape),
+            "dtype": fallback_dtype,
+            "storage_dtype": fallback_dtype,
+            "requires_grad": bool(getattr(tensor, "requires_grad", False)),
+            "had_grad_fn": getattr(tensor, "grad_fn", None) is not None,
+        }
+
+    def _restore_from_disk(self, path: str, meta: Dict[str, Any], device: str) -> torch.Tensor:
+        """Load tensor data from ``path`` and move it to ``device``."""
+
+        shape = tuple(meta.get("shape", ()))
+        if not shape:
+            raise RuntimeError("offload metadata is missing tensor shape")
+        numel = int(torch.tensor(shape).prod().item())
+        mapped = torch.from_file(path, size=numel, dtype=torch.float16).view(*shape)
+        storage_dtype = meta.get("storage_dtype", torch.float16)
+        if storage_dtype != torch.float16:
+            mapped = mapped.to(storage_dtype)
+        try:
+            size_mb = os.path.getsize(path) / (1024 * 1024)
+            self._disk_used_mb = max(0.0, self._disk_used_mb - size_mb)
+        except Exception:
+            pass
+        try:
+            os.remove(path)
+        except Exception:
+            pass
+        if device == "cuda" and torch.cuda.is_available():
+            stream = self._transfer_stream
+            with torch.cuda.stream(stream) if stream else nullcontext():
+                mapped = mapped.to(device, non_blocking=True)
+        elif device != "disk":
+            mapped = mapped.to(device)
+        return mapped
+
+    def _safe_transfer(self, obj: Any, attr: str, tensor: torch.Tensor, device: str) -> None:
+        """Move ``tensor`` to ``device`` handling VRAM/RAM pressure."""
+
+        if not torch.is_tensor(tensor):
+            return
 
         off_attr = f"_{attr}_offload"
         meta_attr = f"_{attr}_offmeta"
         dtype_attr = f"_{attr}_origdtype"
         off_path = getattr(obj, off_attr, None)
-        meta = getattr(obj, meta_attr, None)
-        if isinstance(off_path, str) and isinstance(meta, tuple):
-            shape, dtype = meta
+        fallback_dtype = getattr(obj, dtype_attr, tensor.dtype)
+        meta_dict = self._normalise_meta(getattr(obj, meta_attr, None), tensor, fallback_dtype)
+        needs_grad = bool(getattr(tensor, "requires_grad", False) or getattr(tensor, "grad_fn", None))
+        orig_dtype = tensor.dtype
+        orig_shape = tuple(tensor.shape)
+        orig_device = str(tensor.device)
+
+        if isinstance(off_path, str):
             try:
-                numel = int(torch.tensor(shape).prod().item())
-                mapped = torch.from_file(off_path, size=numel, dtype=torch.float16).view(*shape)
-                if dtype != torch.float16:
-                    mapped = mapped.to(dtype)
-                if device == "cuda" and torch.cuda.is_available():
-                    stream = self._transfer_stream
-                    with torch.cuda.stream(stream) if stream else nullcontext():
-                        tensor.data = mapped.to(device, non_blocking=True)
-                    if dtype != torch.float16:
-                        tensor.data = tensor.data.to(dtype)
-                else:
-                    tensor.data = mapped.to(device)
-                try:
-                    size_mb = os.path.getsize(off_path) / (1024 * 1024)
-                    self._disk_used_mb = max(0.0, self._disk_used_mb - size_mb)
-                except Exception:
-                    pass
-                os.remove(off_path)
+                restored = self._restore_from_disk(off_path, meta_dict, device)
+                target_dtype = meta_dict.get("dtype", restored.dtype)
+                if target_dtype is not None and restored.dtype != target_dtype:
+                    restored = restored.to(target_dtype)
+                req_flag = bool(meta_dict.get("requires_grad", False) or meta_dict.get("had_grad_fn", False))
+                restored = self._finalize_tensor(restored, req_flag)
+                setattr(obj, attr, restored)
                 setattr(obj, off_attr, None)
                 setattr(obj, meta_attr, None)
+                setattr(obj, dtype_attr, None)
             except Exception:
                 return
             return
 
         try:
             if device == "disk":
-                path = self._offload_to_disk(tensor)
+                cpu_dtype = torch.float16 if self.compress_offload and orig_dtype == torch.float32 else orig_dtype
+                cpu_tensor = tensor.to("cpu", dtype=cpu_dtype) if needs_grad else tensor.detach().to("cpu", dtype=cpu_dtype)
+                path = self._offload_to_disk(cpu_tensor)
                 if path is not None:
                     setattr(obj, off_attr, path)
-                    setattr(obj, meta_attr, (tensor.shape, getattr(obj, dtype_attr, tensor.dtype)))
-                    tensor.data = torch.empty(0)
+                    meta = {
+                        "shape": orig_shape,
+                        "dtype": orig_dtype,
+                        "storage_dtype": cpu_tensor.dtype,
+                        "requires_grad": bool(getattr(tensor, "requires_grad", False)),
+                        "had_grad_fn": getattr(tensor, "grad_fn", None) is not None,
+                        "storage": "disk",
+                        "last_device": orig_device,
+                    }
+                    setattr(obj, meta_attr, meta)
+                    req_meta = bool(meta["requires_grad"] or meta["had_grad_fn"])
+                    cpu_tensor = self._finalize_tensor(cpu_tensor, req_meta)
+                    setattr(obj, attr, cpu_tensor)
+                    if cpu_dtype != orig_dtype:
+                        setattr(obj, dtype_attr, orig_dtype)
                 return
             if device == "cuda" and torch.cuda.is_available():
                 stream = self._transfer_stream
+                data = tensor
                 with torch.cuda.stream(stream) if stream else nullcontext():
-                    tensor.data = tensor.data.to(device, non_blocking=True)
-                orig_dtype = getattr(obj, dtype_attr, None)
-                if orig_dtype is not None:
-                    tensor.data = tensor.data.to(orig_dtype)
+                    data = data.to(device, non_blocking=True)
+                orig_dtype_override = getattr(obj, dtype_attr, None)
+                if orig_dtype_override is not None:
+                    data = data.to(orig_dtype_override)
                     setattr(obj, dtype_attr, None)
+                data = self._finalize_tensor(data, needs_grad)
+                setattr(obj, attr, data)
+                setattr(obj, meta_attr, {
+                    "shape": tuple(data.shape),
+                    "dtype": data.dtype,
+                    "storage_dtype": data.dtype,
+                    "requires_grad": bool(getattr(data, "requires_grad", False)),
+                    "had_grad_fn": getattr(data, "grad_fn", None) is not None,
+                    "storage": "cuda",
+                    "last_device": "cuda",
+                })
+                setattr(obj, off_attr, None)
             else:
                 dtype = (
                     torch.float16
-                    if self.compress_offload and tensor.dtype == torch.float32 and device == "cpu"
-                    else tensor.dtype
+                    if self.compress_offload and orig_dtype == torch.float32 and device == "cpu"
+                    else orig_dtype
                 )
-                if dtype != tensor.dtype:
-                    setattr(obj, dtype_attr, tensor.dtype)
-                tensor.data = tensor.detach().to(device, dtype=dtype)
+                moved = tensor.to(device, dtype=dtype) if needs_grad else tensor.detach().to(device, dtype=dtype)
+                if dtype != orig_dtype:
+                    setattr(obj, dtype_attr, orig_dtype)
+                else:
+                    setattr(obj, dtype_attr, None)
+                moved = self._finalize_tensor(moved, needs_grad)
+                setattr(obj, attr, moved)
+                setattr(obj, meta_attr, {
+                    "shape": tuple(moved.shape),
+                    "dtype": orig_dtype,
+                    "storage_dtype": moved.dtype,
+                    "requires_grad": bool(getattr(tensor, "requires_grad", False)),
+                    "had_grad_fn": getattr(tensor, "grad_fn", None) is not None,
+                    "storage": device,
+                    "last_device": device,
+                })
+                setattr(obj, off_attr, None)
             return
         except torch.cuda.OutOfMemoryError:
             pass
@@ -414,22 +524,99 @@ class ResourceAllocatorPlugin:
 
         # CUDA OOM: try CPU first, then disk
         try:
-            cpu_dtype = torch.float16 if self.compress_offload and tensor.dtype == torch.float32 else tensor.dtype
-            if cpu_dtype != tensor.dtype:
-                setattr(obj, dtype_attr, tensor.dtype)
-            cpu_tensor = tensor.detach().to("cpu", dtype=cpu_dtype)
+            cpu_dtype = torch.float16 if self.compress_offload and orig_dtype == torch.float32 else orig_dtype
+            cpu_tensor = tensor.to("cpu", dtype=cpu_dtype) if needs_grad else tensor.detach().to("cpu", dtype=cpu_dtype)
+            if cpu_dtype != orig_dtype:
+                setattr(obj, dtype_attr, orig_dtype)
+            else:
+                setattr(obj, dtype_attr, None)
             avail = psutil.virtual_memory().available if psutil else float("inf")
             needed = cpu_tensor.element_size() * cpu_tensor.nelement()
             if avail < needed:
                 path = self._offload_to_disk(cpu_tensor)
                 if path is not None:
                     setattr(obj, off_attr, path)
-                    setattr(obj, meta_attr, (tensor.shape, getattr(obj, dtype_attr, tensor.dtype)))
-                tensor.data = torch.empty(0)
+                    meta = {
+                        "shape": orig_shape,
+                        "dtype": orig_dtype,
+                        "storage_dtype": cpu_tensor.dtype,
+                        "requires_grad": bool(getattr(tensor, "requires_grad", False)),
+                        "had_grad_fn": getattr(tensor, "grad_fn", None) is not None,
+                        "storage": "disk",
+                        "last_device": orig_device,
+                    }
+                    setattr(obj, meta_attr, meta)
+                    req_meta = bool(meta["requires_grad"] or meta["had_grad_fn"])
+                    cpu_tensor = self._finalize_tensor(cpu_tensor, req_meta)
+                    setattr(obj, attr, cpu_tensor)
             else:
-                tensor.data = cpu_tensor
+                cpu_tensor = self._finalize_tensor(cpu_tensor, needs_grad)
+                setattr(obj, attr, cpu_tensor)
+                setattr(obj, meta_attr, {
+                    "shape": tuple(cpu_tensor.shape),
+                    "dtype": orig_dtype,
+                    "storage_dtype": cpu_tensor.dtype,
+                    "requires_grad": bool(getattr(tensor, "requires_grad", False)),
+                    "had_grad_fn": getattr(tensor, "grad_fn", None) is not None,
+                    "storage": "cpu",
+                    "last_device": "cpu",
+                })
+                setattr(obj, off_attr, None)
+            return
         except Exception:
-            tensor.data = torch.empty(0)
+            try:
+                fallback = tensor.to("cpu") if needs_grad else tensor.detach().to("cpu")
+                fallback = self._finalize_tensor(fallback, needs_grad)
+                setattr(obj, attr, fallback)
+            except Exception:
+                setattr(obj, attr, torch.zeros(orig_shape, dtype=orig_dtype))
+            setattr(obj, meta_attr, {
+                "shape": orig_shape,
+                "dtype": orig_dtype,
+                "storage_dtype": orig_dtype,
+                "requires_grad": bool(getattr(tensor, "requires_grad", False)),
+                "had_grad_fn": getattr(tensor, "grad_fn", None) is not None,
+                "storage": "cpu",
+                "last_device": "cpu",
+            })
+            setattr(obj, off_attr, None)
+            setattr(obj, dtype_attr, None)
+
+    def restore(self, obj: Any, attr: str, device: torch.device | str):
+        """Restore ``obj.attr`` to ``device`` if it was offloaded."""
+
+        tensor = getattr(obj, attr, None)
+        if not torch.is_tensor(tensor):
+            return None
+        off_attr = f"_{attr}_offload"
+        meta_attr = f"_{attr}_offmeta"
+        dtype_attr = f"_{attr}_origdtype"
+        meta = self._normalise_meta(getattr(obj, meta_attr, None), tensor, getattr(obj, dtype_attr, tensor.dtype))
+        target = str(device)
+        path = getattr(obj, off_attr, None)
+        try:
+            if isinstance(path, str):
+                restored = self._restore_from_disk(path, meta, target)
+                setattr(obj, off_attr, None)
+            else:
+                restored = tensor
+                if target.startswith("cuda") and torch.cuda.is_available():
+                    stream = self._transfer_stream
+                    with torch.cuda.stream(stream) if stream else nullcontext():
+                        restored = restored.to(target, non_blocking=True)
+                elif target != "disk":
+                    restored = restored.to(target)
+            dtype = meta.get("dtype", restored.dtype)
+            if dtype is not None and restored.dtype != dtype:
+                restored = restored.to(dtype)
+            req_flag = bool(meta.get("requires_grad", False) or meta.get("had_grad_fn", False))
+            restored = self._finalize_tensor(restored, req_flag)
+            setattr(obj, attr, restored)
+            setattr(obj, meta_attr, None)
+            setattr(obj, dtype_attr, None)
+            return restored
+        except Exception:
+            return tensor
 
     def rebalance_all(self, wanderer) -> None:
         """Evaluate system metrics and rebalance every registered tensor."""
@@ -569,11 +756,35 @@ def clear() -> None:
             alloc.clear()
 
 
+def restore_tensor(obj: Any, attr: str, device: torch.device | str):
+    """Restore a tensor tracked by the allocator to ``device``."""
+
+    for ref in list(ALLOCATORS):
+        alloc = ref()
+        if alloc is None:
+            continue
+        result = alloc.restore(obj, attr, device)
+        if result is not None:
+            return result
+    tensor = getattr(obj, attr, None)
+    if torch.is_tensor(tensor):
+        try:
+            moved = tensor.to(device)
+            if getattr(tensor, "requires_grad", False) and not moved.requires_grad:
+                moved.requires_grad_(True)
+            setattr(obj, attr, moved)
+            return moved
+        except Exception:
+            return tensor
+    return None
+
+
 __all__ = [
     "ResourceAllocatorPlugin",
     "TensorRegistry",
     "TENSOR_REGISTRY",
     "track_tensor",
+    "restore_tensor",
     "clear",
 ]
 PLUGIN_NAME = "resourceallocator"
