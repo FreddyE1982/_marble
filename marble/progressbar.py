@@ -126,7 +126,13 @@ class ProgressBar(ProgressBarBase):
         cur_walk = data.get("cur_walk", 1)
         tot_walks = data.get("tot_walks", 1)
         desc = f"{cur_ep}/{tot_ep} epochs {cur_walk}/{tot_walks} walks:"
-        self._bar.set_description(desc)
+        # ``tqdm`` refreshes immediately when ``refresh=True`` (the default).
+        # When combined with our explicit ``update`` call this caused the
+        # progress line to be re-rendered multiple times per step, producing a
+        # stream of duplicated lines instead of an in-place update in both
+        # consoles and notebooks.  Passing ``refresh=False`` defers rendering to
+        # the ``update`` call so the bar is rewritten exactly once per step.
+        self._bar.set_description(desc, refresh=False)
         status: Dict[str, Any] = data.get("status", {})
         try:
             self._bar.set_postfix(
@@ -142,14 +148,11 @@ class ProgressBar(ProgressBarBase):
                 synapses_pruned=status.get("synapses_pruned", 0),
                 paths=data.get("paths", 0),
                 speed=f"{data.get('mean_speed', 0.0):.2f}",
+                refresh=False,
             )
         except Exception:  # pragma: no cover - cosmetic only
             pass
         self._bar.update(1)
-        try:  # pragma: no cover - cosmetic only
-            self._bar.refresh()
-        except Exception:
-            pass
 
     def end(self, **meta: Any) -> None:  # type: ignore[override]
         if self._bar is None:
