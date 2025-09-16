@@ -804,8 +804,9 @@ def restore_tensor(obj: Any, attr: str, device: torch.device | str):
     if torch.is_tensor(tensor):
         try:
             moved = tensor.to(device)
-            if getattr(tensor, "requires_grad", False) and not moved.requires_grad:
-                moved.requires_grad_(True)
+            moved = ResourceAllocatorPlugin._finalize_tensor(
+                moved, bool(getattr(tensor, "requires_grad", False))
+            )
             moved = ResourceAllocatorPlugin._preserve_grad(tensor, moved)
             setattr(obj, attr, moved)
             return moved
