@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Deque, Dict, List, Optional, Sequence, Tuple, Union, TYPE_CHECKING
 from collections import deque
+from types import SimpleNamespace
 
 import torch
 import numpy as np
@@ -330,33 +331,33 @@ class Synapse(_DeviceHelper):
             return visited[self]
 
         val = self._ensure_tensor(value)
-        holder = {"val": val}
+        holder = SimpleNamespace(val=val)
         applied = False
         try:
             from .plugins.wanderer_resource_allocator import track_tensor as _tt
             with _tt(holder, "val"):
-                if self._torch is not None and self._is_torch_tensor(holder["val"]):
-                    out = holder["val"] * float(self.weight)
+                if self._torch is not None and self._is_torch_tensor(holder.val):
+                    out = holder.val * float(self.weight)
                     out.add_(float(self.bias))
-                    holder["val"] = out
+                    holder.val = out
                 else:
-                    vl = np.array(holder["val"], dtype=np.float32, copy=True)
+                    vl = np.array(holder.val, dtype=np.float32, copy=True)
                     vl *= float(self.weight)
                     vl += float(self.bias)
-                    holder["val"] = vl
+                    holder.val = vl
                 applied = True
         except Exception:
             if not applied:
-                if self._torch is not None and self._is_torch_tensor(holder["val"]):
-                    out = holder["val"] * float(self.weight)
+                if self._torch is not None and self._is_torch_tensor(holder.val):
+                    out = holder.val * float(self.weight)
                     out.add_(float(self.bias))
-                    holder["val"] = out
+                    holder.val = out
                 else:
-                    vl = np.array(holder["val"], dtype=np.float32, copy=True)
+                    vl = np.array(holder.val, dtype=np.float32, copy=True)
                     vl *= float(self.weight)
                     vl += float(self.bias)
-                    holder["val"] = vl
-        val = holder["val"]
+                    holder.val = vl
+        val = holder.val
 
         if direction == "forward":
             if self.direction not in ("uni", "bi"):
