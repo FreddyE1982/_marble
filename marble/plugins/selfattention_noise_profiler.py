@@ -21,7 +21,42 @@ class ContextAwareNoiseRoutine:
     """Model sensor noise with learnable parameters and adapt LR accordingly."""
 
     def on_init(self, selfattention: "SelfAttention") -> None:  # pragma: no cover - simple state init
-        pass
+        wanderer = getattr(selfattention, "_owner", None)
+        if wanderer is None:
+            return
+
+        noise_variance = wanderer.ensure_learnable_param(
+            "noise_variance",
+            0.05,
+            min_value=1e-4,
+        )
+        spatial_factor = wanderer.ensure_learnable_param(
+            "spatial_factor",
+            0.5,
+            min_value=1e-4,
+        )
+
+        wanderer.set_param_optimization("noise_variance", enabled=True, lr=1e-3)
+        wanderer.set_param_optimization("spatial_factor", enabled=True, lr=1e-3)
+
+        try:
+            nv = float(noise_variance.detach().to("cpu").item())  # type: ignore[attr-defined]
+        except Exception:
+            nv = None
+        try:
+            sf = float(spatial_factor.detach().to("cpu").item())  # type: ignore[attr-defined]
+        except Exception:
+            sf = None
+        if nv is not None or sf is not None:
+            payload: Dict[str, Any] = {}
+            if nv is not None:
+                payload["noise_variance"] = nv
+            if sf is not None:
+                payload["spatial_factor"] = sf
+            try:
+                report("selfattention", "context_noise", payload, "scalars")
+            except Exception:
+                pass
 
     def after_step(
         self,
