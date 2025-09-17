@@ -63,6 +63,47 @@ class TestReporter(unittest.TestCase):
         else:
             self.assertTrue(any(after[p] > before[p] for p in after))
 
+    def test_tensorboard_training_datapair_aggregates(self):
+        from marble.reporter import _TensorBoardAdapter
+
+        class DummyWriter:
+            def __init__(self):
+                self.scalars = []
+                self.histograms = []
+                self.text = []
+                self.log_dir = "dummy"
+
+            def add_scalar(self, tag, value, step):
+                self.scalars.append((tag, value, step))
+
+            def add_histogram(self, tag, tensor, step):
+                self.histograms.append((tag, tensor, step))
+
+            def add_text(self, tag, text, step):
+                self.text.append((tag, text, step))
+
+            def flush(self):
+                pass
+
+        adapter = _TensorBoardAdapter(True, None, 10)
+        adapter._writer = DummyWriter()
+
+        adapter.log(("training", "datapair"), "pair_1", {"loss": 0.75, "steps": 12})
+        adapter.log(("training", "datapair"), "pair_2", {"loss": 0.5, "steps": 8})
+
+        loss_entries = [entry for entry in adapter._writer.scalars if entry[0] == "training/datapair/loss"]
+        step_entries = [entry for entry in adapter._writer.scalars if entry[0] == "training/datapair/steps"]
+
+        self.assertEqual([0.75, 0.5], [entry[1] for entry in loss_entries])
+        self.assertEqual([0, 1], [entry[2] for entry in loss_entries])
+        self.assertEqual([12.0, 8.0], [entry[1] for entry in step_entries])
+        self.assertEqual([0, 1], [entry[2] for entry in step_entries])
+        self.assertFalse(any("pair_" in tag for tag, _, _ in adapter._writer.scalars))
+
+        before = len(adapter._writer.scalars)
+        adapter.log(("wanderer_steps", "logs"), "chunk", {"loss": 1.0})
+        self.assertEqual(before, len(adapter._writer.scalars))
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
