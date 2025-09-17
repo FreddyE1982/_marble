@@ -5,7 +5,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from .reporter import REPORTER, report
 from .graph import _NEURON_TYPES
 from .learnable_param import LearnableParam
-from .learnables_yaml import register_learnable
+from .learnables_yaml import log_learnable_values, register_learnable
 
 
 _SELFA_TYPES: Dict[str, Any] = {}
@@ -284,6 +284,10 @@ class SelfAttention:
         """Update enabled learnable params using the chosen optimizer."""
         torch = getattr(wanderer, "_torch", None)
         if torch is None:
+            try:
+                log_learnable_values(self)
+            except Exception:
+                pass
             return
         params = self._collect_enabled_params(wanderer)
         groups = []
@@ -294,12 +298,20 @@ class SelfAttention:
             if hasattr(t, "grad") and t.grad is not None:
                 groups.append({"params": [t], "lr": lr})
         if not groups:
+            try:
+                log_learnable_values(self)
+            except Exception:
+                pass
             return
         opt = torch.optim.Adam(groups)
         opt.step()
         opt.zero_grad(set_to_none=True)
         for lp in params:
             lp.apply_constraints()
+        try:
+            log_learnable_values(self)
+        except Exception:
+            pass
 
     def _after_step(self, wanderer: "Wanderer", step_index: int, ctx: Dict[str, Any]) -> None:
         # Derive global metrics to influence all decisions

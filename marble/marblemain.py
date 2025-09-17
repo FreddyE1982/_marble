@@ -31,7 +31,7 @@ import itertools
 import gc
 from . import plugin_cost_profiler as _pcp
 from .learnable_param import LearnableParam
-from .learnables_yaml import register_learnable
+from .learnables_yaml import log_learnable_values, register_learnable
 try:
     import msvcrt  # type: ignore
 except Exception:
@@ -1616,6 +1616,10 @@ class Brain:
         except Exception:
             torch = None  # type: ignore
         if torch is None:
+            try:
+                log_learnable_values(self)
+            except Exception:
+                pass
             return
         params = self._collect_enabled_params()
         groups = []
@@ -1625,12 +1629,20 @@ class Brain:
             if hasattr(t, "grad") and t.grad is not None:
                 groups.append({"params": [t], "lr": lr})
         if not groups:
+            try:
+                log_learnable_values(self)
+            except Exception:
+                pass
             return
         opt = torch.optim.Adam(groups)
         opt.step()
         opt.zero_grad(set_to_none=True)
         for lp in params:
             lp.apply_constraints()
+        try:
+            log_learnable_values(self)
+        except Exception:
+            pass
 
     # --- Cross-process locking helpers ---
     def _lockfile_path(self, key: str) -> str:
