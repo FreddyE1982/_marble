@@ -1,6 +1,11 @@
+import json
+import tempfile
 import unittest
 import time
+from pathlib import Path
+
 import torch
+
 import marble.decision_controller as dc
 from marble.plugins import PLUGIN_ID_REGISTRY
 
@@ -187,6 +192,37 @@ class TestDecisionController(unittest.TestCase):
             metrics={"latency": 1, "throughput": 1, "cost": 1},
         )
         self.assertEqual(len(captured.get("actions", [])), 2)
+
+    def test_decision_controller_logging(self):
+        dc.LAST_STATE_CHANGE.clear()
+        dc.TAU_THRESHOLD = 0.0
+        dc.BUDGET_LIMIT = 5.0
+        dc.STEP_COUNTER = 0
+        names = list(PLUGIN_ID_REGISTRY.keys())[:2]
+        with tempfile.TemporaryDirectory() as tmp:
+            log_path = Path(tmp) / "dc.log"
+            controller = dc.DecisionController(top_k=1, log_path=log_path)
+            ctx = torch.zeros(1, 1, 16)
+            h_t = {
+                names[0]: {"cost": 0.5, "action": "on"},
+                names[1]: {"cost": 0.5, "action": "on"},
+            }
+            metrics = {"latency": 1.0, "throughput": 1.0, "cost": 1.0}
+            controller.decide(h_t, ctx, metrics=metrics)
+            controller.decide(h_t, ctx, metrics=metrics)
+            controller._close_log()
+            with log_path.open("r", encoding="utf-8") as fh:
+                events = [json.loads(line) for line in fh if line.strip()]
+        decision_events = [evt for evt in events if evt.get("event") == "decision"]
+        self.assertTrue(decision_events)
+        last = decision_events[-1]
+        print("logged decision event:", last)
+        available = set(last.get("available_plugins", []))
+        self.assertTrue(available)
+        self.assertTrue(available.issubset(set(h_t.keys())))
+        self.assertIn("selected", last)
+        self.assertIn("reward", last)
+        dc.PLUGIN_GRAPH.reset()
 
 
 if __name__ == "__main__":  # pragma: no cover
