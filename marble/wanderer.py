@@ -419,16 +419,28 @@ class Wanderer(_DeviceHelper):
         tot_walks = int(getattr(self.brain, "_progress_total_walks", 1))
         cur_ep = int(getattr(self.brain, "_progress_epoch", 0)) + 1
         tot_ep = int(getattr(self.brain, "_progress_total_epochs", 1))
-        pbar = ProgressBar()
-        pbar.start(
-            max_steps,
-            leave=leave_flag,
-            verbose=bool(getattr(self, "pbar_verbose", False)),
-            cur_walk=cur_walk,
-            tot_walks=tot_walks,
-            cur_ep=cur_ep,
-            tot_ep=tot_ep,
-        )
+        progress_enabled = bool(getattr(self.brain, "enable_progressbar", True))
+        tensorboard_dir = getattr(self.brain, "tensorboard_logdir", None)
+        pbar = None
+        if progress_enabled:
+            pbar = ProgressBar()
+            pbar.start(
+                max_steps,
+                leave=leave_flag,
+                verbose=bool(getattr(self, "pbar_verbose", False)),
+                cur_walk=cur_walk,
+                tot_walks=tot_walks,
+                cur_ep=cur_ep,
+                tot_ep=tot_ep,
+            )
+        elif tensorboard_dir and not getattr(self.brain, "_tensorboard_announced", False):
+            print(
+                f"[marble] TensorBoard logging active — run `%tensorboard --logdir {tensorboard_dir}`"
+            )
+            try:
+                self.brain._tensorboard_announced = True
+            except Exception:
+                pass
         total_dt = 0.0
         prev_mean = None
 
@@ -702,23 +714,24 @@ class Wanderer(_DeviceHelper):
             except Exception:
                 status = {}
             syn_count = len(getattr(self.brain, "synapses", []))
-            pbar.update(
-                cur_ep=cur_ep,
-                tot_ep=tot_ep,
-                cur_walk=cur_walk,
-                tot_walks=tot_walks,
-                cur_size=cur_size,
-                cap=cap,
-                cur_loss=progress_loss,
-                mean_loss=progress_mean_loss,
-                loss_speed=progress_loss_speed,
-                mean_loss_speed=progress_mean_loss_speed,
-                status=status,
-                synapses=syn_count,
-                paths=syn_count,
-                mean_speed=mean_speed,
-                path_index=progress_path_index,
-            )
+            if pbar is not None:
+                pbar.update(
+                    cur_ep=cur_ep,
+                    tot_ep=tot_ep,
+                    cur_walk=cur_walk,
+                    tot_walks=tot_walks,
+                    cur_size=cur_size,
+                    cap=cap,
+                    cur_loss=progress_loss,
+                    mean_loss=progress_mean_loss,
+                    loss_speed=progress_loss_speed,
+                    mean_loss_speed=progress_mean_loss_speed,
+                    status=status,
+                    synapses=syn_count,
+                    paths=syn_count,
+                    mean_speed=mean_speed,
+                    path_index=progress_path_index,
+                )
             prev_mean = mean_loss
 
             self.neuron_fire_count += 1
@@ -1048,24 +1061,25 @@ class Wanderer(_DeviceHelper):
             self._display_path_index = int(raw_path_index)
         except Exception:
             self._display_path_index = None
-        pbar.end(
-            cur_ep=cur_ep,
-            tot_ep=tot_ep,
-            cur_walk=cur_walk,
-            tot_walks=tot_walks,
-            loss=final_loss_val,
-            steps=int(steps),
-            mean_loss=self._display_mean_loss,
-            loss_speed=self._last_loss_speed,
-            mean_loss_speed=self._last_mean_loss_speed,
-            cur_size=cur_size,
-            cap=cap,
-            synapses=syn_count,
-            status=status,
-            mean_speed=mean_speed,
-            paths=syn_count,
-            path_index=self._display_path_index,
-        )
+        if pbar is not None:
+            pbar.end(
+                cur_ep=cur_ep,
+                tot_ep=tot_ep,
+                cur_walk=cur_walk,
+                tot_walks=tot_walks,
+                loss=final_loss_val,
+                steps=int(steps),
+                mean_loss=self._display_mean_loss,
+                loss_speed=self._last_loss_speed,
+                mean_loss_speed=self._last_mean_loss_speed,
+                cur_size=cur_size,
+                cap=cap,
+                synapses=syn_count,
+                status=status,
+                mean_speed=mean_speed,
+                paths=syn_count,
+                path_index=self._display_path_index,
+            )
 
         self._last_walk_loss = final_loss_val
         try:
