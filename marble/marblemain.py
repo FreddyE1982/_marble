@@ -966,7 +966,8 @@ class Brain:
         self.tensorboard_logdir: Optional[str] = None
         self._tensorboard_announced = False
         self._tensorboard_inline_active = False
-        if bool(tensorboard):
+        self._tensorboard_requested = bool(tensorboard)
+        if self._tensorboard_requested:
             self.enable_progressbar = False
             try:
                 self.tensorboard_logdir = REPORTER.tensorboard_logdir()
@@ -1006,6 +1007,12 @@ class Brain:
                 )
             except Exception:
                 self._kuzu_conn = None
+
+    def _notify_tensorboard_graph(self) -> None:
+        try:
+            REPORTER.log_brain_graph(self)
+        except Exception:
+            pass
 
     def _kuzu_key(self, coords: Sequence[float]) -> str:
         return ",".join(str(float(c)) for c in coords)
@@ -1219,6 +1226,7 @@ class Brain:
                         "tried to create a neuron not connected to at least one another neuron via at least one other synapse"
                     )
                 self.connect(idx, connect_to, direction=direction)
+            self._notify_tensorboard_graph()
             return neuron
         else:
             coords = tuple(float(v) for v in index)
@@ -1244,6 +1252,7 @@ class Brain:
                         "tried to create a neuron not connected to at least one another neuron via at least one other synapse"
                     )
                 self.connect(coords, connect_to, direction=direction)
+            self._notify_tensorboard_graph()
             return neuron
 
     def get_neuron(self, index: Sequence[int]) -> Optional[Neuron]:
@@ -1280,6 +1289,7 @@ class Brain:
                     self._kuzu_add_synapse(s_coords, d_coords, direction)
             except Exception:
                 pass
+        self._notify_tensorboard_graph()
         return syn
 
     def define_lobe(
@@ -1436,6 +1446,7 @@ class Brain:
             report("brain", "remove_synapse", {"direction": synapse.direction}, "events")
         except Exception:
             pass
+        self._notify_tensorboard_graph()
 
     # Remove a neuron and bridge its synapses to avoid gaps
     def remove_neuron(self, neuron: "Neuron") -> None:
@@ -1483,6 +1494,7 @@ class Brain:
             self._kuzu_rebuild_all()
         except Exception:
             pass
+        self._notify_tensorboard_graph()
 
     def status(self) -> Dict[str, Any]:
         """Return a snapshot of training/runtime stats."""
