@@ -39,6 +39,30 @@ class TestReporter(unittest.TestCase):
         print("reporter merged status:", merged)
         self.assertEqual(merged, {"a": 1, "b": 2})
 
+    def test_tensorboard_logging(self):
+        r = self.reporter
+        logdir = r.tensorboard_logdir()
+        self.assertIsNotNone(logdir)
+        logdir = str(logdir)
+        import pathlib
+
+        path = pathlib.Path(logdir)
+        path.mkdir(parents=True, exist_ok=True)
+        before = {p: p.stat().st_size for p in path.glob("events.*")}
+        r.item["tb_scalar", "tensorboard"] = 3.14
+        r.item["tb_hist", "tensorboard"] = [1.0, 2.0, 3.5]
+        r.item["tb_text", "tensorboard"] = {"nested": "value"}
+        r.flush_tensorboard()
+        after = {p: p.stat().st_size for p in path.glob("events.*")}
+        print("tensorboard files before:", before)
+        print("tensorboard files after:", after)
+        self.assertTrue(after, "TensorBoard writer did not create any event files")
+        new_files = set(after) - set(before)
+        if new_files:
+            self.assertTrue(all(after[p] > 0 for p in new_files))
+        else:
+            self.assertTrue(any(after[p] > before[p] for p in after))
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

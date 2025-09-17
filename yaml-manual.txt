@@ -47,6 +47,23 @@
   Maximum allowed disk usage ratio before tensors are offloaded. Prevents disk
   exhaustion; value must be between 0 and 1.
 
+## Reporter Settings
+
+- reporter.tensorboard.enabled (bool, default: true)
+  When set to ``true`` the central reporter mirrors every update into a live
+  TensorBoard event stream. Scalars are recorded as individual time series,
+  tensors and numeric sequences become histograms, and other payloads are
+  emitted as text snippets so dashboards always reflect the most recent state.
+- reporter.tensorboard.log_dir (str | null, default: null)
+  Filesystem path passed directly to :class:`torch.utils.tensorboard.SummaryWriter`.
+  Keeping the default ``null`` delegates directory creation to the writer,
+  producing timestamped folders under ``runs/``. Set a custom path to aggregate
+  multiple training runs in a single dashboard.
+- reporter.tensorboard.flush_interval_steps (int, default: 5)
+  Number of reporter updates processed before the writer flushes buffered
+  events to disk. Lower values provide lower latency visualisations at the cost
+  of more frequent disk synchronisation.
+
 ## AutoPlugin Settings
 
 - autoplugin.decision_interval (int, default: 1)
