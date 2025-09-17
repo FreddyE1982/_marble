@@ -1,8 +1,158 @@
 from __future__ import annotations
 
+import atexit
 import json
+import os
 import threading
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from collections import defaultdict
+from collections.abc import Mapping, Sequence
+from numbers import Number
+from typing import Any, Dict, List, Optional, Tuple
+
+import torch
+from torch.utils.tensorboard import SummaryWriter
+
+
+def _load_tensorboard_config() -> Tuple[bool, Optional[str], int]:
+    """Read TensorBoard settings from ``config.yaml``."""
+
+    try:
+        import yaml  # type: ignore
+
+        base = os.path.dirname(os.path.dirname(__file__))
+        with open(os.path.join(base, "config.yaml"), "r", encoding="utf-8") as fh:
+            data = yaml.safe_load(fh) or {}
+        reporter = data.get("reporter", {}) if isinstance(data, dict) else {}
+        tb = reporter.get("tensorboard", {}) if isinstance(reporter, dict) else {}
+        enabled = bool(tb.get("enabled", True))
+        log_dir = tb.get("log_dir")
+        if isinstance(log_dir, str) and log_dir.strip():
+            log_dir = os.path.expanduser(log_dir.strip())
+        else:
+            log_dir = None
+        flush_interval = tb.get("flush_interval_steps", 5)
+        try:
+            flush_interval_int = max(1, int(flush_interval))
+        except Exception:
+            flush_interval_int = 5
+        return enabled, log_dir, flush_interval_int
+    except Exception:
+        return True, None, 5
+
+
+_TB_ENABLED, _TB_LOGDIR, _TB_FLUSH_INTERVAL = _load_tensorboard_config()
+
+
+class _TensorBoardAdapter:
+    """Mirror reporter updates into TensorBoard."""
+
+    def __init__(self, enabled: bool, log_dir: Optional[str], flush_interval: int) -> None:
+        self._enabled = enabled
+        self._log_dir = log_dir
+        self._flush_interval = max(1, int(flush_interval))
+        self._writer: Optional[SummaryWriter] = None
+        self._step_counters: Dict[str, int] = defaultdict(int)
+        self._pending_flush = 0
+        self._lock = threading.RLock()
+
+    @property
+    def logdir(self) -> Optional[str]:
+        with self._lock:
+            if self._writer is not None:
+                return self._writer.log_dir
+            return self._log_dir
+
+    def ensure_writer(self) -> Optional[SummaryWriter]:
+        if not self._enabled:
+            return None
+        with self._lock:
+            if self._writer is None:
+                try:
+                    self._writer = SummaryWriter(log_dir=self._log_dir)
+                    self._log_dir = self._writer.log_dir
+                    atexit.register(self.close)
+                except Exception:
+                    self._enabled = False
+                    self._writer = None
+                    return None
+            return self._writer
+
+    def _next_step(self, tag: str) -> int:
+        step = self._step_counters[tag]
+        self._step_counters[tag] = step + 1
+        return step
+
+    def log(self, group_path: Tuple[str, ...], itemname: str, value: Any) -> None:
+        writer = self.ensure_writer()
+        if writer is None:
+            return
+        tag_root = "/".join(str(x) for x in (*group_path, itemname))
+        self._log_value(writer, tag_root, value)
+
+    def _log_value(self, writer: SummaryWriter, tag: str, value: Any) -> None:
+        try:
+            if isinstance(value, Mapping):
+                for key, subvalue in value.items():
+                    self._log_value(writer, f"{tag}/{key}", subvalue)
+                self._after_log(writer)
+                return
+
+            if isinstance(value, torch.Tensor):
+                tensor = value.detach().to("cpu")
+                if tensor.numel() == 1:
+                    writer.add_scalar(tag, float(tensor.item()), self._next_step(tag))
+                else:
+                    writer.add_histogram(tag, tensor, self._next_step(tag))
+                self._after_log(writer)
+                return
+
+            if isinstance(value, Number):
+                writer.add_scalar(tag, float(value), self._next_step(tag))
+                self._after_log(writer)
+                return
+
+            if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
+                seq = list(value)
+                if seq and all(isinstance(x, Number) for x in seq):
+                    tensor = torch.tensor(seq, dtype=torch.float32)
+                    writer.add_histogram(tag, tensor, self._next_step(tag))
+                    self._after_log(writer)
+                    return
+
+            writer.add_text(tag, repr(value), self._next_step(tag))
+            self._after_log(writer)
+        except Exception:
+            return
+
+    def _after_log(self, writer: SummaryWriter) -> None:
+        self._pending_flush += 1
+        if self._pending_flush >= self._flush_interval:
+            try:
+                writer.flush()
+            except Exception:
+                pass
+            self._pending_flush = 0
+
+    def flush(self) -> None:
+        with self._lock:
+            if self._writer is None:
+                return
+            try:
+                self._writer.flush()
+            except Exception:
+                pass
+            self._pending_flush = 0
+
+    def close(self) -> None:
+        with self._lock:
+            if self._writer is None:
+                return
+            try:
+                self._writer.flush()
+                self._writer.close()
+            except Exception:
+                pass
+            self._writer = None
 
 
 class _ReporterItemAccessor:
@@ -32,6 +182,7 @@ class Reporter:
         self._lock = threading.RLock()
         self._groups: Dict[str, Dict[str, Any]] = {}
         self.item = _ReporterItemAccessor(self)
+        self._tensorboard = _TensorBoardAdapter(_TB_ENABLED, _TB_LOGDIR, _TB_FLUSH_INTERVAL)
 
     def registergroup(self, groupname: str, *subgroups: str) -> None:
         with self._lock:
@@ -57,6 +208,10 @@ class Reporter:
                 existing.update(value)
             else:
                 node["_items"][key] = value
+            try:
+                self._tensorboard.log(group_path, key, value)
+            except Exception:
+                pass
 
     def get_item(self, group_path: Tuple[str, ...], itemname: str) -> Any:
         with self._lock:
@@ -115,6 +270,25 @@ class Reporter:
             if isinstance(sub, dict):
                 subs[name] = self._summarize(sub)
         return {"items": items, "subgroups": subs}
+
+    def tensorboard_logdir(self) -> Optional[str]:
+        """Return the TensorBoard log directory used by the reporter."""
+
+        try:
+            writer = self._tensorboard.ensure_writer()
+            if writer is not None:
+                return writer.log_dir
+            return self._tensorboard.logdir
+        except Exception:
+            return None
+
+    def flush_tensorboard(self) -> None:
+        """Force a flush of buffered TensorBoard events."""
+
+        try:
+            self._tensorboard.flush()
+        except Exception:
+            pass
 
 
 REPORTER = Reporter()

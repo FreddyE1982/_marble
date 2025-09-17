@@ -21,6 +21,7 @@ dependencies = [
   "kuzu",
   "pyyaml",
   "Pillow",
+  "tensorboard",
 ]
 
 [project.urls]
