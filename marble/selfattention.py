@@ -5,6 +5,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from .reporter import REPORTER, report
 from .graph import _NEURON_TYPES
 from .learnable_param import LearnableParam
+from .learnables_yaml import register_learnable
 
 
 _SELFA_TYPES: Dict[str, Any] = {}
@@ -159,13 +160,29 @@ class SelfAttention:
         else:
             # Without torch, store as plain list/float for plugin access; no autograd
             t = init_value
-        self._learnables[nid][name] = LearnableParam(
+        lp = LearnableParam(
             tensor=t,
             orig_type=type(init_value),
             lr=lr,
             min_value=min_value,
             max_value=max_value,
         )
+        self._learnables[nid][name] = lp
+        try:
+            label = getattr(neuron, "position", None)
+            if label is None:
+                label = f"id{nid}"
+            display = f"{self.__class__.__name__}.neuron[{label}].{name}"
+            register_learnable(
+                self,
+                name,
+                lp,
+                display_name=display,
+                scope="selfattention_neuron",
+                metadata={"neuron_id": nid},
+            )
+        except Exception:
+            pass
         try:
             # Also expose in neuron's plugin_state so plugins prefer it in forward paths
             lstore = getattr(neuron, "_plugin_state", {}).setdefault("learnable_params", {})
@@ -200,13 +217,25 @@ class SelfAttention:
                 t = torch.tensor([init_value], dtype=torch.float32, device=device, requires_grad=requires_grad)
         else:
             t = init_value
-        self._global_learnables[name] = LearnableParam(
+        lp = LearnableParam(
             tensor=t,
             orig_type=type(init_value),
             lr=lr,
             min_value=min_value,
             max_value=max_value,
         )
+        self._global_learnables[name] = lp
+        try:
+            display = f"{self.__class__.__name__}.{name}"
+            register_learnable(
+                self,
+                name,
+                lp,
+                display_name=display,
+                scope="selfattention_global",
+            )
+        except Exception:
+            pass
         return t
 
     def set_param_optimization(self, neuron: "Neuron", name: str, *, enabled: bool = True, lr: Optional[float] = None) -> None:
