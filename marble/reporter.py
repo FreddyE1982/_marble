@@ -7,10 +7,16 @@ import threading
 from collections import defaultdict
 from collections.abc import Mapping, Sequence
 from numbers import Number
-from typing import Any, Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
+
+import hashlib
+import time
 
 import torch
 from torch.utils.tensorboard import SummaryWriter
+
+if TYPE_CHECKING:
+    from .marblemain import Brain
 
 
 def _load_tensorboard_config() -> Tuple[bool, Optional[str], int]:
@@ -54,6 +60,8 @@ class _TensorBoardAdapter:
         self._step_counters: Dict[str, int] = defaultdict(int)
         self._pending_flush = 0
         self._lock = threading.RLock()
+        self._last_graph_signature: Optional[str] = None
+        self._graph_step = 0
 
     @property
     def logdir(self) -> Optional[str]:
@@ -88,6 +96,190 @@ class _TensorBoardAdapter:
             return
         tag_root = "/".join(str(x) for x in (*group_path, itemname))
         self._log_value(writer, tag_root, value)
+
+    # --- Brain graph logging -------------------------------------------------
+
+    def log_brain_graph(self, brain: "Brain", *, tag: str = "brain_topology") -> None:
+        """Emit the current brain topology to TensorBoard's graph tab."""
+
+        writer = self.ensure_writer()
+        if writer is None:
+            return
+
+        build = self._build_brain_graph(brain, tag)
+        if build is None:
+            return
+        graph_def, signature = build
+        with self._lock:
+            if signature == self._last_graph_signature:
+                return
+            self._last_graph_signature = signature
+            self._graph_step += 1
+        self._write_graph(writer, graph_def)
+
+    def _build_brain_graph(self, brain: "Brain", tag: str) -> Optional[Tuple["graph_pb2.GraphDef", str]]:
+        try:
+            from tensorboard.compat.proto import graph_pb2
+        except Exception:
+            return None
+
+        graph_def = graph_pb2.GraphDef()
+
+        try:
+            neuron_items = getattr(brain, "neurons", {})
+            synapses = list(getattr(brain, "synapses", []) or [])
+        except Exception:
+            return None
+
+        node_defs: Dict[str, Any] = {}
+        entity_names: Dict[Tuple[str, int], str] = {}
+        summary_bits: List[str] = []
+
+        brain_node = graph_def.node.add()
+        brain_node.name = f"brain/{getattr(brain, 'mode', 'unknown')}"
+        brain_node.op = "Brain"
+        brain_dims = getattr(brain, "n", None)
+        try:
+            brain_node.attr["dimensions"].i = int(brain_dims) if brain_dims is not None else 0
+        except Exception:
+            brain_node.attr["dimensions"].s = str(brain_dims).encode("utf-8")
+        try:
+            brain_node.attr["tag"].s = str(tag).encode("utf-8")
+        except Exception:
+            pass
+        node_defs[brain_node.name] = brain_node
+        summary_bits.append(f"B|{brain_node.name}|{brain_dims}|{tag}")
+
+        neuron_names: List[str] = []
+        for key, neuron in neuron_items.items():
+            node = graph_def.node.add()
+            name = self._format_neuron_name(key, neuron)
+            node.name = name
+            node.op = "Neuron"
+            ntype = getattr(neuron, "type_name", None)
+            if ntype:
+                node.attr["type"].s = str(ntype).encode("utf-8")
+            try:
+                node.attr["weight"].f = float(getattr(neuron, "weight", 0.0))
+            except Exception:
+                pass
+            try:
+                node.attr["bias"].f = float(getattr(neuron, "bias", 0.0))
+            except Exception:
+                pass
+            node_defs[name] = node
+            entity_names[("Neuron", id(neuron))] = name
+            neuron_names.append(name)
+            summary_bits.append(
+                "N|{}|{}|{}|{}".format(
+                    name,
+                    ntype,
+                    getattr(neuron, "weight", 0.0),
+                    getattr(neuron, "bias", 0.0),
+                )
+            )
+
+        synapse_links: List[Tuple[str, Any, Any]] = []
+        for idx, synapse in enumerate(synapses):
+            node = graph_def.node.add()
+            name = f"synapse/{idx}_{id(synapse)}"
+            node.name = name
+            node.op = "Synapse"
+            direction = getattr(synapse, "direction", "uni")
+            node.attr["direction"].s = str(direction).encode("utf-8")
+            try:
+                node.attr["weight"].f = float(getattr(synapse, "weight", 0.0))
+            except Exception:
+                pass
+            try:
+                node.attr["bias"].f = float(getattr(synapse, "bias", 0.0))
+            except Exception:
+                pass
+            node_defs[name] = node
+            entity_names[("Synapse", id(synapse))] = name
+            synapse_links.append((name, getattr(synapse, "source", None), getattr(synapse, "target", None)))
+            summary_bits.append(
+                "S|{}|{}|{}|{}".format(
+                    name,
+                    direction,
+                    getattr(synapse, "weight", 0.0),
+                    getattr(synapse, "bias", 0.0),
+                )
+            )
+
+        edges: List[str] = []
+        for syn_name, source, target in synapse_links:
+            src_name = self._resolve_entity_name(source, entity_names)
+            dst_name = self._resolve_entity_name(target, entity_names)
+            if src_name and syn_name in node_defs:
+                if src_name not in node_defs[syn_name].input:
+                    node_defs[syn_name].input.append(src_name)
+                edges.append(f"{src_name}->{syn_name}")
+            if dst_name and dst_name in node_defs:
+                if syn_name not in node_defs[dst_name].input:
+                    node_defs[dst_name].input.append(syn_name)
+                edges.append(f"{syn_name}->{dst_name}")
+
+        for neuron_name in neuron_names:
+            if neuron_name in node_defs and brain_node.name not in node_defs[neuron_name].input:
+                node_defs[neuron_name].input.append(brain_node.name)
+                edges.append(f"{brain_node.name}->{neuron_name}")
+
+        summary_bits.extend(edges)
+        signature = hashlib.sha1("|".join(sorted(str(bit) for bit in summary_bits)).encode("utf-8")).hexdigest()
+        return graph_def, signature
+
+    def _format_neuron_name(self, key: Any, neuron: Any) -> str:
+        try:
+            if isinstance(key, (list, tuple)):
+                coords = ",".join(str(v) for v in key)
+                return f"neuron/[{coords}]"
+        except Exception:
+            pass
+        pos = getattr(neuron, "position", None)
+        if isinstance(pos, (list, tuple)):
+            coords = ",".join(str(v) for v in pos)
+            return f"neuron/[{coords}]"
+        return f"neuron/{id(neuron)}"
+
+    def _resolve_entity_name(self, entity: Any, mapping: Dict[Tuple[str, int], str]) -> Optional[str]:
+        if entity is None:
+            return None
+        cls_name = getattr(entity.__class__, "__name__", "")
+        key = (cls_name, id(entity))
+        return mapping.get(key)
+
+    def _write_graph(self, writer: SummaryWriter, graph_def: Any) -> None:
+        try:
+            file_writer = writer._get_file_writer()
+        except Exception:
+            file_writer = None
+
+        if file_writer is not None:
+            try:
+                file_writer.add_graph(graph_def)
+                return
+            except Exception:
+                pass
+
+        try:
+            writer.add_graph(graph_def=graph_def)
+            return
+        except Exception:
+            pass
+
+        if file_writer is not None:
+            try:
+                from tensorboard.compat.proto import event_pb2
+
+                event = event_pb2.Event(
+                    wall_time=time.time(),
+                    step=self._graph_step,
+                    graph_def=graph_def.SerializeToString(),
+                )
+                file_writer.add_event(event)
+            except Exception:
+                pass
 
     def _log_value(self, writer: SummaryWriter, tag: str, value: Any) -> None:
         try:
@@ -287,6 +479,14 @@ class Reporter:
 
         try:
             self._tensorboard.flush()
+        except Exception:
+            pass
+
+    def log_brain_graph(self, brain: "Brain", *, tag: str = "brain_topology") -> None:
+        """Mirror the brain topology into TensorBoard's graph view."""
+
+        try:
+            self._tensorboard.log_brain_graph(brain, tag=tag)
         except Exception:
             pass
 
