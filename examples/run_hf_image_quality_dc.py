@@ -484,6 +484,12 @@ def main(
         enabled = [n for n, state in actions.items() if state != "off"]
         if not enabled:
             enabled = wplugins
+        if "batchtrainer" not in enabled:
+            # ``run_training_with_datapairs`` requires the batchtrainer plugin
+            # when ``batch_size`` exceeds 1.  The DecisionController may decide
+            # to disable it temporarily, but the training loop must keep it
+            # active so batched execution stays valid.
+            enabled.append("batchtrainer")
 
         pairs = _sample_pairs(ds, max_pairs=max_pairs)
         start_time = time.perf_counter()
