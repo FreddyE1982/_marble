@@ -17,6 +17,7 @@ from .lobe import Lobe
 from .reporter import report
 from .learnable_param import LearnableParam
 from .progressbar import ProgressBar
+from .learnables_yaml import register_learnable
 
 
 class _ParamHolder:
@@ -1338,6 +1339,17 @@ class Wanderer(_DeviceHelper):
         state = self._plugin_state.setdefault("learnable_params", {})
         with _tt(lp, "tensor"):
             self._learnables[name] = lp
+        try:
+            register_learnable(
+                self,
+                name,
+                lp,
+                display_name=f"Wanderer.{name}",
+                scope="wanderer",
+                metadata={"wanderer_id": id(self)},
+            )
+        except Exception:
+            pass
         state[name] = t
         try:
             report("wanderer", "ensure_learnable", {"name": name}, "builder")

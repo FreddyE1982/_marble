@@ -31,6 +31,7 @@ import itertools
 import gc
 from . import plugin_cost_profiler as _pcp
 from .learnable_param import LearnableParam
+from .learnables_yaml import register_learnable
 try:
     import msvcrt  # type: ignore
 except Exception:
@@ -1577,6 +1578,17 @@ class Brain:
             min_value=min_value,
             max_value=max_value,
         )
+        try:
+            register_learnable(
+                self,
+                name,
+                self._learnables[name],
+                display_name=f"Brain.{name}",
+                scope="brain",
+                metadata={"brain_id": id(self)},
+            )
+        except Exception:
+            pass
         return t
 
     def set_param_optimization(self, name: str, *, enabled: bool = True, lr: Optional[float] = None) -> None:
