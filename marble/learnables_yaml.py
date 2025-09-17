@@ -107,6 +107,10 @@ class LearnableRegistry:
         )
         self._records[key] = record
         self._by_param[id(param)] = key
+        try:
+            param.display_name = key
+        except Exception:
+            pass
 
         # Apply persisted preference (if any) so the learnable immediately obeys
         # the ON/OFF state stored in learnables.yaml.
@@ -130,6 +134,29 @@ class LearnableRegistry:
             yield key, record, param, owner
         for key in dead_keys:
             self._records.pop(key, None)
+
+    def log_owner_learnables(self, owner: Any) -> None:
+        """Emit TensorBoard entries for all active learnables owned by *owner*."""
+
+        try:
+            from .reporter import report
+        except Exception:
+            return
+
+        for key, record, param, current_owner in self._iter_alive():
+            if current_owner is not owner:
+                continue
+            if not getattr(param, "opt", False):
+                continue
+            if not self._is_hooked(current_owner, record, param):
+                continue
+            value = self._prepare_log_value(param.tensor)
+            if value is None:
+                continue
+            try:
+                report("learnables", key, value)
+            except Exception:
+                continue
 
     # -- YAML synchronisation ----------------------------------------
     def update_yaml(self, yaml_path: Optional[Path] = None) -> None:
@@ -160,6 +187,43 @@ class LearnableRegistry:
     @staticmethod
     def default_yaml_path() -> Path:
         return Path(__file__).resolve().parents[1] / "learnables.yaml"
+
+    def _prepare_log_value(self, raw: Any) -> Any:
+        if raw is None:
+            return None
+        try:
+            import torch  # type: ignore
+        except Exception:
+            torch = None  # type: ignore
+        if torch is not None and isinstance(raw, torch.Tensor):
+            try:
+                return raw.detach().to("cpu")
+            except Exception:
+                try:
+                    return raw.detach()
+                except Exception:
+                    return None
+        try:
+            detached = raw.detach()  # type: ignore[attr-defined]
+            if hasattr(detached, "to"):
+                try:
+                    return detached.to("cpu")
+                except Exception:
+                    return detached
+            return detached
+        except Exception:
+            pass
+        if hasattr(raw, "cpu"):
+            try:
+                return raw.cpu()
+            except Exception:
+                pass
+        if hasattr(raw, "tolist"):
+            try:
+                return raw.tolist()
+            except Exception:
+                pass
+        return raw
 
     def _load_preferences(self, yaml_path: Optional[Path]) -> Dict[str, str]:
         from collections import OrderedDict
@@ -256,5 +320,16 @@ def updatelearnablesyaml(yaml_path: Optional[Path] = None) -> None:
     _REGISTRY.update_yaml(yaml_path=yaml_path)
 
 
-__all__ = ["register_learnable", "updatelearnablesyaml", "LearnableRegistry"]
+def log_learnable_values(owner: Any) -> None:
+    """Log active learnables for *owner* into the reporter's ``learnables`` group."""
+
+    _REGISTRY.log_owner_learnables(owner)
+
+
+__all__ = [
+    "register_learnable",
+    "updatelearnablesyaml",
+    "LearnableRegistry",
+    "log_learnable_values",
+]
 

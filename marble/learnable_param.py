@@ -19,6 +19,7 @@ class LearnableParam:
     lr: Optional[float] = None
     min_value: Optional[float] = None
     max_value: Optional[float] = None
+    display_name: Optional[str] = None
 
     def apply_constraints(self) -> None:
         """Clamp and cast the underlying tensor in-place."""

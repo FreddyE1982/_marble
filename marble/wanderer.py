@@ -17,7 +17,7 @@ from .lobe import Lobe
 from .reporter import report
 from .learnable_param import LearnableParam
 from .progressbar import ProgressBar
-from .learnables_yaml import register_learnable
+from .learnables_yaml import log_learnable_values, register_learnable
 
 
 class _ParamHolder:
@@ -1379,6 +1379,10 @@ class Wanderer(_DeviceHelper):
     def _update_learnables(self) -> None:
         torch = self._torch  # type: ignore[assignment]
         if torch is None:
+            try:
+                log_learnable_values(self)
+            except Exception:
+                pass
             return
         params = self._collect_enabled_params()
         groups = []
@@ -1389,12 +1393,20 @@ class Wanderer(_DeviceHelper):
             if hasattr(t, "grad") and t.grad is not None:
                 groups.append({"params": [t], "lr": lr})
         if not groups:
+            try:
+                log_learnable_values(self)
+            except Exception:
+                pass
             return
         opt = self._optimizer_cls(groups)
         opt.step()
         opt.zero_grad(set_to_none=True)
         for lp in params:
             lp.apply_constraints()
+        try:
+            log_learnable_values(self)
+        except Exception:
+            pass
 
     def _apply_optimizer(self, lr_eff: float) -> None:
         torch = self._torch  # type: ignore[assignment]
