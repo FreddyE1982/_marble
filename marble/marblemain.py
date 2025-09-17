@@ -3076,6 +3076,9 @@ def run_training_with_datapairs(
     return out
 
 
+_RUN_TRAINING_WITH_DATAPAIRS_IMPL = run_training_with_datapairs
+
+
 __all__ += ["run_training_with_datapairs"]
 
 

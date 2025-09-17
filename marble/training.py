@@ -144,10 +144,53 @@ def run_training_with_datapairs(
     from .marblemain import Wanderer  # lazy import
     updatelearnablesyaml()
     def _inner() -> Dict[str, Any]:
+        nonlocal auto_max_steps_every
+        effective_batch_size = 1
+        if batch_size is not None:
+            try:
+                effective_batch_size = max(1, int(batch_size))
+            except Exception:
+                effective_batch_size = 1
+        elif isinstance(neuro_config, dict) and "batch_size" in neuro_config:
+            try:
+                effective_batch_size = max(1, int(neuro_config.get("batch_size", 1)))
+            except Exception:
+                effective_batch_size = 1
+        use_enhanced = (
+            effective_batch_size > 1
+            and optimizer is None
+            and not dashboard
+        )
+        if use_enhanced:
+            try:
+                from . import marblemain as _mm
+
+                impl = getattr(_mm, "_RUN_TRAINING_WITH_DATAPAIRS_IMPL", None)
+            except Exception:
+                impl = None
+            if callable(impl):
+                kwargs_impl = {
+                    "steps_per_pair": steps_per_pair,
+                    "lr": lr,
+                    "wanderer_type": wanderer_type,
+                    "train_type": train_type,
+                    "seed": seed,
+                    "loss": loss,
+                    "left_to_start": left_to_start,
+                    "neuro_config": neuro_config,
+                    "callback": callback,
+                    "gradient_clip": gradient_clip,
+                    "selfattention": selfattention,
+                    "streaming": streaming,
+                    "batch_size": effective_batch_size,
+                    "lobe": lobe,
+                    "mixedprecision": mixedprecision,
+                    "auto_max_steps_every": auto_max_steps_every,
+                }
+                return impl(brain, datapairs, codec, **kwargs_impl)
         from .plugins import wanderer_resource_allocator as resource_allocator
         history: List[Dict[str, Any]] = []
         count = 0
-        nonlocal auto_max_steps_every
         try:
             brain._progress_total_walks = len(datapairs)  # type: ignore[attr-defined]
         except Exception:
