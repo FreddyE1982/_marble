@@ -15,6 +15,7 @@ from .codec import UniversalTensorCodec, TensorLike
 from .datapair import DataPair
 from .reporter import report
 from .lobe import Lobe
+from .learnables_yaml import updatelearnablesyaml
 
 
 def run_wanderer_training(
@@ -36,6 +37,7 @@ def run_wanderer_training(
     dashboard: bool = False,
 ) -> Dict[str, Any]:
     from .marblemain import Wanderer  # lazy to avoid import cycle
+    updatelearnablesyaml()
     def _inner() -> Dict[str, Any]:
         cfg = neuro_config
         wtype = wanderer_type
@@ -140,6 +142,7 @@ def run_training_with_datapairs(
     auto_max_steps_every: Optional[int] = None,
 ) -> Dict[str, Any]:
     from .marblemain import Wanderer  # lazy import
+    updatelearnablesyaml()
     def _inner() -> Dict[str, Any]:
         from .plugins import wanderer_resource_allocator as resource_allocator
         history: List[Dict[str, Any]] = []
