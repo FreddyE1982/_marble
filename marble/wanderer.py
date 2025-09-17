@@ -18,7 +18,11 @@ from .lobe import Lobe
 from .reporter import report
 from .learnable_param import LearnableParam
 from .progressbar import ProgressBar
-from .learnables_yaml import log_learnable_values, register_learnable
+from .learnables_yaml import (
+    log_learnable_values,
+    register_learnable,
+    register_learnable_plugin,
+)
 
 
 class _ParamHolder:
@@ -92,6 +96,24 @@ def expose_learnable_params(fn: Callable[..., Any]) -> Callable[..., Any]:
             continue
         param_info.append(p)
 
+    qualname = getattr(fn, "__qualname__", "")
+    plugin_class = None
+    if "." in qualname:
+        plugin_class = qualname.split(".", 1)[0].split("<locals>", 1)[0]
+        if not plugin_class.endswith(("Plugin", "Routine")):
+            plugin_class = None
+    if plugin_class is None:
+        module = inspect.getmodule(fn)
+        if module is not None:
+            for obj in vars(module).values():
+                if not inspect.isclass(obj):
+                    continue
+                if obj.__module__ != module.__name__:
+                    continue
+                if obj.__name__.endswith(("Plugin", "Routine")):
+                    plugin_class = obj.__name__
+                    break
+
     @wraps(fn)
     def wrapper(*args: Any, **kwargs: Any) -> Any:
         if not args:
@@ -109,6 +131,7 @@ def expose_learnable_params(fn: Callable[..., Any]) -> Callable[..., Any]:
         getter = getattr(target, "get_learnable_param_tensor")
         use_prefix = getattr(target, "__class__", object).__name__ != "Wanderer"
         prefix = f"{getattr(fn, '__qualname__', fn.__name__)}_" if use_prefix else ""
+        owner_kind = getattr(target.__class__, "__name__", "") if target is not None else ""
         bound = sig.bind_partial(*args, **kwargs)
         args_list = list(args)
         param_positions = list(sig.parameters)
@@ -125,6 +148,8 @@ def expose_learnable_params(fn: Callable[..., Any]) -> Callable[..., Any]:
                 else:
                     kwargs[p.name] = init
                 continue
+            if plugin_class:
+                register_learnable_plugin(owner_kind, name, plugin_class)
             if name not in getattr(target, "_learnables", {}):
                 ensure(name, init)
             tensor = getter(name)
