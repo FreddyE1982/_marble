@@ -985,7 +985,12 @@ class Wanderer(_DeviceHelper):
         final_loss_val = float(loss.detach().to("cpu").item())
 
         if amp_enabled and scaler is not None and not self.tiling:
-            scaler.scale(loss).backward()
+            try:
+                scaler.scale(loss).backward()
+            except torch.cuda.OutOfMemoryError as exc:  # type: ignore[attr-defined]
+                if not self._handle_cuda_oom(exc):
+                    raise
+                scaler.scale(loss).backward()
             scale = scaler.get_scale()
             params = []
             for n in self._visited:
@@ -1002,7 +1007,12 @@ class Wanderer(_DeviceHelper):
                 torch = self._torch
                 if torch is not None:
                     loss = torch.tensor(float(loss), device=self._device, requires_grad=True)
-            loss.backward()
+            try:
+                loss.backward()
+            except torch.cuda.OutOfMemoryError as exc:  # type: ignore[attr-defined]
+                if not self._handle_cuda_oom(exc):
+                    raise
+                loss.backward()
             loss = loss.detach()
 
         try:
@@ -1496,6 +1506,29 @@ class Wanderer(_DeviceHelper):
                 n.bias = float(holder.b.detach().cpu().item())  # type: ignore[assignment]
             except Exception:
                 n.bias = float(holder.b)  # type: ignore[assignment]
+
+    def _handle_cuda_oom(self, exc: BaseException) -> bool:
+        """Invoke resource allocator plugins to recover from CUDA OOM events."""
+
+        torch = self._torch  # type: ignore[assignment]
+        if torch is None or not hasattr(torch, "cuda") or not torch.cuda.is_available():
+            return False
+        handled = False
+        for plug in getattr(self, "_wplugins", []) or []:
+            handler = getattr(plug, "handle_cuda_oom", None)
+            if handler is None:
+                continue
+            try:
+                if handler(self, exc):
+                    handled = True
+            except Exception:
+                continue
+        if handled:
+            try:
+                torch.cuda.empty_cache()
+            except Exception:
+                pass
+        return handled
 
     def walkfinish(self) -> Tuple[float, Optional[float]]:
         if not self._walk_ctx:
