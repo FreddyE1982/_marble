@@ -834,9 +834,9 @@ class Brain:
       imported modules are auto-exposed as learnable parameters
     - prune_hit_count: number of times a neuron must exceed walk mean loss difference
       before it is pruned
-    - tensorboard: when True, disables CLI progress bars and exposes the active
-      TensorBoard log directory via ``brain.tensorboard_logdir`` so notebook users
-      can launch ``%tensorboard`` quickly
+    - tensorboard: when True, disables CLI progress bars, exposes the active
+      TensorBoard log directory via ``brain.tensorboard_logdir`` and attempts to
+      launch an inline TensorBoard display automatically in notebook contexts
 
     The brain maintains a discrete occupancy grid; neurons/synapses must be placed
     at indices that are inside this shape.
@@ -965,12 +965,20 @@ class Brain:
         self.enable_progressbar = True
         self.tensorboard_logdir: Optional[str] = None
         self._tensorboard_announced = False
+        self._tensorboard_inline_active = False
         if bool(tensorboard):
             self.enable_progressbar = False
             try:
                 self.tensorboard_logdir = REPORTER.tensorboard_logdir()
             except Exception:
                 self.tensorboard_logdir = None
+            if self.tensorboard_logdir:
+                try:
+                    self._tensorboard_inline_active = self._start_tensorboard_inline_display(
+                        self.tensorboard_logdir
+                    )
+                except Exception:
+                    self._tensorboard_inline_active = False
             self._tensorboard_announced = False
 
         # Global learnable parameters for brain-level plugins
@@ -1001,6 +1009,45 @@ class Brain:
 
     def _kuzu_key(self, coords: Sequence[float]) -> str:
         return ",".join(str(float(c)) for c in coords)
+
+    def _start_tensorboard_inline_display(self, logdir: str) -> bool:
+        """Attempt to launch TensorBoard inline inside a notebook environment."""
+
+        try:
+            from IPython import get_ipython  # type: ignore
+        except Exception:
+            return False
+
+        try:
+            ip = get_ipython()
+        except Exception:
+            ip = None
+        if ip is None:
+            return False
+
+        # First try the canonical magic commands. They produce the inline widget
+        # in both classic Jupyter and modern notebook front-ends when available.
+        try:
+            ip.run_line_magic("load_ext", "tensorboard")
+        except Exception:
+            pass
+
+        logdir_str = str(logdir)
+        try:
+            ip.run_line_magic("tensorboard", f"--logdir {logdir_str}")
+            print(f"[marble] TensorBoard inline display started for logdir: {logdir_str}")
+            return True
+        except Exception:
+            try:
+                from tensorboard import notebook  # type: ignore
+
+                notebook.start(f"--logdir {logdir_str}")
+                print(
+                    f"[marble] TensorBoard inline display started for logdir: {logdir_str}"
+                )
+                return True
+            except Exception:
+                return False
 
     def _kuzu_add_neuron(self, coords: Sequence[float]) -> None:
         if self._kuzu_conn is None:
