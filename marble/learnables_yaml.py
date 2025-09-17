@@ -26,7 +26,7 @@ import pkgutil
 import sys
 from contextlib import suppress
 from pathlib import Path
-from typing import Any, Dict, Iterable, Optional
+from typing import Any, Callable, Dict, Iterable, Optional
 import weakref
 
 from .learnable_param import LearnableParam
@@ -185,6 +185,33 @@ class LearnableRegistry:
         stale = set(config) - active_keys
         for key in stale:
             config.pop(key, None)
+
+        self._write_preferences(config, yaml_path)
+
+    def bulk_set_state(
+        self,
+        *,
+        state: str,
+        yaml_path: Optional[Path] = None,
+        predicate: Optional[Callable[[str], bool]] = None,
+    ) -> None:
+        """Set the ON/OFF state for all learnables that match *predicate*."""
+
+        target_state = "ON" if state.upper() == "ON" else "OFF"
+        desired_bool = target_state == "ON"
+        config = self._load_preferences(yaml_path)
+
+        for key in list(config):
+            if predicate is not None and not predicate(key):
+                continue
+            config[key] = target_state
+            record = self._records.get(key)
+            if record is None:
+                continue
+            param = record.param_ref()
+            if param is None:
+                continue
+            param.opt = desired_bool
 
         self._write_preferences(config, yaml_path)
 
@@ -683,6 +710,24 @@ def updatelearnablesyaml(yaml_path: Optional[Path] = None) -> None:
     _REGISTRY.update_yaml(yaml_path=yaml_path)
 
 
+def learnablesON(yaml_path: Optional[Path] = None) -> None:
+    """Turn optimisation ON for all learnables that are not loss-related."""
+
+    updatelearnablesyaml(yaml_path)
+    _REGISTRY.bulk_set_state(
+        state="ON",
+        yaml_path=yaml_path,
+        predicate=lambda key: "loss" not in key.lower(),
+    )
+
+
+def learnablesOFF(yaml_path: Optional[Path] = None) -> None:
+    """Turn optimisation OFF for all learnables."""
+
+    updatelearnablesyaml(yaml_path)
+    _REGISTRY.bulk_set_state(state="OFF", yaml_path=yaml_path)
+
+
 def log_learnable_values(owner: Any) -> None:
     """Log active learnables for *owner* into the reporter's ``learnables`` group."""
 
@@ -692,6 +737,8 @@ def log_learnable_values(owner: Any) -> None:
 __all__ = [
     "register_learnable",
     "updatelearnablesyaml",
+    "learnablesON",
+    "learnablesOFF",
     "LearnableRegistry",
     "log_learnable_values",
 ]
