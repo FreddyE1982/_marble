@@ -96,6 +96,8 @@ class _TensorBoardAdapter:
             return
         if group_path and str(group_path[0]) == "wanderer_steps":
             return
+        if self._log_training_walk(writer, group_path, itemname, value):
+            return
         if self._log_training_datapair(writer, group_path, itemname, value):
             return
         tag_root = "/".join(str(x) for x in (*group_path, itemname))
@@ -348,6 +350,37 @@ class _TensorBoardAdapter:
                 self._log_value(writer, tag, subvalue)
             return True
         return False
+
+    def _log_training_walk(
+        self,
+        writer: SummaryWriter,
+        group_path: Tuple[str, ...],
+        itemname: str,
+        value: Any,
+    ) -> bool:
+        if not (
+            len(group_path) >= 2
+            and str(group_path[0]) == "training"
+            and isinstance(value, Mapping)
+            and str(itemname).startswith("walk_")
+        ):
+            return False
+
+        walks_index: Optional[int] = None
+        for idx, segment in enumerate(group_path):
+            if str(segment) == "walks":
+                walks_index = idx
+                break
+
+        if walks_index is None:
+            return False
+
+        tag = "/".join(str(part) for part in group_path[: walks_index + 1])
+        if not tag:
+            return False
+
+        self._log_value(writer, tag, value)
+        return True
 
     def flush(self) -> None:
         with self._lock:
