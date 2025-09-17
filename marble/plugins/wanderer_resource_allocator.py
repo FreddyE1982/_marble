@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 import tempfile
 import time
 import threading
@@ -169,6 +170,7 @@ class ResourceAllocatorPlugin:
         self._rebalance_thread: threading.Thread | None = None
         self._rebalance_stop = threading.Event()
         self._transfer_stream = torch.cuda.Stream() if torch.cuda.is_available() else None
+        self._last_decay = 0.1
         ALLOCATORS.append(weakref.ref(self))
 
     @staticmethod
@@ -581,9 +583,10 @@ class ResourceAllocatorPlugin:
                     }
                     setattr(obj, meta_attr, meta)
                     req_meta = bool(meta["requires_grad"] or meta["had_grad_fn"])
-                    cpu_tensor = self._finalize_tensor(cpu_tensor, req_meta)
-                    cpu_tensor = self._preserve_grad(tensor, cpu_tensor)
-                    setattr(obj, attr, cpu_tensor)
+                    placeholder = torch.empty(0, dtype=orig_dtype)
+                    placeholder = self._finalize_tensor(placeholder, req_meta)
+                    placeholder = self._preserve_grad(tensor, placeholder)
+                    setattr(obj, attr, placeholder)
             else:
                 cpu_tensor = self._finalize_tensor(cpu_tensor, needs_grad)
                 cpu_tensor = self._preserve_grad(tensor, cpu_tensor)
@@ -754,6 +757,10 @@ class ResourceAllocatorPlugin:
         prev = st.get("base_score", base_score)
         base_score = smooth * prev + (1.0 - smooth) * base_score
         st["base_score"] = base_score
+        try:
+            self._last_decay = float(decay)
+        except Exception:
+            self._last_decay = 0.1
         storage_counts: Dict[str, int] = {"gpu": 0, "cpu": 0, "disk": 0}
         for obj, attr, t, _hits in TENSOR_REGISTRY.iter_tensors(decay):
             if torch.cuda.is_available() and sysm["gpu"] < self.vram_offload_threshold:
@@ -827,6 +834,100 @@ class ResourceAllocatorPlugin:
             pass
 
     # Core logic ---------------------------------------------------------
+    @staticmethod
+    def _required_bytes_from_exception(exc: BaseException | None) -> float:
+        if exc is None:
+            return 0.0
+        text = str(exc)
+        match = re.search(r"Tried to allocate ([0-9]+(?:\.[0-9]+)?)\s*([KMG]i?)B", text)
+        if not match:
+            return 0.0
+        value = float(match.group(1))
+        unit = match.group(2).lower()
+        factor = 1.0
+        if unit.startswith("k"):
+            factor = 1024.0
+        elif unit.startswith("m"):
+            factor = 1024.0 ** 2
+        elif unit.startswith("g"):
+            factor = 1024.0 ** 3
+        return value * factor
+
+    def handle_cuda_oom(self, wanderer, exc: BaseException | None = None) -> bool:
+        """Free GPU memory by migrating low-priority tensors off device.
+
+        Parameters
+        ----------
+        wanderer:
+            The active :class:`~marble.wanderer.Wanderer` instance. Only used for
+            telemetry; may be ``None`` for unit tests.
+        exc:
+            The original CUDA OOM exception. When available, the requested
+            allocation size is parsed to estimate how much memory needs to be
+            reclaimed.
+
+        Returns
+        -------
+        bool
+            ``True`` if any tensors were moved away from the GPU, ``False``
+            otherwise.
+        """
+
+        if not torch.cuda.is_available():
+            return False
+
+        required = self._required_bytes_from_exception(exc)
+        # Always aim to free at least a modest buffer to avoid immediate
+        # repeated OOMs even when the exception text lacks a size estimate.
+        minimum_target = 32 * 1024 * 1024
+        target_bytes = max(required, minimum_target)
+        decay = float(getattr(self, "_last_decay", 0.1))
+        try:
+            iterables = list(TENSOR_REGISTRY.iter_tensors(decay))
+        except Exception:
+            iterables = []
+        gpu_entries: List[Tuple[float, Any, str, torch.Tensor]] = []
+        for obj, attr, tensor, hits in iterables:
+            if not torch.is_tensor(tensor):
+                continue
+            device_str = str(tensor.device).lower()
+            if not device_str.startswith("cuda"):
+                continue
+            gpu_entries.append((float(hits), obj, attr, tensor))
+        if not gpu_entries:
+            return False
+
+        gpu_entries.sort(key=lambda item: item[0])
+        sysm = self._system_metrics()
+        moved = 0.0
+        any_moved = False
+        for _hits, obj, attr, tensor in gpu_entries:
+            target_device = "cpu"
+            if (
+                sysm["ram"] > self.ram_offload_threshold
+                and self._disk_used_mb < self.max_disk_mb
+                and sysm["disk"] < self.disk_usage_threshold
+            ):
+                target_device = "disk"
+            try:
+                self._safe_transfer(obj, attr, tensor, target_device)
+            except Exception:
+                continue
+            moved += float(tensor.element_size() * tensor.nelement())
+            any_moved = True
+            if moved >= target_bytes:
+                break
+        try:
+            torch.cuda.empty_cache()
+        except Exception:
+            pass
+        if any_moved:
+            try:
+                REPORTER.item[("oom_evictions", "resource_allocator", "scalars")] = float(moved)
+            except Exception:
+                pass
+        return any_moved
+
     def choose_next(self, wanderer, current, choices: List[Tuple["Synapse", str]]):
         """Rebalance tensors without steering the walk."""
         self.rebalance_all(wanderer)
