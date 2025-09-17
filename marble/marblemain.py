@@ -834,6 +834,9 @@ class Brain:
       imported modules are auto-exposed as learnable parameters
     - prune_hit_count: number of times a neuron must exceed walk mean loss difference
       before it is pruned
+    - tensorboard: when True, disables CLI progress bars and exposes the active
+      TensorBoard log directory via ``brain.tensorboard_logdir`` so notebook users
+      can launch ``%tensorboard`` quickly
 
     The brain maintains a discrete occupancy grid; neurons/synapses must be placed
     at indices that are inside this shape.
@@ -858,6 +861,7 @@ class Brain:
         kuzu_path: Optional[str] = None,
         learn_all_numeric_parameters: bool = False,
         prune_hit_count: int = 2,
+        tensorboard: bool = False,
     ) -> None:
         if n < 1:
             raise ValueError("n must be >= 1")
@@ -957,6 +961,17 @@ class Brain:
         self._progress_total_epochs = 1
         self._progress_walk = 0
         self._progress_total_walks = 1
+
+        self.enable_progressbar = True
+        self.tensorboard_logdir: Optional[str] = None
+        self._tensorboard_announced = False
+        if bool(tensorboard):
+            self.enable_progressbar = False
+            try:
+                self.tensorboard_logdir = REPORTER.tensorboard_logdir()
+            except Exception:
+                self.tensorboard_logdir = None
+            self._tensorboard_announced = False
 
         # Global learnable parameters for brain-level plugins
         self._learnables: Dict[str, LearnableParam] = {}

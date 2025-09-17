@@ -242,6 +242,7 @@ def main(
     batch_size: int = 10,
     launch_kuzu: bool | None = None,
     min_new_neurons: int = 1,
+    tensorboard: bool = False,
 ) -> None:
     # Image-cache configuration (defaults: enabled=True, size=20); allow env overrides.
     cache_enabled = os.environ.get("MARBLE_IMG_CACHE_ENABLED", "1").strip() not in ("0", "false", "False")
@@ -288,8 +289,14 @@ def main(
         snapshot_freq=100,
         snapshot_keep=10,
         kuzu_path=kuzu_db,
+        tensorboard=tensorboard,
     )
-    
+
+    if tensorboard and getattr(brain, "tensorboard_logdir", None):
+        logdir = brain.tensorboard_logdir
+        print("TensorBoard ready! In a notebook, run:")
+        print(f"  %tensorboard --logdir {logdir}")
+
     print("...done")
     # Ensure every newly added neuron defaults to the autoneuron type
     _orig_add = brain.add_neuron
