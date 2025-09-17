@@ -304,6 +304,32 @@ class Synapse(_DeviceHelper):
         except Exception:
             pass
 
+    def make_bidirectional(self) -> None:
+        """Upgrade the synapse to bidirectional connectivity if needed."""
+        if self.direction == "bi":
+            return
+
+        self.direction = "bi"
+
+        if isinstance(self.source, Synapse):
+            if self not in self.source.incoming_synapses:
+                self.source.incoming_synapses.append(self)
+        else:
+            if self not in self.source.incoming:
+                self.source.incoming.append(self)
+
+        if isinstance(self.target, Synapse):
+            if self not in self.target.outgoing_synapses:
+                self.target.outgoing_synapses.append(self)
+        else:
+            if self not in self.target.outgoing:
+                self.target.outgoing.append(self)
+
+        try:
+            self._report("synapse", "direction_changed", {"direction": self.direction}, "events")
+        except Exception:
+            pass
+
     # Disallow copying to maintain graph immutability during training
     def __copy__(self):
         raise TypeError("Synapse instances are immutable and cannot be copied")

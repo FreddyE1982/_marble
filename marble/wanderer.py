@@ -870,17 +870,34 @@ class Wanderer(_DeviceHelper):
                     lock_ctx = self.brain.lock_synapse(next_syn, timeout=1.0)
             except Exception:
                 lock_ctx = None
-            if lock_ctx is not None:
-                with lock_ctx:
+
+            def _transmit_with_recovery() -> Neuron:
+                try:
                     if dir_str == "forward":
-                        next_neuron = next_syn.transmit(out, direction="forward")
-                    else:
-                        next_neuron = next_syn.transmit(out, direction="backward")
-            else:
-                if dir_str == "forward":
-                    next_neuron = next_syn.transmit(out, direction="forward")
-                else:
-                    next_neuron = next_syn.transmit(out, direction="backward")
+                        return next_syn.transmit(out, direction="forward")
+                    return next_syn.transmit(out, direction="backward")
+                except ValueError as exc:
+                    if dir_str == "backward" and "backward transmission" in str(exc).lower():
+                        if getattr(next_syn, "direction", None) != "bi":
+                            try:
+                                if hasattr(next_syn, "make_bidirectional"):
+                                    next_syn.make_bidirectional()  # type: ignore[attr-defined]
+                                else:
+                                    next_syn.direction = "bi"  # type: ignore[attr-defined]
+                            except Exception:
+                                try:
+                                    next_syn.direction = "bi"  # type: ignore[attr-defined]
+                                except Exception:
+                                    pass
+                            print(
+                                "tried to backward transmit on a synapse that does not allow it, changed the synapse to be bi directional"
+                            )
+                            return next_syn.transmit(out, direction="backward")
+                    raise
+
+            lock_context = lock_ctx if lock_ctx is not None else contextlib.nullcontext()
+            with lock_context:
+                next_neuron = _transmit_with_recovery()
 
             for nplug in getattr(self, "_neuro_plugins", []) or []:
                 try:

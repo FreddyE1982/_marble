@@ -1,3 +1,5 @@
+import contextlib
+import io
 import unittest
 
 
@@ -81,6 +83,38 @@ class TestWanderer(unittest.TestCase):
         stats = w.walk(max_steps=3, start=n1, lr=1e-2)
         print("neuron fire counter:", w.neuron_fire_count)
         self.assertEqual(w.neuron_fire_count, stats["steps"])
+
+    def test_backward_request_turns_synapse_bidirectional(self):
+        from marble.marblemain import register_wanderer_type, Wanderer, Brain
+
+        class ForceBackwardPlugin:
+            def choose_next(self, wanderer, current, choices):
+                if not choices:
+                    return None, "forward"
+                syn, _ = choices[0]
+                return syn, "backward"
+
+        register_wanderer_type("force_backward_once", ForceBackwardPlugin())
+
+        b = Brain(2, mode="sparse", sparse_bounds=((0.0, None), (0.0, None)))
+        n1 = b.add_neuron((0.0, 0.0), tensor=[1.0], weight=1.0, bias=0.0)
+        n2 = b.add_neuron((1.0, 0.0), tensor=[1.0], weight=1.0, bias=0.0, connect_to=(0.0, 0.0), direction="uni")
+        syn = b.connect((0.0, 0.0), (1.0, 0.0), direction="uni")
+
+        w = Wanderer(b, type_name="force_backward_once", seed=0)
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            stats = w.walk(max_steps=2, start=n1, lr=1e-2)
+        output = buf.getvalue()
+        print("force backward stats:", stats)
+        print("force backward output:", output.strip())
+
+        self.assertEqual(syn.direction, "bi")
+        self.assertIn(
+            "tried to backward transmit on a synapse that does not allow it, changed the synapse to be bi directional",
+            output,
+        )
+        self.assertGreaterEqual(stats["steps"], 1)
 
 
 if __name__ == "__main__":
