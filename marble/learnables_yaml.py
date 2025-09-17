@@ -20,13 +20,14 @@ effects other than creating the registry singleton.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from collections import defaultdict
 import importlib
 import inspect
 import pkgutil
 import sys
 from contextlib import suppress
 from pathlib import Path
-from typing import Any, Callable, Dict, Iterable, Optional
+from typing import Any, Callable, Dict, Iterable, Optional, Set, Tuple
 import weakref
 
 from .learnable_param import LearnableParam
@@ -110,6 +111,12 @@ class LearnableRegistry:
             owner_ref=owner_ref,
             param_ref=weakref.ref(param),
         )
+        associated = _LEARNABLE_PLUGIN_ASSOC.get((owner_kind, internal_name))
+        if associated:
+            plugins = record.metadata.setdefault("plugins", [])
+            for plugin_name in sorted(associated):
+                if plugin_name not in plugins:
+                    plugins.append(plugin_name)
         self._records[key] = record
         self._by_param[id(param)] = key
         try:
@@ -126,6 +133,22 @@ class LearnableRegistry:
             param.opt = False
 
         return key
+
+    def has_active_plugin_learnable(self, plugin_class: str) -> bool:
+        """Return ``True`` if any learnable linked to *plugin_class* is ON."""
+
+        if not plugin_class:
+            return False
+        for _key, record, param, owner in self._iter_alive():
+            plugins = record.metadata.get("plugins", [])
+            if plugin_class not in plugins:
+                continue
+            if not getattr(param, "opt", False):
+                continue
+            if not self._is_hooked(owner, record, param):
+                continue
+            return True
+        return False
 
     # -- inspection helpers ------------------------------------------
     def _iter_alive(self) -> Iterable[tuple[str, _TrackedLearnable, LearnableParam, Any]]:
@@ -318,6 +341,36 @@ class LearnableRegistry:
         except Exception:
             return False
         return True
+
+
+_LEARNABLE_PLUGIN_ASSOC: Dict[Tuple[str, str], Set[str]] = defaultdict(set)
+
+
+def register_learnable_plugin(owner_kind: str, internal_name: str, plugin_class: str) -> None:
+    """Record that *internal_name* is associated with *plugin_class*.
+
+    Parameters
+    ----------
+    owner_kind:
+        Name of the class that owns the learnable (e.g. ``"Wanderer"``).
+    internal_name:
+        Key under which the learnable is stored on the owner.
+    plugin_class:
+        Name of the plugin or routine class that depends on the learnable.
+    """
+
+    if not owner_kind or not internal_name or not plugin_class:
+        return
+    key = (owner_kind, internal_name)
+    _LEARNABLE_PLUGIN_ASSOC[key].add(plugin_class)
+    for record in list(_REGISTRY._records.values()):
+        if record.owner_kind != owner_kind:
+            continue
+        if record.internal_name != internal_name:
+            continue
+        plugins = record.metadata.setdefault("plugins", [])
+        if plugin_class not in plugins:
+            plugins.append(plugin_class)
 
 
 _REGISTRY = LearnableRegistry()
@@ -734,6 +787,12 @@ def log_learnable_values(owner: Any) -> None:
     _REGISTRY.log_owner_learnables(owner)
 
 
+def plugin_learnable_forces_activation(plugin_class: str) -> bool:
+    """Return ``True`` when any learnable tied to *plugin_class* is enabled."""
+
+    return _REGISTRY.has_active_plugin_learnable(plugin_class)
+
+
 __all__ = [
     "register_learnable",
     "updatelearnablesyaml",
@@ -741,5 +800,7 @@ __all__ = [
     "learnablesOFF",
     "LearnableRegistry",
     "log_learnable_values",
+    "register_learnable_plugin",
+    "plugin_learnable_forces_activation",
 ]
 

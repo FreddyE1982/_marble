@@ -26,6 +26,10 @@ from typing import Any, Dict, List, Tuple, Optional
 import torch
 
 from ..wanderer import expose_learnable_params
+from ..learnables_yaml import (
+    register_learnable_plugin,
+    plugin_learnable_forces_activation,
+)
 from ..buildingblock import get_buildingblock_type, _BUILDINGBLOCK_TYPES
 
 
@@ -111,12 +115,16 @@ class AutoPlugin:
             if name in self._disabled:
                 continue
             wanderer.ensure_learnable_param(f"autoplugin_bias_{name}", 0.0)
+            register_learnable_plugin("Wanderer", f"autoplugin_bias_{name}", name)
             wanderer.ensure_learnable_param(f"autoplugin_gain_{name}", 1.0)
+            register_learnable_plugin("Wanderer", f"autoplugin_gain_{name}", name)
             new_stack.append(_GatedPlugin(p, name, self))
         wanderer._wplugins = new_stack
         for bb_name in _BUILDINGBLOCK_TYPES.keys():
             wanderer.ensure_learnable_param(f"autoplugin_bias_{bb_name}", 0.0)
+            register_learnable_plugin("Wanderer", f"autoplugin_bias_{bb_name}", bb_name)
             wanderer.ensure_learnable_param(f"autoplugin_gain_{bb_name}", 1.0)
+            register_learnable_plugin("Wanderer", f"autoplugin_gain_{bb_name}", bb_name)
 
     def before_walk(self, wanderer: "Wanderer", start: "Neuron") -> None:
         """Ensure all plugin stacks are wrapped before training."""
@@ -129,7 +137,9 @@ class AutoPlugin:
                 if name in self._disabled:
                     continue
                 wanderer.ensure_learnable_param(f"autoplugin_bias_{name}", 0.0)
+                register_learnable_plugin("Wanderer", f"autoplugin_bias_{name}", name)
                 wanderer.ensure_learnable_param(f"autoplugin_gain_{name}", 1.0)
+                register_learnable_plugin("Wanderer", f"autoplugin_gain_{name}", name)
                 new_stack.append(_GatedPlugin(p, name, self))
             wanderer._neuro_plugins = new_stack
             self._neuro_wrapped = True
@@ -146,7 +156,9 @@ class AutoPlugin:
                     if name in self._disabled:
                         continue
                     wanderer.ensure_learnable_param(f"autoplugin_bias_{name}", 0.0)
+                    register_learnable_plugin("Wanderer", f"autoplugin_bias_{name}", name)
                     wanderer.ensure_learnable_param(f"autoplugin_gain_{name}", 1.0)
+                    register_learnable_plugin("Wanderer", f"autoplugin_gain_{name}", name)
                     new_routines.append(_GatedSARoutine(r, name, self))
                 sa._routines = new_routines
             self._sa_wrapped = True
@@ -269,6 +281,11 @@ class AutoPlugin:
             self._gate_cache[(plugintype, name)] = (getattr(wanderer, "neuron_fire_count", 0), False)
             return False
 
+        if plugin_learnable_forces_activation(name):
+            self._update_log(wanderer, plugintype, name, True)
+            self._gate_cache[(plugintype, name)] = (getattr(wanderer, "neuron_fire_count", 0), True)
+            return True
+
         step = getattr(wanderer, "neuron_fire_count", 0)
         key = (plugintype, name)
         cached = self._gate_cache.get(key)
@@ -311,7 +328,9 @@ class AutoPlugin:
         if block is None or name in self._disabled:
             return None
         wanderer.ensure_learnable_param(f"autoplugin_bias_{name}", 0.0)
+        register_learnable_plugin("Wanderer", f"autoplugin_bias_{name}", name)
         wanderer.ensure_learnable_param(f"autoplugin_gain_{name}", 1.0)
+        register_learnable_plugin("Wanderer", f"autoplugin_gain_{name}", name)
         if not self.is_active(wanderer, name, None, plugintype="buildingblock"):
             return None
         return block.apply(wanderer.brain, *args, **kwargs)
