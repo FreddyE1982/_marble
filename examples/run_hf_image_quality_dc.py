@@ -458,6 +458,12 @@ def main(
         step_metrics = last_hist.get("step_metrics", [])
         prev_dt = float(step_metrics[-1].get("dt", 0.0)) if step_metrics else 0.0
         clear_resources()
+    if getattr(brain, "store_snapshots", False):
+        try:
+            snapshot_file = brain.save_snapshot()
+            print(f"saved final brain snapshot to {snapshot_file}")
+        except Exception as err:
+            print(f"failed to save final snapshot: {err}")
     print("streamed quality training complete")
     clear_resources()
 

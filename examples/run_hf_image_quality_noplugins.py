@@ -333,6 +333,12 @@ def main(
         print(f"processed datapairs: {cnt} in {duration:.2f}s ({duration/walks:.2f}s per walk)")
         if cnt == 0:
             raise RuntimeError("run_training_with_datapairs returned count=0")
+    if getattr(brain, "store_snapshots", False):
+        try:
+            snapshot_file = brain.save_snapshot()
+            print(f"saved final brain snapshot to {snapshot_file}")
+        except Exception as err:
+            print(f"failed to save final snapshot: {err}")
     print("streamed quality training complete")
 
 
