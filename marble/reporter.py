@@ -94,6 +94,10 @@ class _TensorBoardAdapter:
         writer = self.ensure_writer()
         if writer is None:
             return
+        if group_path and str(group_path[0]) == "wanderer_steps":
+            return
+        if self._log_training_datapair(writer, group_path, itemname, value):
+            return
         tag_root = "/".join(str(x) for x in (*group_path, itemname))
         self._log_value(writer, tag_root, value)
 
@@ -324,6 +328,26 @@ class _TensorBoardAdapter:
             except Exception:
                 pass
             self._pending_flush = 0
+
+    def _log_training_datapair(
+        self,
+        writer: SummaryWriter,
+        group_path: Tuple[str, ...],
+        itemname: str,
+        value: Any,
+    ) -> bool:
+        if (
+            len(group_path) >= 2
+            and group_path[0] == "training"
+            and group_path[1] == "datapair"
+            and isinstance(value, Mapping)
+            and str(itemname).startswith("pair_")
+        ):
+            for key, subvalue in value.items():
+                tag = "/".join(str(x) for x in (*group_path, key))
+                self._log_value(writer, tag, subvalue)
+            return True
+        return False
 
     def flush(self) -> None:
         with self._lock:
