@@ -1833,16 +1833,30 @@ class Brain:
                 pass
             return [float(x) for x in (t if isinstance(t, (list, tuple)) else [t])]
 
+        size_attr = getattr(self, "size", None)
+        if size_attr is None:
+            size_list: List[Any] = []
+        else:
+            size_list = list(size_attr)
+
+        def _listify_bounds(value: Any) -> List[List[Any]]:
+            if value is None:
+                return []
+            try:
+                return [list(b) for b in value]
+            except TypeError:
+                return []
+
         data: Dict[str, Any] = {
             "version": 1,
             "n": self.n,
             "mode": self.mode,
-            "size": list(getattr(self, "size", [])),
-            "bounds": [list(b) for b in getattr(self, "bounds", [])],
+            "size": size_list,
+            "bounds": _listify_bounds(getattr(self, "bounds", None)),
             "formula": getattr(self, "formula", None),
             "max_iters": getattr(self, "max_iters", None),
             "escape_radius": getattr(self, "escape_radius", None),
-            "sparse_bounds": [list(b) for b in getattr(self, "sparse_bounds", [])],
+            "sparse_bounds": _listify_bounds(getattr(self, "sparse_bounds", None)),
             "neurons": [],
             "synapses": [],
         }
