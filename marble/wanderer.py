@@ -9,6 +9,7 @@ import time
 import random
 import contextlib
 import inspect
+from functools import wraps
 
 from .buildingblock import get_buildingblock_type
 
@@ -91,6 +92,7 @@ def expose_learnable_params(fn: Callable[..., Any]) -> Callable[..., Any]:
             continue
         param_info.append(p)
 
+    @wraps(fn)
     def wrapper(*args: Any, **kwargs: Any) -> Any:
         if not args:
             return fn(*args, **kwargs)
@@ -133,6 +135,12 @@ def expose_learnable_params(fn: Callable[..., Any]) -> Callable[..., Any]:
                 kwargs[p.name] = tensor
         return fn(*args_list, **kwargs)
 
+    # Flag the wrapper so static analysis/discovery tools can locate the
+    # learnable-producing callables without importing or executing the full
+    # plugin stack.  ``updatelearnablesyaml`` relies on this marker to invoke
+    # the wrapped function with lightweight stubs and register the learnables
+    # ahead of time.
+    wrapper.__exposes_learnables__ = True  # type: ignore[attr-defined]
     return wrapper
 
 
