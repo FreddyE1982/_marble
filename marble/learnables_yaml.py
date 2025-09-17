@@ -238,6 +238,57 @@ class LearnableRegistry:
 
         self._write_preferences(config, yaml_path)
 
+    def set_state(
+        self,
+        name: str,
+        *,
+        enabled: bool,
+        yaml_path: Optional[Path] = None,
+    ) -> bool:
+        """Set the ON/OFF state for a single learnable named *name*."""
+
+        if not name:
+            return False
+
+        config = self._load_preferences(yaml_path)
+        config[name] = "ON" if enabled else "OFF"
+
+        record = self._records.get(name)
+        updated = False
+        if record is not None:
+            param = record.param_ref()
+            owner = record.owner_ref()
+            if param is not None and self._is_hooked(owner, record, param):
+                param.opt = enabled
+                updated = True
+
+        self._write_preferences(config, yaml_path)
+        return updated or name in config
+
+    def get_state(
+        self,
+        name: str,
+        *,
+        yaml_path: Optional[Path] = None,
+    ) -> Optional[bool]:
+        """Return ``True`` if *name* is enabled, ``False`` if disabled."""
+
+        if not name:
+            return None
+
+        record = self._records.get(name)
+        if record is not None:
+            param = record.param_ref()
+            owner = record.owner_ref()
+            if param is not None and self._is_hooked(owner, record, param):
+                return bool(getattr(param, "opt", False))
+
+        config = self._load_preferences(yaml_path)
+        state = config.get(name)
+        if state is None:
+            return None
+        return state == "ON"
+
     # -- internals ----------------------------------------------------
     @staticmethod
     def default_yaml_path() -> Path:
@@ -781,6 +832,34 @@ def learnablesOFF(yaml_path: Optional[Path] = None) -> None:
     _REGISTRY.bulk_set_state(state="OFF", yaml_path=yaml_path)
 
 
+def learnableON(name: str, yaml_path: Optional[Path] = None) -> bool:
+    """Enable optimisation for a single learnable called *name*."""
+
+    if not name:
+        return False
+    updatelearnablesyaml(yaml_path)
+    return _REGISTRY.set_state(name, enabled=True, yaml_path=yaml_path)
+
+
+def learnableOFF(name: str, yaml_path: Optional[Path] = None) -> bool:
+    """Disable optimisation for a single learnable called *name*."""
+
+    if not name:
+        return False
+    updatelearnablesyaml(yaml_path)
+    return _REGISTRY.set_state(name, enabled=False, yaml_path=yaml_path)
+
+
+def learnableIsOn(name: str, yaml_path: Optional[Path] = None) -> bool:
+    """Return ``True`` when *name* is currently enabled."""
+
+    if not name:
+        return False
+    _perform_static_discovery()
+    state = _REGISTRY.get_state(name, yaml_path=yaml_path)
+    return bool(state)
+
+
 def log_learnable_values(owner: Any) -> None:
     """Log active learnables for *owner* into the reporter's ``learnables`` group."""
 
@@ -798,6 +877,9 @@ __all__ = [
     "updatelearnablesyaml",
     "learnablesON",
     "learnablesOFF",
+    "learnableON",
+    "learnableOFF",
+    "learnableIsOn",
     "LearnableRegistry",
     "log_learnable_values",
     "register_learnable_plugin",

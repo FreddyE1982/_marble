@@ -940,6 +940,7 @@ class DecisionController:
         # plugin contribution scores and feed them back into future selections.
         self._activation_log: List[torch.Tensor] = []
         self._reward_log: List[float] = []
+        self._decision_count = 0
         self._log_event(
             "controller_initialized",
             {
@@ -1061,6 +1062,7 @@ class DecisionController:
         metrics: Optional[Dict[str, Any]],
         dwell_blocked: bool,
         watch_vals: Dict[str, float],
+        decision_count: int,
     ) -> None:
         """Mirror core controller metrics into the reporter/TensorBoard."""
 
@@ -1077,6 +1079,7 @@ class DecisionController:
         try:
             ready_list = list(ready)
             _emit_scalar("step", float(STEP_COUNTER))
+            _emit_scalar("decisions_made", float(decision_count))
             _emit_scalar("history_len", float(len(self.history)))
             _emit_scalar("step_cost", float(step_cost))
             _emit_scalar("budget", float(self.budget))
@@ -1615,6 +1618,7 @@ class DecisionController:
             },
         )
 
+        self._decision_count += 1
         self._log_tensorboard_metrics(
             plugin_names=plugin_names,
             ready=ready,
@@ -1629,6 +1633,7 @@ class DecisionController:
             metrics=metrics,
             dwell_blocked=dwell_blocked,
             watch_vals=watch_vals,
+            decision_count=self._decision_count,
         )
 
         return selected

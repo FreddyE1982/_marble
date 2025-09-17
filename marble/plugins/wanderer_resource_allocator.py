@@ -16,6 +16,7 @@ except Exception:  # pragma: no cover
     psutil = None  # type: ignore
 
 from ..wanderer import expose_learnable_params
+from ..reporter import REPORTER
 
 
 class TensorRegistry:
@@ -74,6 +75,11 @@ class TensorRegistry:
 
 TENSOR_REGISTRY = TensorRegistry()
 ALLOCATORS: List[weakref.ref] = []
+
+try:
+    REPORTER.registergroup("resource_allocator", "scalars")
+except Exception:
+    pass
 
 
 @contextmanager
@@ -491,9 +497,10 @@ class ResourceAllocatorPlugin:
                     }
                     setattr(obj, meta_attr, meta)
                     req_meta = bool(meta["requires_grad"] or meta["had_grad_fn"])
-                    cpu_tensor = self._finalize_tensor(cpu_tensor, req_meta)
-                    cpu_tensor = self._preserve_grad(tensor, cpu_tensor)
-                    setattr(obj, attr, cpu_tensor)
+                    placeholder = torch.empty(0, dtype=cpu_tensor.dtype)
+                    placeholder = self._finalize_tensor(placeholder, req_meta)
+                    placeholder = self._preserve_grad(tensor, placeholder)
+                    setattr(obj, attr, placeholder)
                     if cpu_dtype != orig_dtype:
                         setattr(obj, dtype_attr, orig_dtype)
                 return
@@ -652,6 +659,43 @@ class ResourceAllocatorPlugin:
         except Exception:
             return tensor
 
+    def _storage_kind(self, obj: Any, attr: str) -> str:
+        off_attr = f"_{attr}_offload"
+        meta_attr = f"_{attr}_offmeta"
+        off_path = getattr(obj, off_attr, None)
+        if isinstance(off_path, str):
+            return "disk"
+        meta = getattr(obj, meta_attr, None)
+        if isinstance(meta, dict):
+            storage = str(meta.get("storage", "")).lower()
+            if storage.startswith("cuda"):
+                return "gpu"
+            if storage == "disk":
+                return "disk"
+            if storage == "cpu":
+                return "cpu"
+        tensor = getattr(obj, attr, None)
+        if torch.is_tensor(tensor):
+            device = str(tensor.device).lower()
+            if device.startswith("cuda"):
+                return "gpu"
+            return "cpu"
+        return "cpu"
+
+    def _log_tensor_inventory(self, counts: Dict[str, int]) -> None:
+        try:
+            REPORTER.item[("tensors_gpu", "resource_allocator", "scalars")] = float(
+                counts.get("gpu", 0)
+            )
+            REPORTER.item[("tensors_cpu", "resource_allocator", "scalars")] = float(
+                counts.get("cpu", 0)
+            )
+            REPORTER.item[("tensors_disk", "resource_allocator", "scalars")] = float(
+                counts.get("disk", 0)
+            )
+        except Exception:
+            pass
+
     def rebalance_all(self, wanderer) -> None:
         """Evaluate system metrics and rebalance every registered tensor."""
         params = self._params(wanderer)
@@ -710,6 +754,7 @@ class ResourceAllocatorPlugin:
         prev = st.get("base_score", base_score)
         base_score = smooth * prev + (1.0 - smooth) * base_score
         st["base_score"] = base_score
+        storage_counts: Dict[str, int] = {"gpu": 0, "cpu": 0, "disk": 0}
         for obj, attr, t, _hits in TENSOR_REGISTRY.iter_tensors(decay):
             if torch.cuda.is_available() and sysm["gpu"] < self.vram_offload_threshold:
                 target_device = "cuda"
@@ -722,6 +767,11 @@ class ResourceAllocatorPlugin:
             else:
                 target_device = "cpu"
             self._safe_transfer(obj, attr, t, target_device)
+            kind = self._storage_kind(obj, attr)
+            if kind not in storage_counts:
+                kind = "cpu"
+            storage_counts[kind] += 1
+        self._log_tensor_inventory(storage_counts)
 
     def start_auto_rebalance(self, wanderer, interval: float = 5.0) -> None:
         if self._rebalance_thread and self._rebalance_thread.is_alive():
