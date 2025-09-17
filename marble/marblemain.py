@@ -2983,8 +2983,28 @@ def run_training_with_datapairs(
                 enc_left_list.append(el)
                 enc_right_list.append(er)
         if torch is not None:
-            enc_left = torch.stack([torch.tensor(x, device=w._device, dtype=torch.float32) if not hasattr(x, "shape") else x.float() for x in enc_left_list])
-            enc_right = torch.stack([torch.tensor(x, device=w._device, dtype=torch.float32) if not hasattr(x, "shape") else x.float() for x in enc_right_list])
+            def _to_tensor(seq: Any) -> "torch.Tensor":
+                if hasattr(seq, "to") and callable(getattr(seq, "to")):
+                    tens = seq.to(w._device)
+                    return tens.float() if hasattr(tens, "float") else tens
+                return torch.tensor(seq, device=w._device, dtype=torch.float32)
+
+            def _stack_or_pad(items: List[Any]) -> "torch.Tensor":
+                tensors = [_to_tensor(x) for x in items]
+                if not tensors:
+                    return torch.zeros(0, device=w._device, dtype=torch.float32)
+                base_shape = tuple(int(d) for d in tensors[0].shape)
+                if all(tuple(int(d) for d in t.shape) == base_shape for t in tensors):
+                    return torch.stack(tensors)
+                max_len = max(int(t.numel()) for t in tensors)
+                padded = torch.zeros((len(tensors), max_len), device=w._device, dtype=torch.float32)
+                for i, t in enumerate(tensors):
+                    flat = t.reshape(-1).to(device=w._device, dtype=torch.float32)
+                    padded[i, : flat.numel()] = flat
+                return padded
+
+            enc_left = _stack_or_pad(enc_left_list)
+            enc_right = _stack_or_pad(enc_right_list)
         else:
             enc_left = [list(x if isinstance(x, (list, tuple)) else [x]) for x in enc_left_list]
             enc_right = [list(x if isinstance(x, (list, tuple)) else [x]) for x in enc_right_list]
