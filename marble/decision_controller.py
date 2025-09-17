@@ -11,10 +11,13 @@ subset of actions that satisfy all constraints.
 from __future__ import annotations
 
 import importlib
+import json
 import os
 import time
 import math
-from typing import Any, Dict, Iterable, List, Optional, Set
+from pathlib import Path
+from threading import RLock
+from typing import Any, Dict, Iterable, List, Optional, Set, TextIO
 from collections import deque
 
 import torch
@@ -201,6 +204,25 @@ def _load_recalc_interval() -> int:
 WARMUP_STEPS = _load_warmup_steps()
 SAFETY_FACTOR = _load_safety_factor()
 RECALC_INTERVAL = _load_recalc_interval()
+
+
+def _load_log_path() -> str | None:
+    """Return optional log path for decision events from ``config.yaml``."""
+
+    base = os.path.dirname(os.path.dirname(__file__))
+    try:
+        with open(os.path.join(base, "config.yaml"), "r", encoding="utf-8") as fh:
+            cfg = yaml.safe_load(fh) or {}
+    except Exception:
+        return None
+    dc = cfg.get("decision_controller", {})
+    val = dc.get("log_path")
+    if val in (None, "", "null"):
+        return None
+    return str(val)
+
+
+DECISION_LOG_PATH = _load_log_path()
 
 # Cache of most recently observed per-plugin costs so that missing
 # ``h_t[name]['cost']`` entries can be populated on subsequent calls.
@@ -778,6 +800,7 @@ class DecisionController:
         watch_metrics: Iterable[str] | None = None,
         watch_variables: Iterable[str] | None = None,
         policy_mode: str = POLICY_MODE,
+        log_path: str | os.PathLike[str] | None = DECISION_LOG_PATH,
         budget: float | None = None if _AUTO_BUDGET_DEFAULT else BUDGET_LIMIT,
         warmup_steps: int = WARMUP_STEPS,
         safety_factor: float = SAFETY_FACTOR,
@@ -803,6 +826,12 @@ class DecisionController:
         self._budget_sum = 0.0
         self._budget_count = 0
         self._warmup_done = False
+        self._log_lock = RLock()
+        self._log_handle: TextIO | None = None
+        self._log_failed = False
+        self.log_path: Path | None = None
+        if log_path is not None:
+            self._configure_logging(Path(log_path))
         if self.auto_budget:
             # Preserve an explicitly configured ``BUDGET_LIMIT`` instead of
             # blindly resetting it to infinity.  This allows tests or callers
@@ -904,6 +933,102 @@ class DecisionController:
         # plugin contribution scores and feed them back into future selections.
         self._activation_log: List[torch.Tensor] = []
         self._reward_log: List[float] = []
+        self._log_event(
+            "controller_initialized",
+            {
+                "auto_budget": self.auto_budget,
+                "cadence": self.cadence,
+                "policy_mode": self.policy_mode,
+                "top_k": self.top_k,
+                "phase_count": self.phase_count,
+                "dwell_threshold": self.dwell_threshold,
+                "log_path": str(self.log_path) if self.log_path is not None else None,
+            },
+        )
+
+    # --------------------------------------------------------------
+    def _configure_logging(self, path: Path) -> None:
+        """Initialise the newline-delimited JSON log at ``path``."""
+
+        try:
+            resolved = path.expanduser()
+            if resolved.parent:
+                resolved.parent.mkdir(parents=True, exist_ok=True)
+            handle = resolved.open("a", encoding="utf-8", buffering=1)
+        except Exception:
+            self._log_failed = True
+            self.log_path = None
+            self._log_handle = None
+            return
+        self.log_path = resolved
+        self._log_handle = handle
+        self._log_failed = False
+
+    # --------------------------------------------------------------
+    def _close_log(self) -> None:
+        """Close the log file if logging is active."""
+
+        if self._log_handle is not None:
+            try:
+                self._log_handle.flush()
+                self._log_handle.close()
+            except Exception:
+                pass
+            finally:
+                self._log_handle = None
+
+    # --------------------------------------------------------------
+    def __del__(self) -> None:  # pragma: no cover - defensive cleanup
+        try:
+            self._close_log()
+        except Exception:
+            pass
+
+    # --------------------------------------------------------------
+    @classmethod
+    def _sanitize_for_log(cls, value: Any) -> Any:
+        """Return a JSON-serialisable representation of ``value``."""
+
+        if isinstance(value, torch.Tensor):
+            if value.ndim == 0:
+                return float(value.detach().to("cpu").item())
+            return value.detach().to("cpu").tolist()
+        if isinstance(value, (list, tuple, set)):
+            return [cls._sanitize_for_log(v) for v in value]
+        if isinstance(value, dict):
+            return {
+                str(k): cls._sanitize_for_log(v)
+                for k, v in value.items()
+            }
+        if isinstance(value, float):
+            if math.isnan(value) or math.isinf(value):
+                return None
+            return float(value)
+        if isinstance(value, (int, str, bool)) or value is None:
+            return value
+        return str(value)
+
+    # --------------------------------------------------------------
+    def _log_event(self, event: str, payload: Dict[str, Any]) -> None:
+        """Append ``payload`` as a structured event to the log file."""
+
+        if self._log_handle is None or self._log_failed:
+            return
+        entry = {
+            "event": event,
+            "ts": time.time(),
+            "step": STEP_COUNTER,
+        }
+        for key, value in payload.items():
+            entry[key] = self._sanitize_for_log(value)
+        try:
+            with self._log_lock:
+                assert self._log_handle is not None
+                self._log_handle.write(json.dumps(entry, sort_keys=True) + "\n")
+                self._log_handle.flush()
+        except Exception:
+            self._log_failed = True
+            self._close_log()
 
     # --------------------------------------------------------------
     def _advance(self) -> bool:
@@ -948,19 +1073,45 @@ class DecisionController:
         if not self._warmup_done:
             if self._budget_count >= self.warmup_steps:
                 avg = self._budget_sum / self._budget_count
+                prev = self.budget
+                obs = self._budget_count
                 self.budget = avg * self.safety_factor
                 globals()["BUDGET_LIMIT"] = self.budget
                 self._budget_sum = 0.0
                 self._budget_count = 0
                 self._warmup_done = True
+                self._log_event(
+                    "budget_update",
+                    {
+                        "phase": "warmup_complete",
+                        "previous_budget": prev,
+                        "new_budget": self.budget,
+                        "safety_factor": self.safety_factor,
+                        "step_cost": step_cost,
+                        "observations": obs,
+                    },
+                )
             return
         avg = self._budget_sum / self._budget_count
         drift = abs(avg - self.budget) / max(self.budget, 1e-6)
         if drift > 0.2 or self._budget_count >= self.recalc_interval:
+            prev = self.budget
+            obs = self._budget_count
             self.budget = avg * self.safety_factor
             globals()["BUDGET_LIMIT"] = self.budget
             self._budget_sum = 0.0
             self._budget_count = 0
+            self._log_event(
+                "budget_update",
+                {
+                    "phase": "recalculation",
+                    "previous_budget": prev,
+                    "new_budget": self.budget,
+                    "safety_factor": self.safety_factor,
+                    "step_cost": step_cost,
+                    "observations": obs,
+                },
+            )
 
     # --------------------------------------------------------------
     def decide(
@@ -1004,6 +1155,15 @@ class DecisionController:
 
         if not self._advance():
             self.history.append({})
+            self._log_event(
+                "decision_skipped",
+                {
+                    "reason": "cadence",
+                    "cadence": self.cadence,
+                    "available_plugins": list(h_t.keys()),
+                    "history_len": len(self.history),
+                },
+            )
             return {}
 
         watch_vals = self._gather_watchables()
@@ -1015,6 +1175,7 @@ class DecisionController:
             metrics = None
         else:
             metrics = {**watch_vals, **(metrics or {})}
+        metrics_for_log = dict(metrics) if metrics else None
         if metrics is not None:
             self.last_metrics = metrics
 
@@ -1057,11 +1218,29 @@ class DecisionController:
         # not yet been satisfied.
         if not ready and getattr(PLUGIN_GRAPH, "_deps", {}):
             self.history.append({})
+            self._log_event(
+                "decision_skipped",
+                {
+                    "reason": "pending_dependencies",
+                    "history_len": len(self.history),
+                    "ready_plugins": sorted(ready),
+                    "available_plugins": list(h_t.keys()),
+                },
+            )
             return {}
         if ready:
             plugin_names = [n for n in plugin_names if n in ready]
         if not plugin_names:
             self.history.append({})
+            self._log_event(
+                "decision_skipped",
+                {
+                    "reason": "no_candidates",
+                    "history_len": len(self.history),
+                    "ready_plugins": sorted(ready),
+                    "available_plugins": list(h_t.keys()),
+                },
+            )
             return {}
         plugin_ids = torch.tensor(
             [PLUGIN_ID_REGISTRY.get(n, 0) for n in plugin_names], dtype=torch.long
@@ -1158,6 +1337,7 @@ class DecisionController:
             all_plugins=plugin_names,
             cost_recorder=cost_recorder,
         )
+        raw_selected = dict(selected)
         if selected:
             self.history.append(
                 {
@@ -1184,12 +1364,14 @@ class DecisionController:
             for n in action_mask
         }
         delta_total = sum(delta_mask.values())
+        dwell_blocked = False
         if delta_total > 0 and self._steps_since_change < self.dwell_threshold:
             selected = {}
             action_mask = {n: 0 for n in plugin_names}
             delta_mask = {n: 0 for n in plugin_names}
             delta_total = 0
             self._steps_since_change += 1
+            dwell_blocked = bool(raw_selected)
         else:
             self._steps_since_change = (
                 self._steps_since_change + 1 if delta_total == 0 else 0
@@ -1198,6 +1380,7 @@ class DecisionController:
 
         reward = 0.0
         log_reward = False
+        reward_metrics: Dict[str, float] | None = None
         if metrics is not None and not self.divergence:
             cleaned: Dict[str, float] = {}
             for k, v in metrics.items():
@@ -1210,6 +1393,7 @@ class DecisionController:
                 cleaned[k] = f
             if cleaned:
                 self._metric_window.append(cleaned)
+                reward_metrics = cleaned
         if metrics is not None or self.divergence:
             window = list(self._metric_window)
             reward, _ = self.reward_shaper.update(
@@ -1276,6 +1460,32 @@ class DecisionController:
             self._h_t = tuple(t.detach() for t in self._h_t)
         else:
             self._h_t = self._h_t.detach()
+
+        self._log_event(
+            "decision",
+            {
+                "available_plugins": plugin_names,
+                "ready_plugins": sorted(ready),
+                "selected": selected,
+                "raw_selected": raw_selected,
+                "cost_recorder": {k: float(v) for k, v in cost_recorder.items()},
+                "hints": h_t,
+                "metrics": metrics_for_log,
+                "reward_metrics": reward_metrics,
+                "reward": reward if log_reward else None,
+                "divergence": self.divergence,
+                "dwell_blocked": dwell_blocked,
+                "step_cost": step_cost,
+                "budget": self.budget,
+                "budget_remaining": self.budget - sum(cost_recorder.values()),
+                "auto_budget": self.auto_budget,
+                "warmup_done": self._warmup_done,
+                "history_len": len(self.history),
+                "past_actions": list(self.past_actions),
+                "watch_values": watch_vals,
+                "policy_mode": self.policy_mode,
+            },
+        )
 
         return selected
 
