@@ -17,7 +17,7 @@ import time
 import math
 from pathlib import Path
 from threading import RLock
-from typing import Any, Dict, Iterable, List, Optional, Set, TextIO
+from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, TextIO
 from collections import deque
 
 import torch
@@ -42,6 +42,13 @@ from .plugins import PLUGIN_ID_REGISTRY
 from .reporter import REPORTER
 from .history_encoder import HistoryEncoder
 from . import plugin_cost_profiler as _pcp
+
+# Prepare dedicated reporter slots for decision controller metrics so TensorBoard
+# can surface them as their own category of cards.
+REPORTER.registergroup("decision_controller", "scalars")
+REPORTER.registergroup("decision_controller", "histograms")
+REPORTER.registergroup("decision_controller", "text")
+
 
 # Incompatibility sets I_t: mapping plugin name to set of incompatible plugins
 INCOMPATIBILITY_SETS: Dict[str, Set[str]] = {
@@ -1030,6 +1037,127 @@ class DecisionController:
             self._log_failed = True
             self._close_log()
 
+    @staticmethod
+    def _sanitize_tb_key(name: str) -> str:
+        """Return a TensorBoard-friendly key without nested slashes."""
+
+        safe = str(name).strip().replace("/", "_").replace("\\", "_")
+        safe = safe.replace(" ", "_").replace(":", "_")
+        return safe
+
+    def _log_tensorboard_metrics(
+        self,
+        *,
+        plugin_names: Sequence[str],
+        ready: Iterable[str],
+        selected: Dict[str, str],
+        action_mask: Dict[str, int],
+        delta_mask: Dict[str, int],
+        reward: float,
+        log_reward: bool,
+        step_cost: float,
+        cost_recorder: Dict[str, float],
+        reward_metrics: Optional[Dict[str, float]],
+        metrics: Optional[Dict[str, Any]],
+        dwell_blocked: bool,
+        watch_vals: Dict[str, float],
+    ) -> None:
+        """Mirror core controller metrics into the reporter/TensorBoard."""
+
+        def _emit_scalar(metric: str, value: float) -> None:
+            if not isinstance(value, (int, float)):
+                return
+            if math.isnan(float(value)) or math.isinf(float(value)):
+                return
+            try:
+                REPORTER.item[(metric, "decision_controller", "scalars")] = float(value)
+            except Exception:
+                return
+
+        try:
+            ready_list = list(ready)
+            _emit_scalar("step", float(STEP_COUNTER))
+            _emit_scalar("history_len", float(len(self.history)))
+            _emit_scalar("step_cost", float(step_cost))
+            _emit_scalar("budget", float(self.budget))
+            remaining = self.budget - sum(float(v) for v in cost_recorder.values())
+            _emit_scalar("budget_remaining", float(remaining))
+            _emit_scalar("available_plugins", float(len(plugin_names)))
+            _emit_scalar("ready_plugins", float(len(ready_list)))
+            _emit_scalar("selected_plugins", float(sum(action_mask.values())))
+            _emit_scalar("dwell_blocked", 1.0 if dwell_blocked else 0.0)
+            _emit_scalar("divergence", 1.0 if self.divergence else 0.0)
+            _emit_scalar("auto_budget", 1.0 if self.auto_budget else 0.0)
+            _emit_scalar("warmup_done", 1.0 if self._warmup_done else 0.0)
+            _emit_scalar("steps_since_change", float(self._steps_since_change))
+            _emit_scalar("cadence", float(self.cadence))
+            if log_reward:
+                _emit_scalar("reward", float(reward))
+
+            if reward_metrics:
+                for key, value in reward_metrics.items():
+                    _emit_scalar(
+                        f"reward_metrics/{self._sanitize_tb_key(key)}",
+                        float(value),
+                    )
+
+            if metrics:
+                for key, value in metrics.items():
+                    try:
+                        val = float(value)
+                    except Exception:
+                        continue
+                    _emit_scalar(
+                        f"metrics/{self._sanitize_tb_key(key)}",
+                        val,
+                    )
+
+            if watch_vals:
+                for key, value in watch_vals.items():
+                    _emit_scalar(
+                        f"watch/{self._sanitize_tb_key(key)}",
+                        float(value),
+                    )
+
+            plugin_order = list(plugin_names)
+            if plugin_order:
+                mask_tensor = torch.tensor(
+                    [float(action_mask.get(name, 0)) for name in plugin_order],
+                    dtype=torch.float32,
+                )
+                delta_tensor = torch.tensor(
+                    [float(delta_mask.get(name, 0)) for name in plugin_order],
+                    dtype=torch.float32,
+                )
+                try:
+                    REPORTER.item[("action_mask", "decision_controller", "histograms")] = mask_tensor
+                    REPORTER.item[("delta_mask", "decision_controller", "histograms")] = delta_tensor
+                except Exception:
+                    pass
+
+                if cost_recorder:
+                    hinted = torch.tensor(
+                        [float(cost_recorder.get(name, 0.0)) for name in plugin_order],
+                        dtype=torch.float32,
+                    )
+                    try:
+                        REPORTER.item[("hinted_costs", "decision_controller", "histograms")] = hinted
+                    except Exception:
+                        pass
+
+            selection_text = {
+                "selected": {
+                    name: state for name, state in selected.items() if state != "off"
+                },
+                "ready": sorted(set(ready_list)),
+            }
+            try:
+                REPORTER.item[("selection", "decision_controller", "text")] = selection_text
+            except Exception:
+                pass
+        except Exception:
+            return
+
     # --------------------------------------------------------------
     def _advance(self) -> bool:
         return advance_step(self.cadence)
@@ -1485,6 +1613,22 @@ class DecisionController:
                 "watch_values": watch_vals,
                 "policy_mode": self.policy_mode,
             },
+        )
+
+        self._log_tensorboard_metrics(
+            plugin_names=plugin_names,
+            ready=ready,
+            selected=selected,
+            action_mask=action_mask,
+            delta_mask=delta_mask,
+            reward=reward,
+            log_reward=log_reward,
+            step_cost=step_cost,
+            cost_recorder=cost_recorder,
+            reward_metrics=reward_metrics,
+            metrics=metrics,
+            dwell_blocked=dwell_blocked,
+            watch_vals=watch_vals,
         )
 
         return selected
