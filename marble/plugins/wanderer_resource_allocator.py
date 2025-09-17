@@ -5,7 +5,7 @@ import re
 import tempfile
 import time
 import threading
-from typing import List, Tuple, Any, Dict
+from typing import List, Tuple, Any, Dict, Optional
 import math
 import weakref
 from contextlib import contextmanager, nullcontext
@@ -419,6 +419,92 @@ class ResourceAllocatorPlugin:
             "had_grad_fn": getattr(tensor, "grad_fn", None) is not None,
         }
 
+    @staticmethod
+    def _bridge_disk_gradient(
+        source: torch.Tensor,
+        placeholder: torch.Tensor,
+        meta: Dict[str, Any],
+    ) -> None:
+        """Capture gradients that flow through ``source`` while it is offloaded."""
+
+        if not torch.is_tensor(source):
+            return
+        if not (getattr(source, "requires_grad", False) or getattr(source, "grad_fn", None) is not None):
+            return
+
+        grad_slot: Dict[str, Any] = {"value": getattr(source, "grad", None)}
+
+        placeholder_ref = weakref.ref(placeholder)
+
+        def _store_grad(grad: Optional[torch.Tensor]):
+            try:
+                stored = grad.detach().to("cpu") if torch.is_tensor(grad) else grad
+            except Exception:
+                stored = grad.detach() if hasattr(grad, "detach") else grad
+            grad_slot["value"] = stored
+            ph = placeholder_ref()
+            if ph is not None and torch.is_tensor(stored) and ph.numel() == stored.numel():
+                try:
+                    ph.grad = stored.to(ph.device, dtype=ph.dtype)
+                except Exception:
+                    try:
+                        ph.grad = stored.detach().clone().to(ph.device, dtype=ph.dtype)
+                    except Exception:
+                        ph.grad = stored.detach() if hasattr(stored, "detach") else stored
+            return grad
+
+        try:
+            handle = source.register_hook(_store_grad)
+        except Exception:
+            return
+
+        if torch.is_tensor(grad_slot["value"]):
+            if placeholder.numel() == grad_slot["value"].numel():
+                try:
+                    placeholder.grad = grad_slot["value"].to(placeholder.device, dtype=placeholder.dtype)
+                except Exception:
+                    try:
+                        placeholder.grad = grad_slot["value"].detach().clone().to(
+                            placeholder.device, dtype=placeholder.dtype
+                        )
+                    except Exception:
+                        placeholder.grad = grad_slot["value"].detach()
+
+        meta["_grad_bridge"] = grad_slot
+        meta["_grad_bridge_handle"] = handle
+        meta["_grad_bridge_placeholder"] = placeholder_ref
+
+    @staticmethod
+    def _consume_grad_bridge(meta: Dict[str, Any], placeholder: torch.Tensor) -> Any:
+        """Clean up gradient bridge metadata and return the stored gradient."""
+
+        grad_slot = meta.pop("_grad_bridge", None)
+        handle = meta.pop("_grad_bridge_handle", None)
+        meta.pop("_grad_bridge_placeholder", None)
+
+        if handle is not None:
+            try:
+                handle.remove()
+            except Exception:
+                pass
+
+        if grad_slot is None:
+            return None
+
+        grad_val = grad_slot.get("value") if isinstance(grad_slot, dict) else None
+        if grad_val is None:
+            return None
+
+        if torch.is_tensor(grad_val) and placeholder.numel() == grad_val.numel():
+            try:
+                placeholder.grad = grad_val.to(placeholder.device, dtype=placeholder.dtype)
+            except Exception:
+                try:
+                    placeholder.grad = grad_val.detach().clone().to(placeholder.device, dtype=placeholder.dtype)
+                except Exception:
+                    placeholder.grad = grad_val.detach()
+        return grad_val
+
     def _restore_from_disk(self, path: str, meta: Dict[str, Any], device: str) -> torch.Tensor:
         """Load tensor data from ``path`` and move it to ``device``."""
 
@@ -487,7 +573,6 @@ class ResourceAllocatorPlugin:
                 cpu_tensor = tensor.to("cpu", dtype=cpu_dtype) if needs_grad else tensor.detach().to("cpu", dtype=cpu_dtype)
                 path = self._offload_to_disk(cpu_tensor)
                 if path is not None:
-                    setattr(obj, off_attr, path)
                     meta = {
                         "shape": orig_shape,
                         "dtype": orig_dtype,
@@ -497,12 +582,35 @@ class ResourceAllocatorPlugin:
                         "storage": "disk",
                         "last_device": orig_device,
                     }
-                    setattr(obj, meta_attr, meta)
                     req_meta = bool(meta["requires_grad"] or meta["had_grad_fn"])
                     placeholder = torch.empty(0, dtype=cpu_tensor.dtype)
                     placeholder = self._finalize_tensor(placeholder, req_meta)
                     placeholder = self._preserve_grad(tensor, placeholder)
+                    self._bridge_disk_gradient(tensor, placeholder, meta)
                     setattr(obj, attr, placeholder)
+                    setattr(obj, meta_attr, meta)
+                    setattr(obj, off_attr, path)
+                    if cpu_dtype != orig_dtype:
+                        setattr(obj, dtype_attr, orig_dtype)
+                else:
+                    meta = {
+                        "shape": orig_shape,
+                        "dtype": orig_dtype,
+                        "storage_dtype": cpu_tensor.dtype,
+                        "requires_grad": bool(getattr(tensor, "requires_grad", False)),
+                        "had_grad_fn": getattr(tensor, "grad_fn", None) is not None,
+                        "storage": "cpu_fallback",
+                        "last_device": orig_device,
+                        "_cpu_buffer": cpu_tensor,
+                    }
+                    req_meta = bool(meta["requires_grad"] or meta["had_grad_fn"])
+                    placeholder = torch.empty(0, dtype=cpu_tensor.dtype)
+                    placeholder = self._finalize_tensor(placeholder, req_meta)
+                    placeholder = self._preserve_grad(tensor, placeholder)
+                    self._bridge_disk_gradient(tensor, placeholder, meta)
+                    setattr(obj, attr, placeholder)
+                    setattr(obj, meta_attr, meta)
+                    setattr(obj, off_attr, None)
                     if cpu_dtype != orig_dtype:
                         setattr(obj, dtype_attr, orig_dtype)
                 return
@@ -571,7 +679,6 @@ class ResourceAllocatorPlugin:
             if avail < needed:
                 path = self._offload_to_disk(cpu_tensor)
                 if path is not None:
-                    setattr(obj, off_attr, path)
                     meta = {
                         "shape": orig_shape,
                         "dtype": orig_dtype,
@@ -581,12 +688,33 @@ class ResourceAllocatorPlugin:
                         "storage": "disk",
                         "last_device": orig_device,
                     }
-                    setattr(obj, meta_attr, meta)
                     req_meta = bool(meta["requires_grad"] or meta["had_grad_fn"])
                     placeholder = torch.empty(0, dtype=orig_dtype)
                     placeholder = self._finalize_tensor(placeholder, req_meta)
                     placeholder = self._preserve_grad(tensor, placeholder)
+                    self._bridge_disk_gradient(tensor, placeholder, meta)
                     setattr(obj, attr, placeholder)
+                    setattr(obj, meta_attr, meta)
+                    setattr(obj, off_attr, path)
+                else:
+                    meta = {
+                        "shape": orig_shape,
+                        "dtype": orig_dtype,
+                        "storage_dtype": cpu_tensor.dtype,
+                        "requires_grad": bool(getattr(tensor, "requires_grad", False)),
+                        "had_grad_fn": getattr(tensor, "grad_fn", None) is not None,
+                        "storage": "cpu_fallback",
+                        "last_device": orig_device,
+                        "_cpu_buffer": cpu_tensor,
+                    }
+                    req_meta = bool(meta["requires_grad"] or meta["had_grad_fn"])
+                    placeholder = torch.empty(0, dtype=orig_dtype)
+                    placeholder = self._finalize_tensor(placeholder, req_meta)
+                    placeholder = self._preserve_grad(tensor, placeholder)
+                    self._bridge_disk_gradient(tensor, placeholder, meta)
+                    setattr(obj, attr, placeholder)
+                    setattr(obj, meta_attr, meta)
+                    setattr(obj, off_attr, None)
             else:
                 cpu_tensor = self._finalize_tensor(cpu_tensor, needs_grad)
                 cpu_tensor = self._preserve_grad(tensor, cpu_tensor)
@@ -642,19 +770,36 @@ class ResourceAllocatorPlugin:
                 restored = self._restore_from_disk(path, meta, target)
                 setattr(obj, off_attr, None)
             else:
-                restored = tensor
+                cpu_buffer = meta.get("_cpu_buffer")
+                if torch.is_tensor(cpu_buffer):
+                    restored = cpu_buffer
+                else:
+                    restored = tensor
                 if target.startswith("cuda") and torch.cuda.is_available():
                     stream = self._transfer_stream
                     with torch.cuda.stream(stream) if stream else nullcontext():
                         restored = restored.to(target, non_blocking=True)
                 elif target != "disk":
                     restored = restored.to(target)
+                if torch.is_tensor(cpu_buffer):
+                    meta.pop("_cpu_buffer", None)
             dtype = meta.get("dtype", restored.dtype)
             if dtype is not None and restored.dtype != dtype:
                 restored = restored.to(dtype)
             req_flag = bool(meta.get("requires_grad", False) or meta.get("had_grad_fn", False))
+            grad_bridge = self._consume_grad_bridge(meta, tensor)
             restored = self._finalize_tensor(restored, req_flag)
             restored = self._preserve_grad(tensor, restored)
+            if torch.is_tensor(grad_bridge):
+                try:
+                    restored.grad = grad_bridge.to(restored.device, dtype=restored.dtype)
+                except Exception:
+                    try:
+                        restored.grad = grad_bridge.detach().clone().to(restored.device, dtype=restored.dtype)
+                    except Exception:
+                        restored.grad = grad_bridge.detach()
+            elif grad_bridge is not None:
+                restored.grad = grad_bridge
             setattr(obj, attr, restored)
             setattr(obj, meta_attr, None)
             setattr(obj, dtype_attr, None)
