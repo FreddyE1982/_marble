@@ -434,9 +434,15 @@ class Wanderer(_DeviceHelper):
                 tot_ep=tot_ep,
             )
         elif tensorboard_dir and not getattr(self.brain, "_tensorboard_announced", False):
-            print(
-                f"[marble] TensorBoard logging active — run `%tensorboard --logdir {tensorboard_dir}`"
-            )
+            inline_active = bool(getattr(self.brain, "_tensorboard_inline_active", False))
+            if inline_active:
+                print(
+                    f"[marble] TensorBoard inline display active for logdir: {tensorboard_dir}"
+                )
+            else:
+                print(
+                    f"[marble] TensorBoard logging active — run `%tensorboard --logdir {tensorboard_dir}`"
+                )
             try:
                 self.brain._tensorboard_announced = True
             except Exception:

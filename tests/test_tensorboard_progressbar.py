@@ -23,7 +23,10 @@ class TestTensorBoardProgressBar(unittest.TestCase):
         self.assertFalse(brain.enable_progressbar)
         self.assertIsNotNone(brain.tensorboard_logdir)
         self.assertGreaterEqual(stats.get("steps", 0), 0)
-        self.assertIn("%tensorboard --logdir", output)
+        self.assertTrue(
+            "TensorBoard inline display active" in output
+            or "%tensorboard --logdir" in output
+        )
         self.assertTrue(getattr(brain, "_tensorboard_announced", False))
 
 
