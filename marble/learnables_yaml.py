@@ -20,6 +20,11 @@ effects other than creating the registry singleton.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import importlib
+import inspect
+import pkgutil
+import sys
+from contextlib import suppress
 from pathlib import Path
 from typing import Any, Dict, Iterable, Optional
 import weakref
@@ -291,6 +296,363 @@ class LearnableRegistry:
 _REGISTRY = LearnableRegistry()
 
 
+_STATIC_DISCOVERY_PERFORMED = False
+
+
+def _try_import_torch() -> Any:
+    try:
+        import torch  # type: ignore
+
+        return torch
+    except Exception:
+        return None
+
+
+def _make_learnable_param(
+    init_value: Any,
+    *,
+    requires_grad: bool = True,
+    lr: Optional[float] = None,
+    min_value: Optional[float] = None,
+    max_value: Optional[float] = None,
+) -> LearnableParam:
+    torch_mod = _try_import_torch()
+    tensor = init_value
+    if torch_mod is not None:
+        try:
+            if hasattr(init_value, "detach"):
+                tensor = init_value.detach().clone().to(dtype=torch_mod.float32, device="cpu")
+            else:
+                tensor = torch_mod.tensor(init_value, dtype=torch_mod.float32, device="cpu")
+            if requires_grad and hasattr(tensor, "requires_grad_"):
+                tensor.requires_grad_()
+        except Exception:
+            try:
+                tensor = torch_mod.tensor([float(init_value)], dtype=torch_mod.float32, device="cpu")
+                if requires_grad and hasattr(tensor, "requires_grad_"):
+                    tensor.requires_grad_()
+            except Exception:
+                tensor = init_value
+    return LearnableParam(
+        tensor=tensor,
+        orig_type=type(init_value),
+        opt=False,
+        lr=lr,
+        min_value=min_value,
+        max_value=max_value,
+    )
+
+
+def _create_wanderer_stub(brain_stub: Any) -> Any:
+    torch_mod = _try_import_torch()
+
+    def _ensure(self: Any, name: str, init_value: Any, **kwargs: Any) -> Any:
+        if name in self._learnables:
+            return self._learnables[name].tensor
+        lp = _make_learnable_param(
+            init_value,
+            requires_grad=kwargs.get("requires_grad", True),
+            lr=kwargs.get("lr"),
+            min_value=kwargs.get("min_value"),
+            max_value=kwargs.get("max_value"),
+        )
+        _REGISTRY.register(
+            self,
+            name,
+            lp,
+            display_name=f"Wanderer.{name}",
+            scope="wanderer",
+            metadata={},
+        )
+        self._learnables[name] = lp
+        return lp.tensor
+
+    def _get(self: Any, name: str) -> Any:
+        ent = self._learnables.get(name)
+        return None if ent is None else ent.tensor
+
+    def _set_opt(self: Any, name: str, *, enabled: bool = True, lr: Optional[float] = None) -> None:
+        ent = self._learnables.get(name)
+        if ent is None:
+            return
+        ent.opt = bool(enabled)
+        if lr is not None:
+            try:
+                ent.lr = float(lr)
+            except Exception:
+                pass
+
+    def _init(self: Any) -> None:
+        self._learnables = {}
+        self.brain = brain_stub
+        self._torch = torch_mod
+        self._device = "cpu"
+        self._plugin_state = {}
+        self._wplugins = []
+        self._neuro_plugins = []
+        self._selfattentions = []
+        self._pending_settings = {}
+        self._last_walk_mean_loss = 0.0
+        self._walk_step_count = 0
+
+    attrs = {
+        "__slots__": ("_learnables", "brain", "_torch", "_device", "_plugin_state", "_wplugins", "_neuro_plugins", "_selfattentions", "_pending_settings", "_last_walk_mean_loss", "_walk_step_count"),
+        "__init__": _init,
+        "ensure_learnable_param": _ensure,
+        "get_learnable_param_tensor": _get,
+        "set_param_optimization": _set_opt,
+    }
+    return type("Wanderer", (), attrs)()
+
+
+def _create_brain_stub() -> Any:
+
+    def _ensure(self: Any, name: str, init_value: Any, **kwargs: Any) -> Any:
+        if name in self._learnables:
+            return self._learnables[name].tensor
+        lp = _make_learnable_param(
+            init_value,
+            requires_grad=kwargs.get("requires_grad", True),
+            lr=kwargs.get("lr"),
+            min_value=kwargs.get("min_value"),
+            max_value=kwargs.get("max_value"),
+        )
+        _REGISTRY.register(
+            self,
+            name,
+            lp,
+            display_name=f"Brain.{name}",
+            scope="brain",
+            metadata={},
+        )
+        self._learnables[name] = lp
+        return lp.tensor
+
+    def _get(self: Any, name: str) -> Any:
+        ent = self._learnables.get(name)
+        return None if ent is None else ent.tensor
+
+    def _set_opt(self: Any, name: str, *, enabled: bool = True, lr: Optional[float] = None) -> None:
+        ent = self._learnables.get(name)
+        if ent is None:
+            return
+        ent.opt = bool(enabled)
+        if lr is not None:
+            try:
+                ent.lr = float(lr)
+            except Exception:
+                pass
+
+    def _add_neuron(self: Any, index: Any, **kwargs: Any) -> Any:
+        neuron = type(
+            "Neuron",
+            (),
+            {
+                "_plugin_state": {"wanderer": kwargs.get("wanderer")},
+                "_ensure_tensor": lambda self, val: val,
+                "tensor": kwargs.get("tensor"),
+                "weight": kwargs.get("weight", 1.0),
+                "bias": kwargs.get("bias", 0.0),
+                "type_name": kwargs.get("type_name"),
+            },
+        )()
+        key = tuple(index) if not isinstance(index, tuple) else index
+        self.neurons[key] = neuron
+        return neuron
+
+    def _get_neuron(self: Any, index: Any) -> Any:
+        key = tuple(index) if not isinstance(index, tuple) else index
+        return self.neurons.get(key)
+
+    def _init(self: Any) -> None:
+        self._learnables = {}
+        self.mode = "grid"
+        self._device = "cpu"
+        self.neurons = {}
+        self.synapses = []
+        self.wanderer = None
+
+    attrs = {
+        "__slots__": ("_learnables", "mode", "_device", "neurons", "synapses", "wanderer"),
+        "__init__": _init,
+        "ensure_learnable_param": _ensure,
+        "get_learnable_param_tensor": _get,
+        "set_param_optimization": _set_opt,
+        "add_neuron": _add_neuron,
+        "get_neuron": _get_neuron,
+    }
+    return type("Brain", (), attrs)()
+
+
+def _call_with_owner(func: Any, *, wanderer: Any, brain: Any) -> None:
+    try:
+        sig = inspect.signature(func)
+    except Exception:
+        with suppress(Exception):
+            func()
+        return
+
+    args = []
+    kwargs: Dict[str, Any] = {}
+
+    for name, param in sig.parameters.items():
+        if name in {"self", "cls"}:
+            continue
+        owner = None
+        if name == "wanderer":
+            owner = wanderer
+        elif name == "brain":
+            owner = brain
+        if owner is not None:
+            if param.kind in (param.POSITIONAL_ONLY, param.POSITIONAL_OR_KEYWORD):
+                args.append(owner)
+            else:
+                kwargs[name] = owner
+            continue
+        if param.kind in {param.VAR_POSITIONAL, param.VAR_KEYWORD}:
+            continue
+        if param.default is inspect._empty:
+            placeholder: Any = None
+            if param.kind in (param.POSITIONAL_ONLY, param.POSITIONAL_OR_KEYWORD):
+                args.append(placeholder)
+            else:
+                kwargs[name] = placeholder
+
+    with suppress(Exception):
+        func(*args, **kwargs)
+
+
+def _invoke_exposed_callables(wanderer: Any, brain: Any) -> None:
+    seen: set[int] = set()
+    for module in list(sys.modules.values()):
+        name = getattr(module, "__name__", "")
+        if not name.startswith("marble"):
+            continue
+        for attr in dir(module):
+            with suppress(Exception):
+                obj = getattr(module, attr)
+                _maybe_invoke(obj, wanderer=wanderer, brain=brain, seen=seen)
+
+
+def _maybe_invoke(obj: Any, *, wanderer: Any, brain: Any, seen: set[int]) -> None:
+    if inspect.isclass(obj):
+        instance = None
+        with suppress(Exception):
+            instance = obj()
+        for name, value in vars(obj).items():
+            if isinstance(value, staticmethod):
+                candidate = value.__func__
+            elif isinstance(value, classmethod):
+                candidate = value.__func__
+            else:
+                candidate = value
+            if not callable(candidate):
+                continue
+            if not getattr(candidate, "__exposes_learnables__", False):
+                continue
+            key = id(getattr(candidate, "__wrapped__", candidate))
+            if key in seen:
+                continue
+            seen.add(key)
+            bound = getattr(instance, name, None)
+            if bound is None:
+                bound = getattr(obj, name)
+            _call_with_owner(bound, wanderer=wanderer, brain=brain)
+        return
+
+    if not callable(obj):
+        return
+    if not getattr(obj, "__exposes_learnables__", False):
+        return
+    target = getattr(obj, "__wrapped__", obj)
+    key = id(target)
+    if key in seen:
+        return
+    seen.add(key)
+    _call_with_owner(obj, wanderer=wanderer, brain=brain)
+
+
+def _hydrate_autoplugin(wanderer: Any) -> None:
+    with suppress(Exception):
+        from .plugins.wanderer_autoplugin import AutoPlugin
+        from .wanderer import NEURO_TYPES_REGISTRY, WANDERER_TYPES_REGISTRY
+        from .selfattention import _SELFA_TYPES  # type: ignore[attr-defined]
+        from .buildingblock import _BUILDINGBLOCK_TYPES  # type: ignore[attr-defined]
+
+        wanderer._wplugins = [type(name, (), {})() for name in sorted(WANDERER_TYPES_REGISTRY)]
+        wanderer._neuro_plugins = [type(name, (), {})() for name in sorted(NEURO_TYPES_REGISTRY)]
+        sa_stub = type(
+            "SelfAttentionStub",
+            (),
+            {
+                "_routines": [type(name, (), {})() for name in sorted(getattr(_SELFA_TYPES, "keys", lambda: [])())],
+            },
+        )()
+        wanderer._selfattentions = [sa_stub]
+        plugin = AutoPlugin()
+        plugin.on_init(wanderer)
+        plugin.before_walk(wanderer, None)
+
+
+def _hydrate_autoneuron(wanderer: Any) -> None:
+    with suppress(Exception):
+        from .plugins.autoneuron import AutoNeuronPlugin
+
+        plugin = AutoNeuronPlugin()
+        neuron = type(
+            "Neuron",
+            (),
+            {"_plugin_state": {"wanderer": wanderer}, "_ensure_tensor": lambda self, val: val},
+        )()
+        plugin._select_type(wanderer, neuron)  # type: ignore[attr-defined]
+
+
+def _hydrate_latent_space(wanderer: Any) -> None:
+    with suppress(Exception):
+        from .plugins.wanderer_latentspace import LatentSpacePlugin
+
+        plugin = LatentSpacePlugin()
+        plugin.on_init(wanderer)
+
+
+def _hydrate_neuron_builder(wanderer: Any) -> None:
+    with suppress(Exception):
+        from .plugins.wanderer_neuronbuilder import DynamicNeuronBuilderPlugin
+
+        plugin = DynamicNeuronBuilderPlugin()
+        plugin.on_walk_end(wanderer, {}, build_threshold=0.0)
+
+
+def _perform_static_discovery() -> None:
+    global _STATIC_DISCOVERY_PERFORMED
+    if _STATIC_DISCOVERY_PERFORMED:
+        return
+    _STATIC_DISCOVERY_PERFORMED = True
+
+    try:
+        plugin_pkg = importlib.import_module("marble.plugins")
+    except Exception:
+        return
+
+    for base in ("marble.marblemain", "marble.wanderer", "marble.selfattention"):
+        with suppress(Exception):
+            importlib.import_module(base)
+
+    for module in pkgutil.walk_packages(getattr(plugin_pkg, "__path__", []), prefix="marble.plugins."):
+        with suppress(Exception):
+            importlib.import_module(module.name)
+
+    brain_stub = _create_brain_stub()
+    wanderer_stub = _create_wanderer_stub(brain_stub)
+    brain_stub.wanderer = wanderer_stub  # type: ignore[attr-defined]
+
+    _invoke_exposed_callables(wanderer_stub, brain_stub)
+    _hydrate_autoplugin(wanderer_stub)
+    _hydrate_autoneuron(wanderer_stub)
+    _hydrate_latent_space(wanderer_stub)
+    _hydrate_neuron_builder(wanderer_stub)
+
+
 def register_learnable(
     owner: Any,
     internal_name: str,
@@ -317,6 +679,7 @@ def register_learnable(
 def updatelearnablesyaml(yaml_path: Optional[Path] = None) -> None:
     """Synchronise ``learnables.yaml`` with the currently tracked learnables."""
 
+    _perform_static_discovery()
     _REGISTRY.update_yaml(yaml_path=yaml_path)
 
 
