@@ -47,10 +47,63 @@ from marble.plugin_encoder import PluginEncoder
 from marble.plugins import PLUGIN_ID_REGISTRY
 from examples.utils import decide_with_pred
 from marble import plugin_cost_profiler as cost_profiler
+from marble import learnableON, learnableIsOn
 
 print("...complete")
 
 PREP_TIMES: list[float] = []
+
+
+QUALITY_LEARNABLES: tuple[str, ...] = (
+    # Baseline steering for auto-neuron routing
+    "Wanderer.autoneuron_bias_base",
+    "Wanderer.autoneuron_gain_base",
+    # Convolution-heavy feature extraction for image quality assessment
+    "Wanderer.autoneuron_bias_conv2d",
+    "Wanderer.autoneuron_gain_conv2d",
+    "Wanderer.autoneuron_bias_conv_transpose2d",
+    "Wanderer.autoneuron_gain_conv_transpose2d",
+    # Down/upsampling layers to compare perceptual structure between images
+    "Wanderer.autoneuron_bias_maxpool2d",
+    "Wanderer.autoneuron_gain_maxpool2d",
+    "Wanderer.autoneuron_bias_maxunpool2d",
+    "Wanderer.autoneuron_gain_maxunpool2d",
+    # Patch-based folding/unfolding to align latent patches
+    "Wanderer.autoneuron_bias_fold2d",
+    "Wanderer.autoneuron_gain_fold2d",
+    "Wanderer.autoneuron_bias_unfold2d",
+    "Wanderer.autoneuron_gain_unfold2d",
+    # Frequency-aware transforms capture perceptual sharpness cues
+    "Wanderer.autoneuron_bias_wavelet",
+    "Wanderer.autoneuron_gain_wavelet",
+    # Non-linear activations that work well on perceptual metrics
+    "Wanderer.autoneuron_bias_swish",
+    "Wanderer.autoneuron_gain_swish",
+    "Wanderer.autoneuron_bias_gelu",
+    "Wanderer.autoneuron_gain_gelu",
+    # Smooth statistical priors to stabilise quality regression
+    "Wanderer.autoneuron_bias_gaussian",
+    "Wanderer.autoneuron_gain_gaussian",
+    # Target rescaling helps align the human preference range with activations
+    "Wanderer.autoneuron_bias_auto_target_scaler",
+    "Wanderer.autoneuron_gain_auto_target_scaler",
+)
+
+
+def enable_quality_learnables() -> list[str]:
+    """Enable learnables that help the DecisionController tune image quality runs."""
+
+    activated: list[str] = []
+    for name in QUALITY_LEARNABLES:
+        try:
+            learnableON(name)
+            if learnableIsOn(name):
+                activated.append(name)
+            else:
+                print(f"warning: learnable {name} could not be enabled")
+        except Exception as err:
+            print(f"failed to enable learnable {name}: {err}")
+    return activated
 
 
 class QualityAwareRoutine:
@@ -227,6 +280,13 @@ def main(
     launch_kuzu: bool | None = None,
     min_new_neurons: int = 1,
 ) -> None:
+    enabled_learnables = enable_quality_learnables()
+    if enabled_learnables:
+        print(
+            "Enabled quality learnables: "
+            + ", ".join(enabled_learnables)
+        )
+
     # Image-cache configuration (defaults: enabled=True, size=20); allow env overrides.
     cache_enabled = os.environ.get("MARBLE_IMG_CACHE_ENABLED", "1").strip() not in ("0", "false", "False")
     try:
