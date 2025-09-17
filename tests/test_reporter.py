@@ -104,6 +104,57 @@ class TestReporter(unittest.TestCase):
         adapter.log(("wanderer_steps", "logs"), "chunk", {"loss": 1.0})
         self.assertEqual(before, len(adapter._writer.scalars))
 
+    def test_tensorboard_training_walks_aggregates(self):
+        from marble.reporter import _TensorBoardAdapter
+
+        class DummyWriter:
+            def __init__(self):
+                self.scalars = []
+                self.histograms = []
+                self.text = []
+                self.log_dir = "dummy"
+
+            def add_scalar(self, tag, value, step):
+                self.scalars.append((tag, value, step))
+
+            def add_histogram(self, tag, tensor, step):
+                self.histograms.append((tag, tensor, step))
+
+            def add_text(self, tag, text, step):
+                self.text.append((tag, text, step))
+
+            def flush(self):
+                pass
+
+        adapter = _TensorBoardAdapter(True, None, 10)
+        adapter._writer = DummyWriter()
+
+        adapter.log(
+            ("training", "walks"),
+            "walk_1",
+            {"steps": 10, "final_loss": 0.5, "timestamp": 1.23},
+        )
+        adapter.log(
+            ("training", "walks"),
+            "walk_2",
+            {"steps": 12, "final_loss": 0.25, "timestamp": 2.34},
+        )
+
+        tags = [tag for tag, _, _ in adapter._writer.scalars]
+        self.assertTrue(tags, "Expected aggregated walk scalars to be logged")
+        self.assertTrue(all("walk_" not in tag for tag in tags))
+
+        steps_entries = [entry for entry in adapter._writer.scalars if entry[0] == "training/walks/steps"]
+        loss_entries = [entry for entry in adapter._writer.scalars if entry[0] == "training/walks/final_loss"]
+        timestamp_entries = [entry for entry in adapter._writer.scalars if entry[0] == "training/walks/timestamp"]
+
+        self.assertEqual([10.0, 12.0], [entry[1] for entry in steps_entries])
+        self.assertEqual([0, 1], [entry[2] for entry in steps_entries])
+        self.assertEqual([0.5, 0.25], [entry[1] for entry in loss_entries])
+        self.assertEqual([0, 1], [entry[2] for entry in loss_entries])
+        self.assertEqual([1.23, 2.34], [entry[1] for entry in timestamp_entries])
+        self.assertEqual([0, 1], [entry[2] for entry in timestamp_entries])
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
