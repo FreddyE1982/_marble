@@ -14,6 +14,7 @@ from __future__ import annotations
 print("Importing packages..")
 
 from typing import Iterator, Any, Dict
+from collections.abc import Mapping
 import io
 import os
 import re
@@ -289,12 +290,35 @@ def main(
         else:
             print("Kuzu Explorer could not be started")
 
-    def _start_neuron(left: Dict[str, Any], br):
+    def _start_neuron(left: Any, br):
         if PREP_TIMES:
             latency = time.perf_counter() - PREP_TIMES.pop(0)
             print(f"prep-to-train latency: {latency:.4f}s")
-        payload = (left.get("prompt"), left.get("image"))
-        enc = codec.encode(payload)
+        sentinel = object()
+        enc: Any = left
+        if torch.is_tensor(left):
+            enc = left
+        else:
+            prompt = sentinel
+            image = sentinel
+            if isinstance(left, Mapping):
+                prompt = left.get("prompt", sentinel)
+                image = left.get("image", sentinel)
+            else:
+                try:
+                    prompt = left["prompt"]  # type: ignore[index]
+                    image = left["image"]  # type: ignore[index]
+                except Exception:
+                    if isinstance(left, (list, tuple)) and len(left) == 2:
+                        prompt, image = left
+                    else:
+                        prompt = image = sentinel
+            if prompt is not sentinel or image is not sentinel:
+                if prompt is sentinel:
+                    prompt = None
+                if image is sentinel:
+                    image = None
+                enc = codec.encode((prompt, image))
         try:
             idx = br.available_indices()[0]
         except Exception:
