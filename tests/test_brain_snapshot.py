@@ -16,8 +16,8 @@ class TestBrainSnapshot(unittest.TestCase):
         codec = UniversalTensorCodec()
         tokens = codec.encode("foo bar foo bar")
         b.codec = codec
-        b.add_neuron((1,), tensor=[0.0])
-        b.add_neuron((0,), tensor=[1.0], connect_to=(1,), direction="uni")
+        b.add_neuron((1,), tensor=[0.0], type_name="alpha")
+        b.add_neuron((0,), tensor=[1.0], connect_to=(1,), direction="uni", type_name="beta")
         snap_path = b.save_snapshot()
         with open(snap_path, "rb") as saved:
             header = saved.read(2)
@@ -27,14 +27,27 @@ class TestBrainSnapshot(unittest.TestCase):
         print("snapshot keys:", sorted(payload.keys()))
         self.assertIn("codec_state", payload)
         self.assertNotIn("codec_vocab", payload)
+        self.assertIn("string_table", payload)
+        table = payload["string_table"]
+        self.assertIsInstance(table, list)
+        self.assertTrue(all(isinstance(entry, str) for entry in table))
         self.assertTrue(payload["synapses"])
         for syn in payload["synapses"]:
             self.assertIn("source_idx", syn)
             self.assertIn("target_idx", syn)
             self.assertNotIn("source", syn)
             self.assertNotIn("target", syn)
+            self.assertIsInstance(syn["direction"], int)
+            self.assertEqual(table[syn["direction"]], "uni")
+            if syn.get("type_name") is not None:
+                self.assertIsInstance(syn["type_name"], int)
         idx_pairs = {(syn["source_idx"], syn["target_idx"]) for syn in payload["synapses"]}
         self.assertIn((1, 0), idx_pairs)
+        neuron_type_indexes = [entry.get("type_name") for entry in payload["neurons"]]
+        self.assertTrue(all((idx is None or isinstance(idx, int)) for idx in neuron_type_indexes))
+        resolved_types = [table[idx] if idx is not None else None for idx in neuron_type_indexes]
+        self.assertIn("alpha", resolved_types)
+        self.assertIn("beta", resolved_types)
         print("snapshot path:", snap_path)
         loaded = Brain.load_snapshot(snap_path)
         print("loaded brain neurons:", len(loaded.neurons))
