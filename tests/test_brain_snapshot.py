@@ -17,8 +17,22 @@ class TestBrainSnapshot(unittest.TestCase):
         codec = UniversalTensorCodec()
         tokens = codec.encode("foo bar foo bar")
         b.codec = codec
-        b.add_neuron((1,), tensor=[0.0], type_name="alpha")
-        b.add_neuron((0,), tensor=[1.0], connect_to=(1,), direction="uni", type_name="beta")
+        b.add_neuron((1,), tensor=[0.0], type_name="alpha", weight=2.0, bias=-0.25, age=5)
+        b.add_neuron(
+            (0,),
+            tensor=[1.0],
+            connect_to=(1,),
+            direction="uni",
+            type_name="beta",
+            weight=1.5,
+            bias=0.75,
+            age=3,
+        )
+        synapse = b.synapses[-1]
+        synapse.weight = 0.5
+        synapse.age = 4
+        synapse.type_name = "gamma"
+        synapse.direction = "bi"
         snap_path = b.save_snapshot()
         with open(snap_path, "rb") as saved:
             header = saved.read(2)
@@ -41,17 +55,20 @@ class TestBrainSnapshot(unittest.TestCase):
         self.assertEqual(neurons_block["positions"].typecode, "i")
         self.assertEqual(neurons_block["position_dims"], 1)
         self.assertEqual(neurons_block["position_dtype"], "int")
+        self.assertIn("weights", neurons_block)
+        self.assertIn("biases", neurons_block)
+        self.assertIn("ages", neurons_block)
+        self.assertIn("type_ids", neurons_block)
         self.assertIsInstance(neurons_block["weights"], array)
-        self.assertEqual(neurons_block["weights"].typecode, "f")
         self.assertIsInstance(neurons_block["biases"], array)
-        self.assertEqual(neurons_block["biases"].typecode, "f")
         self.assertIsInstance(neurons_block["ages"], array)
-        self.assertEqual(neurons_block["ages"].typecode, "i")
         self.assertIsInstance(neurons_block["type_ids"], array)
-        self.assertEqual(neurons_block["type_ids"].typecode, "i")
         self.assertIsInstance(neurons_block["tensor_refs"], array)
         self.assertEqual(neurons_block["tensor_refs"].typecode, "i")
-        self.assertEqual(neurons_block["count"], len(neurons_block["weights"]))
+        self.assertEqual(neurons_block["count"], 2)
+        self.assertEqual(neurons_block["weights"].tolist(), [2.0, 1.5])
+        self.assertEqual(neurons_block["biases"].tolist(), [-0.25, 0.75])
+        self.assertEqual(neurons_block["ages"].tolist(), [5, 3])
         tensor_refs = neurons_block["tensor_refs"].tolist()
         tensor_values = neurons_block["tensor_values"]
         self.assertIsInstance(tensor_values, list)
@@ -64,6 +81,10 @@ class TestBrainSnapshot(unittest.TestCase):
         self.assertEqual(syn_block["source_indices"].typecode, "i")
         self.assertIsInstance(syn_block["target_indices"], array)
         self.assertEqual(syn_block["target_indices"].typecode, "i")
+        self.assertIn("weights", syn_block)
+        self.assertIn("ages", syn_block)
+        self.assertIn("type_ids", syn_block)
+        self.assertIn("direction_ids", syn_block)
         self.assertIsInstance(syn_block["weights"], array)
         self.assertEqual(syn_block["weights"].typecode, "f")
         self.assertIsInstance(syn_block["ages"], array)
@@ -72,7 +93,9 @@ class TestBrainSnapshot(unittest.TestCase):
         self.assertEqual(syn_block["type_ids"].typecode, "i")
         self.assertIsInstance(syn_block["direction_ids"], array)
         self.assertEqual(syn_block["direction_ids"].typecode, "i")
-        self.assertEqual(syn_block["count"], len(syn_block["source_indices"]))
+        self.assertEqual(syn_block["count"], 1)
+        self.assertEqual(syn_block["weights"].tolist(), [0.5])
+        self.assertEqual(syn_block["ages"].tolist(), [4])
         idx_pairs = set(
             zip(
                 syn_block["source_indices"].tolist(),
@@ -82,7 +105,7 @@ class TestBrainSnapshot(unittest.TestCase):
         self.assertIn((1, 0), idx_pairs)
         for dir_idx in syn_block["direction_ids"].tolist():
             self.assertGreaterEqual(dir_idx, 0)
-            self.assertEqual(table[dir_idx], "uni")
+            self.assertEqual(table[dir_idx], "bi")
         neuron_type_indexes = neurons_block["type_ids"].tolist()
         self.assertTrue(all(isinstance(idx, int) for idx in neuron_type_indexes))
         resolved_types = [table[idx] if idx >= 0 else None for idx in neuron_type_indexes]
@@ -96,6 +119,44 @@ class TestBrainSnapshot(unittest.TestCase):
         self.assertTrue(hasattr(loaded, "codec"))
         decoded = loaded.codec.decode(tokens)
         self.assertEqual(decoded, "foo bar foo bar")
+
+    def test_snapshot_omits_default_fields(self):
+        clear_report_group("brain")
+        tmp = tempfile.mkdtemp()
+        b = Brain(1, size=3, store_snapshots=True, snapshot_path=tmp, snapshot_freq=1)
+        b.add_neuron((0,), tensor=[0.0])
+        b.add_neuron((1,), tensor=[1.0], connect_to=(0,), direction="uni")
+        snap_path = b.save_snapshot()
+        with gzip.open(snap_path, "rb") as payload_file:
+            payload = pickle.load(payload_file)
+        neurons_block = payload["neurons"]
+        self.assertNotIn("weights", neurons_block)
+        self.assertNotIn("biases", neurons_block)
+        self.assertNotIn("ages", neurons_block)
+        self.assertNotIn("type_ids", neurons_block)
+        syn_block = payload["synapses"]
+        self.assertNotIn("weights", syn_block)
+        self.assertNotIn("ages", syn_block)
+        self.assertNotIn("type_ids", syn_block)
+        self.assertNotIn("direction_ids", syn_block)
+        loaded = Brain.load_snapshot(snap_path)
+        self.assertEqual(len(loaded.neurons), 2)
+        first = loaded.get_neuron((0,))
+        second = loaded.get_neuron((1,))
+        self.assertIsNotNone(first)
+        self.assertIsNotNone(second)
+        self.assertEqual(first.weight, 1.0)
+        self.assertEqual(second.bias, 0.0)
+        self.assertEqual(first.age, 0)
+        self.assertEqual(second.age, 0)
+        self.assertEqual(first.type_name, None)
+        self.assertEqual(second.type_name, None)
+        self.assertEqual(len(loaded.synapses), 1)
+        syn = loaded.synapses[0]
+        self.assertEqual(syn.weight, 1.0)
+        self.assertEqual(syn.age, 0)
+        self.assertEqual(syn.type_name, None)
+        self.assertEqual(syn.direction, "uni")
 
     def test_load_snapshot_with_index_synapses(self):
         clear_report_group("brain")
