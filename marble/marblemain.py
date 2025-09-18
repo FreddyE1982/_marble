@@ -2039,8 +2039,11 @@ class Brain:
         ages_list: List[int] = []
         type_ids_list: List[int] = []
         tensor_refs_list: List[int] = []
+        tensor_fill_refs_list: List[int] = []
         tensor_pool: List[Tuple[float, ...]] = []
+        tensor_pool_fills: List[Tuple[float, int]] = []
         tensor_index: Dict[Tuple[float, ...], int] = {}
+        tensor_fill_index: Dict[Tuple[float, int], int] = {}
 
         for idx, (pos, neuron) in enumerate(self.neurons.items()):  # type: ignore[union-attr]
             pos_tuple: Tuple[Any, ...]
@@ -2072,13 +2075,30 @@ class Brain:
             type_idx = _intern_string(getattr(neuron, "type_name", None))
             type_ids_list.append(type_idx if type_idx is not None else -1)
             tensor_list = tensor_to_list(neuron.tensor)
-            tensor_key = tuple(float(x) for x in tensor_list)
-            tensor_idx = tensor_index.get(tensor_key)
-            if tensor_idx is None:
-                tensor_idx = len(tensor_pool)
-                tensor_pool.append(tensor_key)
-                tensor_index[tensor_key] = tensor_idx
+            tensor_idx = -1
+            tensor_fill_idx = -1
+            if tensor_list:
+                first_value = float(tensor_list[0])
+                is_uniform = all(
+                    math.isclose(float(v), first_value, rel_tol=1e-12, abs_tol=1e-12)
+                    for v in tensor_list
+                )
+                if is_uniform:
+                    fill_key = (float(first_value), len(tensor_list))
+                    tensor_fill_idx = tensor_fill_index.get(fill_key, -1)
+                    if tensor_fill_idx < 0:
+                        tensor_fill_idx = len(tensor_pool_fills)
+                        tensor_pool_fills.append(fill_key)
+                        tensor_fill_index[fill_key] = tensor_fill_idx
+                else:
+                    tensor_key = tuple(float(x) for x in tensor_list)
+                    tensor_idx = tensor_index.get(tensor_key, -1)
+                    if tensor_idx < 0:
+                        tensor_idx = len(tensor_pool)
+                        tensor_pool.append(tensor_key)
+                        tensor_index[tensor_key] = tensor_idx
             tensor_refs_list.append(tensor_idx)
+            tensor_fill_refs_list.append(tensor_fill_idx)
 
         syn_source_list: List[int] = []
         syn_target_list: List[int] = []
@@ -2127,6 +2147,8 @@ class Brain:
             "count": len(neuron_positions),
             "tensor_refs": _build_int_array(tensor_refs_list),
         }
+        if any(idx >= 0 for idx in tensor_fill_refs_list):
+            neurons_block["tensor_fill_refs"] = _build_int_array(tensor_fill_refs_list)
         if linear_indices_array is not None:
             neurons_block["position_encoding"] = "linear"
             neurons_block["linear_indices"] = linear_indices_array
@@ -2175,6 +2197,11 @@ class Brain:
         data["string_table"] = string_table
         if tensor_pool:
             data["tensor_pool"] = [list(entry) for entry in tensor_pool]
+        if tensor_pool_fills:
+            data["tensor_pool_fills"] = [
+                {"value": float(value), "length": int(length)}
+                for value, length in tensor_pool_fills
+            ]
         codec_obj = getattr(self, "codec", None)
         if codec_obj is not None:
             try:
@@ -2287,6 +2314,24 @@ class Brain:
             for entry in candidates:
                 tensor_pool_list.append([float(v) for v in _coerce_list(entry)])
 
+        tensor_pool_fills_raw = data.get("tensor_pool_fills")
+        tensor_pool_fills: List[Tuple[float, int]] = []
+        if tensor_pool_fills_raw is not None:
+            if isinstance(tensor_pool_fills_raw, list):
+                fill_candidates = tensor_pool_fills_raw
+            else:
+                fill_candidates = _coerce_list(tensor_pool_fills_raw)
+            for entry in fill_candidates:
+                if isinstance(entry, dict):
+                    value = float(entry.get("value", 0.0))
+                    length = int(entry.get("length", 0))
+                elif isinstance(entry, (list, tuple)) and len(entry) >= 2:
+                    value = float(entry[0])
+                    length = int(entry[1])
+                else:
+                    continue
+                tensor_pool_fills.append((value, max(0, length)))
+
         temp_syns: List[Synapse] = []
         prev_pos: Optional[Sequence[float]] = None
         neuron_positions: List[Tuple[Any, ...]] = []
@@ -2328,6 +2373,9 @@ class Brain:
             ages_list = [int(v) for v in _coerce_list(neurons_block.get("ages", []))]
             type_ids_list = [int(v) for v in _coerce_list(neurons_block.get("type_ids", []))]
             tensor_refs_list = [int(v) for v in _coerce_list(neurons_block.get("tensor_refs", []))]
+            tensor_fill_refs_list = [
+                int(v) for v in _coerce_list(neurons_block.get("tensor_fill_refs", []))
+            ]
             tensor_values_raw = neurons_block.get("tensor_values", [])
             if isinstance(tensor_values_raw, list):
                 tensor_values_list = [list(tv) for tv in tensor_values_raw]
@@ -2378,7 +2426,15 @@ class Brain:
                     else None
                 )
                 tensor_idx = tensor_refs_list[idx] if idx < len(tensor_refs_list) else -1
-                if tensor_pool_list and 0 <= tensor_idx < len(tensor_pool_list):
+                tensor_fill_idx = (
+                    tensor_fill_refs_list[idx]
+                    if idx < len(tensor_fill_refs_list)
+                    else -1
+                )
+                if 0 <= tensor_fill_idx < len(tensor_pool_fills):
+                    fill_value, fill_length = tensor_pool_fills[tensor_fill_idx]
+                    tensor_payload = [float(fill_value)] * int(max(0, fill_length))
+                elif tensor_pool_list and 0 <= tensor_idx < len(tensor_pool_list):
                     tensor_payload = list(tensor_pool_list[tensor_idx])
                 elif 0 <= tensor_idx < len(tensor_values_list):
                     tensor_payload = list(tensor_values_list[tensor_idx])
