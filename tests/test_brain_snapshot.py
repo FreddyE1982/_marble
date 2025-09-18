@@ -66,7 +66,7 @@ class TestBrainSnapshot(unittest.TestCase):
         self.assertIsInstance(neurons_block["ages"], array)
         self.assertIsInstance(neurons_block["type_ids"], array)
         self.assertIsInstance(neurons_block["tensor_refs"], array)
-        self.assertEqual(neurons_block["tensor_refs"].typecode, "i")
+        self.assertEqual(neurons_block["tensor_refs"].typecode, "B")
         self.assertEqual(neurons_block["count"], 2)
         self.assertEqual(neurons_block["weights"].tolist(), [2.0, 1.5])
         self.assertEqual(neurons_block["biases"].tolist(), [-0.25, 0.75])
@@ -82,9 +82,9 @@ class TestBrainSnapshot(unittest.TestCase):
         self.assertIsInstance(syn_block, dict)
         self.assertIn("source_indices", syn_block)
         self.assertIsInstance(syn_block["source_indices"], array)
-        self.assertEqual(syn_block["source_indices"].typecode, "i")
+        self.assertEqual(syn_block["source_indices"].typecode, "B")
         self.assertIsInstance(syn_block["target_indices"], array)
-        self.assertEqual(syn_block["target_indices"].typecode, "i")
+        self.assertEqual(syn_block["target_indices"].typecode, "B")
         self.assertIn("weights", syn_block)
         self.assertIn("ages", syn_block)
         self.assertIn("type_ids", syn_block)
@@ -92,11 +92,11 @@ class TestBrainSnapshot(unittest.TestCase):
         self.assertIsInstance(syn_block["weights"], array)
         self.assertEqual(syn_block["weights"].typecode, "f")
         self.assertIsInstance(syn_block["ages"], array)
-        self.assertEqual(syn_block["ages"].typecode, "i")
+        self.assertEqual(syn_block["ages"].typecode, "B")
         self.assertIsInstance(syn_block["type_ids"], array)
-        self.assertEqual(syn_block["type_ids"].typecode, "i")
+        self.assertEqual(syn_block["type_ids"].typecode, "B")
         self.assertIsInstance(syn_block["direction_ids"], array)
-        self.assertEqual(syn_block["direction_ids"].typecode, "i")
+        self.assertEqual(syn_block["direction_ids"].typecode, "B")
         self.assertEqual(syn_block["count"], 1)
         self.assertEqual(syn_block["weights"].tolist(), [0.5])
         self.assertEqual(syn_block["ages"].tolist(), [4])
@@ -198,6 +198,77 @@ class TestBrainSnapshot(unittest.TestCase):
                 tensors.append(list(value))
         self.assertIn([0.5, 0.25], tensors)
         self.assertIn([1.25], tensors)
+
+    def test_snapshot_uses_signed_byte_arrays_when_needed(self):
+        clear_report_group("brain")
+        tmp = tempfile.mkdtemp()
+        b = Brain(1, size=5, store_snapshots=True, snapshot_path=tmp, snapshot_freq=1)
+        b.add_neuron((0,), tensor=[0.0], type_name="kind_a", age=2)
+        b.add_neuron((1,), tensor=[1.0], connect_to=(0,), direction="bi", age=3)
+        first_syn = b.synapses[-1]
+        first_syn.type_name = "syn_kind"
+        first_syn.age = 5
+        b.add_neuron((2,), tensor=[2.0], type_name="kind_c", connect_to=(1,), age=7)
+        second_syn = b.synapses[-1]
+        second_syn.age = 1
+        snap_path = b.save_snapshot()
+        with gzip.open(snap_path, "rb") as fh:
+            payload = pickle.load(fh)
+        neurons_block = payload["neurons"]
+        syn_block = payload["synapses"]
+        print(
+            "narrow typecodes:",
+            neurons_block["type_ids"].typecode if "type_ids" in neurons_block else None,
+            syn_block["type_ids"].typecode if "type_ids" in syn_block else None,
+        )
+        self.assertIn("type_ids", neurons_block)
+        self.assertEqual(neurons_block["type_ids"].typecode, "b")
+        self.assertIn("tensor_refs", neurons_block)
+        self.assertEqual(neurons_block["tensor_refs"].typecode, "B")
+        self.assertIn("source_indices", syn_block)
+        self.assertEqual(syn_block["source_indices"].typecode, "B")
+        self.assertIn("target_indices", syn_block)
+        self.assertEqual(syn_block["target_indices"].typecode, "B")
+        self.assertIn("type_ids", syn_block)
+        self.assertEqual(syn_block["type_ids"].typecode, "b")
+        reloaded = Brain.load_snapshot(snap_path)
+        self.assertEqual(len(reloaded.neurons), len(b.neurons))
+        self.assertEqual(len(reloaded.synapses), len(b.synapses))
+        reloaded_types = [n.type_name for n in reloaded.neurons.values()]
+        self.assertIn("kind_a", reloaded_types)
+        self.assertIn("kind_c", reloaded_types)
+
+    def test_snapshot_promotes_integer_arrays_to_uint16(self):
+        clear_report_group("brain")
+        tmp = tempfile.mkdtemp()
+        neuron_count = 300
+        b = Brain(1, size=neuron_count + 1, store_snapshots=True, snapshot_path=tmp, snapshot_freq=1)
+        prev_pos = None
+        for idx in range(neuron_count):
+            pos = (idx,)
+            tensor_payload = [float(idx)]
+            if prev_pos is None:
+                b.add_neuron(pos, tensor=tensor_payload, type_name="bulk", age=idx % 3)
+            else:
+                b.add_neuron(pos, tensor=tensor_payload, connect_to=prev_pos, age=idx % 5)
+            prev_pos = pos
+        snap_path = b.save_snapshot()
+        with gzip.open(snap_path, "rb") as fh:
+            payload = pickle.load(fh)
+        neurons_block = payload["neurons"]
+        syn_block = payload["synapses"]
+        print(
+            "large snapshot typecodes:",
+            neurons_block["tensor_refs"].typecode,
+            syn_block["source_indices"].typecode,
+            syn_block["target_indices"].typecode,
+        )
+        self.assertEqual(neurons_block["tensor_refs"].typecode, "H")
+        self.assertEqual(syn_block["source_indices"].typecode, "H")
+        self.assertEqual(syn_block["target_indices"].typecode, "H")
+        reloaded = Brain.load_snapshot(snap_path)
+        self.assertEqual(len(reloaded.neurons), neuron_count)
+        self.assertEqual(len(reloaded.synapses), neuron_count - 1)
 
     def test_load_legacy_snapshot_without_tensor_pool(self):
         clear_report_group("brain")
