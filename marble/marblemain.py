@@ -1961,6 +1961,24 @@ class Brain:
                     tensor = tensor.reshape(-1)
                     tensor = tensor.to("cpu")
                     return [float(x) for x in tensor.tolist()]
+                if snapshot_torch is not None and use_cuda_for_snapshot and isinstance(t, (list, tuple)):
+                    try:
+                        tensor = snapshot_torch.as_tensor(t, dtype=snapshot_torch.float32)
+                        tensor = tensor.reshape(-1)
+                        tensor = tensor.to(device=snapshot_device)
+                        tensor = tensor.to("cpu")
+                        return [float(x) for x in tensor.tolist()]
+                    except Exception:
+                        pass
+                if snapshot_torch is not None and use_cuda_for_snapshot and hasattr(t, "__array__"):
+                    try:
+                        tensor = snapshot_torch.as_tensor(t, dtype=snapshot_torch.float32)
+                        tensor = tensor.reshape(-1)
+                        tensor = tensor.to(device=snapshot_device)
+                        tensor = tensor.to("cpu")
+                        return [float(x) for x in tensor.tolist()]
+                    except Exception:
+                        pass
                 if hasattr(t, "detach") and hasattr(t, "tolist"):
                     return [float(x) for x in t.detach().to("cpu").view(-1).tolist()]
             except Exception:
@@ -2001,6 +2019,14 @@ class Brain:
                 return array("B")
             min_value = min(values_list)
             max_value = max(values_list)
+            if snapshot_torch is not None and use_cuda_for_snapshot:
+                try:
+                    tensor = snapshot_torch.as_tensor(values_list, dtype=snapshot_torch.int64)
+                    tensor = tensor.to(device=snapshot_device)
+                    min_value = int(tensor.min().detach().to("cpu").item())
+                    max_value = int(tensor.max().detach().to("cpu").item())
+                except Exception:
+                    pass
             if min_value < 0:
                 signed_ranges = (
                     ("b", -128, 127),
@@ -2107,9 +2133,29 @@ class Brain:
             neuron_index[pos_tuple] = idx
             if linear_indices_array is not None and linear_index_strides is not None:
                 linear_value = 0
-                for dim, coord in enumerate(pos_tuple):
-                    stride = linear_index_strides[dim] if dim < len(linear_index_strides) else 1
-                    linear_value += int(coord) * stride
+                gpu_linear_success = False
+                if snapshot_torch is not None and use_cuda_for_snapshot:
+                    try:
+                        coords_tensor = snapshot_torch.as_tensor(pos_tuple, dtype=snapshot_torch.int64)
+                        coords_tensor = coords_tensor.to(device=snapshot_device)
+                        stride_values = [
+                            linear_index_strides[dim] if dim < len(linear_index_strides) else 1
+                            for dim in range(len(pos_tuple))
+                        ]
+                        stride_tensor = snapshot_torch.as_tensor(
+                            stride_values, dtype=snapshot_torch.int64
+                        )
+                        stride_tensor = stride_tensor.to(device=snapshot_device)
+                        linear_value = int(
+                            (coords_tensor * stride_tensor).sum().detach().to("cpu").item()
+                        )
+                        gpu_linear_success = True
+                    except Exception:
+                        gpu_linear_success = False
+                if not gpu_linear_success:
+                    for dim, coord in enumerate(pos_tuple):
+                        stride = linear_index_strides[dim] if dim < len(linear_index_strides) else 1
+                        linear_value += int(coord) * stride
                 linear_indices_array.append(int(linear_value))
             elif positions_array is not None:
                 for coord in pos_tuple:
