@@ -27,13 +27,78 @@ class TestBrainSnapshot(unittest.TestCase):
         print("snapshot keys:", sorted(payload.keys()))
         self.assertIn("codec_state", payload)
         self.assertNotIn("codec_vocab", payload)
+        self.assertTrue(payload["synapses"])
+        for syn in payload["synapses"]:
+            self.assertIn("source_idx", syn)
+            self.assertIn("target_idx", syn)
+            self.assertNotIn("source", syn)
+            self.assertNotIn("target", syn)
+        idx_pairs = {(syn["source_idx"], syn["target_idx"]) for syn in payload["synapses"]}
+        self.assertIn((1, 0), idx_pairs)
         print("snapshot path:", snap_path)
         loaded = Brain.load_snapshot(snap_path)
         print("loaded brain neurons:", len(loaded.neurons))
         self.assertEqual(len(loaded.neurons), len(b.neurons))
+        self.assertEqual(len(loaded.synapses), len(b.synapses))
         self.assertTrue(hasattr(loaded, "codec"))
         decoded = loaded.codec.decode(tokens)
         self.assertEqual(decoded, "foo bar foo bar")
+
+    def test_load_snapshot_with_index_synapses(self):
+        clear_report_group("brain")
+        tmp = tempfile.mkdtemp()
+        path = os.path.join(tmp, "index_snapshot.marble")
+        snapshot = {
+            "version": 1,
+            "n": 1,
+            "mode": "grid",
+            "size": [2],
+            "bounds": [[0.0, 1.0]],
+            "formula": None,
+            "max_iters": 50,
+            "escape_radius": 2.0,
+            "sparse_bounds": [],
+            "neurons": [
+                {
+                    "position": [0],
+                    "weight": 1.0,
+                    "bias": 0.0,
+                    "age": 0,
+                    "type_name": "default",
+                    "tensor": [0.0],
+                },
+                {
+                    "position": [1],
+                    "weight": 1.0,
+                    "bias": 0.0,
+                    "age": 0,
+                    "type_name": "default",
+                    "tensor": [0.5],
+                },
+            ],
+            "synapses": [
+                {
+                    "source_idx": 0,
+                    "target_idx": 1,
+                    "direction": "uni",
+                    "age": 0,
+                    "type_name": "default",
+                    "weight": 0.75,
+                }
+            ],
+        }
+        with gzip.open(path, "wb") as f:
+            pickle.dump(snapshot, f, protocol=pickle.HIGHEST_PROTOCOL)
+        loaded = Brain.load_snapshot(path)
+        self.assertEqual(len(loaded.neurons), 2)
+        self.assertEqual(len(loaded.synapses), 1)
+        syn = loaded.synapses[0]
+        self.assertEqual(syn.weight, 0.75)
+        self.assertEqual(syn.direction, "uni")
+        src_pos = getattr(syn.source, "position")
+        dst_pos = getattr(syn.target, "position")
+        self.assertEqual(tuple(src_pos), (0,))
+        self.assertEqual(tuple(dst_pos), (1,))
 
     def test_load_snapshot_with_legacy_codec_vocab(self):
         clear_report_group("brain")
@@ -96,7 +161,16 @@ class TestBrainSnapshot(unittest.TestCase):
                     "tensor": [0.25],
                 }
             ],
-            "synapses": [],
+            "synapses": [
+                {
+                    "source": [0],
+                    "target": [0],
+                    "direction": "uni",
+                    "age": 2,
+                    "type_name": "default",
+                    "weight": 1.25,
+                }
+            ],
         }
         with open(legacy_path, "wb") as f:
             pickle.dump(legacy_data, f, protocol=pickle.HIGHEST_PROTOCOL)
@@ -110,6 +184,10 @@ class TestBrainSnapshot(unittest.TestCase):
             tensor_payload = list(tensor_value)
         self.assertEqual(tensor_payload, [0.25])
         self.assertEqual(neuron.type_name, "default")
+        self.assertEqual(len(loaded.synapses), 1)
+        legacy_syn = loaded.synapses[0]
+        self.assertEqual(legacy_syn.age, 2)
+        self.assertEqual(legacy_syn.weight, 1.25)
 
     def test_snapshot_dynamic_brain_without_size(self):
         clear_report_group("brain")
