@@ -16,9 +16,8 @@ Design:
 from __future__ import annotations
 
 # Only file allowed to import
-import json
-import pickle
 import gzip
+import json
 import math
 import random
 import threading
@@ -31,6 +30,9 @@ import importlib
 import itertools
 import gc
 import datetime
+import pickle
+
+import numpy as np
 from . import plugin_cost_profiler as _pcp
 from .learnable_param import LearnableParam
 from .learnables_yaml import log_learnable_values, register_learnable
@@ -1934,13 +1936,67 @@ class Brain:
         if not str(target).endswith(".marble"):
             target = str(target) + ".marble"
 
-        def tensor_to_list(t: Any) -> List[float]:
+        def _flatten_to_float_list(arr: np.ndarray) -> List[float]:
             try:
-                if hasattr(t, "detach") and hasattr(t, "tolist"):
-                    return [float(x) for x in t.detach().to("cpu").view(-1).tolist()]
+                return [float(x) for x in arr.reshape(-1)]
             except Exception:
                 pass
-            return [float(x) for x in (t if isinstance(t, (list, tuple)) else [t])]
+            try:
+                coerced = np.asarray(arr, dtype=np.float64).reshape(-1)
+                return [float(x) for x in coerced]
+            except Exception:
+                return []
+
+        def _export_tensor_blob(t: Any) -> Tuple[Optional[Dict[str, Any]], List[float]]:
+            if t is None:
+                return None, []
+            try:
+                import torch  # type: ignore
+
+                if isinstance(t, torch.Tensor):
+                    arr = t.detach().to("cpu")
+                    if not arr.is_contiguous():
+                        arr = arr.contiguous()
+                    np_arr = np.ascontiguousarray(arr.numpy())
+                    blob = {
+                        "dtype": np_arr.dtype.str,
+                        "shape": [int(s) for s in np_arr.shape],
+                        "data": np_arr.tobytes(),
+                    }
+                    return blob, _flatten_to_float_list(np_arr)
+            except Exception:
+                pass
+            try:
+                np_arr = np.ascontiguousarray(np.asarray(t))
+            except Exception:
+                np_arr = None
+            if isinstance(np_arr, np.ndarray):
+                blob = {
+                    "dtype": np_arr.dtype.str,
+                    "shape": [int(s) for s in np_arr.shape],
+                    "data": np_arr.tobytes(),
+                }
+                return blob, _flatten_to_float_list(np_arr)
+            legacy: List[float] = []
+            try:
+                if isinstance(t, (list, tuple)):
+                    legacy = [float(x) for x in t]
+                else:
+                    legacy = [float(t)]
+            except Exception:
+                legacy = []
+            if legacy:
+                try:
+                    np_arr = np.ascontiguousarray(np.asarray(legacy, dtype=np.float64))
+                    blob = {
+                        "dtype": np_arr.dtype.str,
+                        "shape": [int(s) for s in np_arr.shape],
+                        "data": np_arr.tobytes(),
+                    }
+                except Exception:
+                    blob = None
+                return blob, legacy
+            return None, legacy
 
         size_attr = getattr(self, "size", None)
         if size_attr is None:
@@ -1970,16 +2026,18 @@ class Brain:
             "synapses": [],
         }
         for pos, neuron in self.neurons.items():  # type: ignore[union-attr]
-            data["neurons"].append(
-                {
-                    "position": list(pos),
-                    "weight": neuron.weight,
-                    "bias": neuron.bias,
-                    "age": neuron.age,
-                    "type_name": neuron.type_name,
-                    "tensor": tensor_to_list(neuron.tensor),
-                }
-            )
+            blob, legacy_tensor = _export_tensor_blob(neuron.tensor)
+            neuron_payload: Dict[str, Any] = {
+                "position": list(pos),
+                "weight": neuron.weight,
+                "bias": neuron.bias,
+                "age": neuron.age,
+                "type_name": neuron.type_name,
+                "tensor": legacy_tensor,
+            }
+            if blob is not None:
+                neuron_payload["tensor_blob"] = blob
+            data["neurons"].append(neuron_payload)
         for syn in self.synapses:
             src = getattr(syn.source, "position", None)
             dst = getattr(syn.target, "position", None)
@@ -2060,15 +2118,47 @@ class Brain:
                 store_snapshots=False,
             )
         else:
+            size_data = data.get("size", [])
+            size_arg: Optional[Tuple[int, ...]]
+            if isinstance(size_data, (list, tuple)) and len(size_data) == 0:
+                size_arg = None
+            else:
+                size_arg = tuple(size_data) if size_data is not None else None
+            bounds_data = data.get("bounds", [])
+            bounds_arg: Optional[Tuple[Tuple[float, float], ...]]
+            if isinstance(bounds_data, (list, tuple)) and len(bounds_data) == 0:
+                bounds_arg = None
+            else:
+                bounds_arg = tuple(tuple(b) for b in bounds_data) if bounds_data is not None else None
             brain = cls(
                 int(data.get("n", 1)),
-                size=tuple(data.get("size", [])),
-                bounds=tuple(tuple(b) for b in data.get("bounds", [])),
+                size=size_arg,
+                bounds=bounds_arg,
                 formula=data.get("formula"),
                 max_iters=int(data.get("max_iters", 50)),
                 escape_radius=float(data.get("escape_radius", 2.0)),
                 store_snapshots=False,
             )
+        def _restore_tensor_from_snapshot(item: Dict[str, Any]) -> Any:
+            blob = item.get("tensor_blob")
+            if isinstance(blob, dict):
+                dtype = blob.get("dtype")
+                shape = blob.get("shape")
+                raw = blob.get("data")
+                if dtype is not None and shape is not None and raw is not None:
+                    try:
+                        arr = np.frombuffer(raw, dtype=np.dtype(dtype)).copy()
+                        arr = arr.reshape(tuple(int(s) for s in shape))
+                        try:
+                            import torch  # type: ignore
+
+                            return torch.from_numpy(arr)
+                        except Exception:
+                            return arr
+                    except Exception:
+                        pass
+            return item.get("tensor", 0.0)
+
         temp_syns: List[Synapse] = []
         prev_pos: Optional[Sequence[float]] = None
         for item in data.get("neurons", []):
@@ -2076,7 +2166,7 @@ class Brain:
             if prev_pos is None:
                 brain.add_neuron(
                     pos,
-                    tensor=item.get("tensor", 0.0),
+                    tensor=_restore_tensor_from_snapshot(item),
                     weight=item.get("weight", 1.0),
                     bias=item.get("bias", 0.0),
                     age=item.get("age", 0),
@@ -2085,7 +2175,7 @@ class Brain:
             else:
                 brain.add_neuron(
                     pos,
-                    tensor=item.get("tensor", 0.0),
+                    tensor=_restore_tensor_from_snapshot(item),
                     weight=item.get("weight", 1.0),
                     bias=item.get("bias", 0.0),
                     age=item.get("age", 0),
