@@ -18,6 +18,7 @@ from __future__ import annotations
 # Only file allowed to import
 import json
 import pickle
+import gzip
 import math
 import random
 import threading
@@ -2011,8 +2012,8 @@ class Brain:
                 data["codec_vocab"] = codec_obj.dump_vocab()
             except Exception:
                 pass
-        with open(target, "wb") as f:
-            pickle.dump(data, f)
+        with gzip.open(target, "wb") as f:
+            pickle.dump(data, f, protocol=pickle.HIGHEST_PROTOCOL)
         # Retention: keep only the newest N snapshots if configured
         if getattr(self, "snapshot_keep", None) is not None:
             try:
@@ -2038,8 +2039,17 @@ class Brain:
     @classmethod
     def load_snapshot(cls, path: str) -> "Brain":
         """Load a brain snapshot previously saved with ``save_snapshot``."""
-        with open(path, "rb") as f:
-            data = pickle.load(f)
+        try:
+            with open(path, "rb") as probe:
+                magic = probe.read(2)
+        except FileNotFoundError:
+            raise
+        if magic == b"\x1f\x8b":
+            with gzip.open(path, "rb") as f:
+                data = pickle.load(f)
+        else:
+            with open(path, "rb") as f:
+                data = pickle.load(f)
         if not isinstance(data, dict):
             raise ValueError("Invalid brain snapshot")
         mode = data.get("mode", "grid")
