@@ -2131,42 +2131,6 @@ class Brain:
                 pos_tuple = tuple(list(pos))  # type: ignore[list-item]
             neuron_positions.append(pos_tuple)
             neuron_index[pos_tuple] = idx
-            if linear_indices_array is not None and linear_index_strides is not None:
-                linear_value = 0
-                gpu_linear_success = False
-                if snapshot_torch is not None and use_cuda_for_snapshot:
-                    try:
-                        coords_tensor = snapshot_torch.as_tensor(pos_tuple, dtype=snapshot_torch.int64)
-                        coords_tensor = coords_tensor.to(device=snapshot_device)
-                        stride_values = [
-                            linear_index_strides[dim] if dim < len(linear_index_strides) else 1
-                            for dim in range(len(pos_tuple))
-                        ]
-                        stride_tensor = snapshot_torch.as_tensor(
-                            stride_values, dtype=snapshot_torch.int64
-                        )
-                        stride_tensor = stride_tensor.to(device=snapshot_device)
-                        linear_value = int(
-                            (coords_tensor * stride_tensor).sum().detach().to("cpu").item()
-                        )
-                        gpu_linear_success = True
-                    except Exception:
-                        gpu_linear_success = False
-                if not gpu_linear_success:
-                    for dim, coord in enumerate(pos_tuple):
-                        stride = linear_index_strides[dim] if dim < len(linear_index_strides) else 1
-                        linear_value += int(coord) * stride
-                linear_indices_array.append(int(linear_value))
-            elif positions_array is not None:
-                for coord in pos_tuple:
-                    if position_dtype == "int":
-                        if int_positions is not None:
-                            int_positions.append(int(coord))
-                    else:
-                        positions_array.append(float(coord))
-            elif int_positions is not None:
-                for coord in pos_tuple:
-                    int_positions.append(int(coord))
             weights_array.append(float(getattr(neuron, "weight", 1.0)))
             biases_array.append(float(getattr(neuron, "bias", 0.0)))
             ages_list.append(int(getattr(neuron, "age", 0)))
@@ -2193,6 +2157,102 @@ class Brain:
                         tensor_index[tensor_key] = tensor_idx
             tensor_refs_list.append(tensor_idx)
             tensor_fill_refs_list.append(tensor_fill_idx)
+
+        if linear_indices_array is not None and linear_index_strides is not None:
+            computed_linear: Optional[array] = None
+            if (
+                snapshot_torch is not None
+                and use_cuda_for_snapshot
+                and neuron_positions
+            ):
+                try:
+                    coords_tensor = snapshot_torch.as_tensor(
+                        neuron_positions, dtype=snapshot_torch.int64
+                    )
+                    coords_tensor = coords_tensor.to(device=snapshot_device)
+                    stride_tensor = snapshot_torch.as_tensor(
+                        linear_index_strides, dtype=snapshot_torch.int64
+                    )
+                    stride_tensor = stride_tensor.to(device=snapshot_device)
+                    linear_tensor = coords_tensor * stride_tensor
+                    linear_tensor = linear_tensor.sum(dim=1)
+                    computed_linear = array(
+                        "Q",
+                        [
+                            int(val)
+                            for val in linear_tensor.detach().to("cpu").tolist()
+                        ],
+                    )
+                except Exception:
+                    computed_linear = None
+            if computed_linear is None:
+                fallback_linear = array("Q")
+                for pos_tuple in neuron_positions:
+                    linear_value = 0
+                    for dim, coord in enumerate(pos_tuple):
+                        stride = (
+                            linear_index_strides[dim]
+                            if dim < len(linear_index_strides)
+                            else 1
+                        )
+                        linear_value += int(coord) * stride
+                    fallback_linear.append(int(linear_value))
+                computed_linear = fallback_linear
+            linear_indices_array = computed_linear
+        elif position_dtype == "int" and int_positions is not None:
+            computed_int_positions: Optional[List[int]] = None
+            if (
+                snapshot_torch is not None
+                and use_cuda_for_snapshot
+                and neuron_positions
+            ):
+                try:
+                    coords_tensor = snapshot_torch.as_tensor(
+                        neuron_positions, dtype=snapshot_torch.int64
+                    )
+                    coords_tensor = coords_tensor.to(device=snapshot_device)
+                    flat_tensor = coords_tensor.reshape(-1)
+                    computed_int_positions = [
+                        int(val)
+                        for val in flat_tensor.detach().to("cpu").tolist()
+                    ]
+                except Exception:
+                    computed_int_positions = None
+            if computed_int_positions is None:
+                computed_int_positions = []
+                for pos_tuple in neuron_positions:
+                    for coord in pos_tuple:
+                        computed_int_positions.append(int(coord))
+            int_positions = computed_int_positions
+        elif positions_array is not None:
+            computed_positions_array: Optional[array] = None
+            if (
+                snapshot_torch is not None
+                and use_cuda_for_snapshot
+                and neuron_positions
+            ):
+                try:
+                    coords_tensor = snapshot_torch.as_tensor(
+                        neuron_positions, dtype=snapshot_torch.float32
+                    )
+                    coords_tensor = coords_tensor.to(device=snapshot_device)
+                    flat_tensor = coords_tensor.reshape(-1)
+                    computed_positions_array = array(
+                        "f",
+                        [
+                            float(val)
+                            for val in flat_tensor.detach().to("cpu").tolist()
+                        ],
+                    )
+                except Exception:
+                    computed_positions_array = None
+            if computed_positions_array is None:
+                fallback_positions = array("f")
+                for pos_tuple in neuron_positions:
+                    for coord in pos_tuple:
+                        fallback_positions.append(float(coord))
+                computed_positions_array = fallback_positions
+            positions_array = computed_positions_array
 
         syn_source_list: List[int] = []
         syn_target_list: List[int] = []
