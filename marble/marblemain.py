@@ -1985,7 +1985,25 @@ class Brain:
         neuron_positions: List[Tuple[Any, ...]] = []
         neuron_index: Dict[Tuple[Any, ...], int] = {}
         position_dtype = "int" if self.mode == "grid" else "float"
-        positions_array = array("i" if position_dtype == "int" else "f")
+        positions_array: Optional[array]
+        if position_dtype == "int":
+            positions_array = array("i")
+        else:
+            positions_array = array("f")
+        linear_indices_array: Optional[array] = None
+        linear_index_strides: Optional[Tuple[int, ...]] = None
+        if (
+            self.mode == "grid"
+            and not getattr(self, "dynamic", False)
+            and isinstance(getattr(self, "size", None), tuple)
+        ):
+            linear_indices_array = array("Q")
+            # Pre-compute row-major strides for the fixed-size grid.
+            strides: List[int] = [1] * self.n
+            for dim in range(self.n - 2, -1, -1):
+                strides[dim] = strides[dim + 1] * int(self.size[dim + 1])
+            linear_index_strides = tuple(strides)
+            positions_array = None
         weights_array = array("f")
         biases_array = array("f")
         ages_array = array("i")
@@ -2002,11 +2020,18 @@ class Brain:
                 pos_tuple = tuple(list(pos))  # type: ignore[list-item]
             neuron_positions.append(pos_tuple)
             neuron_index[pos_tuple] = idx
-            for coord in pos_tuple:
-                if position_dtype == "int":
-                    positions_array.append(int(coord))
-                else:
-                    positions_array.append(float(coord))
+            if linear_indices_array is not None and linear_index_strides is not None:
+                linear_value = 0
+                for dim, coord in enumerate(pos_tuple):
+                    stride = linear_index_strides[dim] if dim < len(linear_index_strides) else 1
+                    linear_value += int(coord) * stride
+                linear_indices_array.append(int(linear_value))
+            elif positions_array is not None:
+                for coord in pos_tuple:
+                    if position_dtype == "int":
+                        positions_array.append(int(coord))
+                    else:
+                        positions_array.append(float(coord))
             weights_array.append(float(getattr(neuron, "weight", 1.0)))
             biases_array.append(float(getattr(neuron, "bias", 0.0)))
             ages_array.append(int(getattr(neuron, "age", 0)))
@@ -2066,11 +2091,17 @@ class Brain:
         data["layout"] = "columnar"
         neurons_block: Dict[str, Any] = {
             "count": len(neuron_positions),
-            "position_dims": self.n,
-            "position_dtype": position_dtype,
-            "positions": positions_array,
             "tensor_refs": tensor_refs_array,
         }
+        if linear_indices_array is not None:
+            neurons_block["position_encoding"] = "linear"
+            neurons_block["linear_indices"] = linear_indices_array
+            neurons_block["position_dims"] = self.n
+            neurons_block["position_dtype"] = "int"
+        else:
+            neurons_block["position_dims"] = self.n
+            neurons_block["position_dtype"] = position_dtype
+            neurons_block["positions"] = positions_array if positions_array is not None else array("i")
         if len(weights_array) and not _all_close(weights_array, 1.0):
             neurons_block["weights"] = weights_array
         if len(biases_array) and not _all_close(biases_array, 0.0):
@@ -2217,6 +2248,23 @@ class Brain:
         temp_syns: List[Synapse] = []
         prev_pos: Optional[Sequence[float]] = None
         neuron_positions: List[Tuple[Any, ...]] = []
+        size_tuple: Tuple[int, ...] = tuple(int(s) for s in data.get("size", []))
+        if not size_tuple and isinstance(getattr(brain, "size", None), tuple):
+            size_tuple = tuple(int(s) for s in getattr(brain, "size"))
+
+        def _coords_from_linear_index(linear_index: int, shape: Sequence[int]) -> List[int]:
+            dims = [int(max(1, s)) for s in shape]
+            if not dims:
+                return [int(linear_index)]
+            remaining = int(linear_index)
+            coords_rev: List[int] = []
+            for size_dim in reversed(dims):
+                coords_rev.append(remaining % size_dim)
+                remaining //= size_dim
+            coords = list(reversed(coords_rev))
+            if remaining:
+                coords[0] += remaining * max(1, dims[0])
+            return coords
         layout = data.get("layout")
         if layout == "columnar" and isinstance(data.get("neurons"), dict):
             neurons_block = data.get("neurons", {})
@@ -2226,7 +2274,13 @@ class Brain:
             position_dtype = neurons_block.get(
                 "position_dtype", "int" if brain.mode == "grid" else "float"
             )
-            positions_list = _coerce_list(neurons_block.get("positions", []))
+            position_encoding = neurons_block.get("position_encoding")
+            linear_indices_list: List[int] = []
+            if position_encoding == "linear":
+                linear_indices_list = [
+                    int(v) for v in _coerce_list(neurons_block.get("linear_indices", []))
+                ]
+            positions_list = [] if position_encoding == "linear" else _coerce_list(neurons_block.get("positions", []))
             weights_list = [float(v) for v in _coerce_list(neurons_block.get("weights", []))]
             biases_list = [float(v) for v in _coerce_list(neurons_block.get("biases", []))]
             ages_list = [int(v) for v in _coerce_list(neurons_block.get("ages", []))]
@@ -2245,15 +2299,31 @@ class Brain:
             default_neuron_age = 0
             prev_pos = None
             for idx in range(neuron_count):
-                start = idx * position_dims
-                end = start + position_dims
-                if end > len(positions_list):
-                    break
-                coords_slice = positions_list[start:end]
-                if position_dtype == "float":
-                    coords = [float(v) for v in coords_slice]
+                if position_encoding == "linear":
+                    if idx >= len(linear_indices_list):
+                        break
+                    coords = _coords_from_linear_index(
+                        linear_indices_list[idx], size_tuple or (position_dims,)
+                    )
+                    if position_dims > 0:
+                        if len(coords) < position_dims:
+                            coords = coords + [0] * (position_dims - len(coords))
+                        elif len(coords) > position_dims:
+                            coords = coords[:position_dims]
+                    if position_dtype == "float":
+                        coords = [float(v) for v in coords]
+                    else:
+                        coords = [int(v) for v in coords]
                 else:
-                    coords = [int(v) for v in coords_slice]
+                    start = idx * position_dims
+                    end = start + position_dims
+                    if end > len(positions_list):
+                        break
+                    coords_slice = positions_list[start:end]
+                    if position_dtype == "float":
+                        coords = [float(v) for v in coords_slice]
+                    else:
+                        coords = [int(v) for v in coords_slice]
                 pos_tuple = tuple(coords)
                 neuron_positions.append(pos_tuple)
                 weight = weights_list[idx] if idx < len(weights_list) else default_neuron_weight
