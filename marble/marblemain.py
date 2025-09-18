@@ -1982,10 +1982,19 @@ class Brain:
         for syn in self.synapses:
             src = getattr(syn.source, "position", None)
             dst = getattr(syn.target, "position", None)
+            if not src or not dst:
+                # Skip partially constructed synapses so snapshotting continues
+                # instead of failing with ``TypeError: 'NoneType' object is not iterable``.
+                continue
+            try:
+                src_list = list(src)
+                dst_list = list(dst)
+            except TypeError:
+                continue
             data["synapses"].append(
                 {
-                    "source": list(src),
-                    "target": list(dst),
+                    "source": src_list,
+                    "target": dst_list,
                     "direction": syn.direction,
                     "age": syn.age,
                     "type_name": syn.type_name,
