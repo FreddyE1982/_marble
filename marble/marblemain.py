@@ -31,6 +31,7 @@ import importlib
 import itertools
 import gc
 import datetime
+from array import array
 from . import plugin_cost_profiler as _pcp
 from .learnable_param import LearnableParam
 from .learnables_yaml import log_learnable_values, register_learnable
@@ -1980,11 +1981,19 @@ class Brain:
             "max_iters": getattr(self, "max_iters", None),
             "escape_radius": getattr(self, "escape_radius", None),
             "sparse_bounds": _listify_bounds(getattr(self, "sparse_bounds", None)),
-            "neurons": [],
-            "synapses": [],
         }
         neuron_positions: List[Tuple[Any, ...]] = []
         neuron_index: Dict[Tuple[Any, ...], int] = {}
+        position_dtype = "int" if self.mode == "grid" else "float"
+        positions_array = array("i" if position_dtype == "int" else "f")
+        weights_array = array("f")
+        biases_array = array("f")
+        ages_array = array("i")
+        type_ids_array = array("i")
+        tensor_refs_array = array("i")
+        tensor_values: List[List[float]] = []
+        tensor_index: Dict[Tuple[float, ...], int] = {}
+
         for idx, (pos, neuron) in enumerate(self.neurons.items()):  # type: ignore[union-attr]
             pos_tuple: Tuple[Any, ...]
             try:
@@ -1993,16 +2002,32 @@ class Brain:
                 pos_tuple = tuple(list(pos))  # type: ignore[list-item]
             neuron_positions.append(pos_tuple)
             neuron_index[pos_tuple] = idx
-            data["neurons"].append(
-                {
-                    "position": list(pos),
-                    "weight": neuron.weight,
-                    "bias": neuron.bias,
-                    "age": neuron.age,
-                    "type_name": _intern_string(getattr(neuron, "type_name", None)),
-                    "tensor": tensor_to_list(neuron.tensor),
-                }
-            )
+            for coord in pos_tuple:
+                if position_dtype == "int":
+                    positions_array.append(int(coord))
+                else:
+                    positions_array.append(float(coord))
+            weights_array.append(float(getattr(neuron, "weight", 1.0)))
+            biases_array.append(float(getattr(neuron, "bias", 0.0)))
+            ages_array.append(int(getattr(neuron, "age", 0)))
+            type_idx = _intern_string(getattr(neuron, "type_name", None))
+            type_ids_array.append(type_idx if type_idx is not None else -1)
+            tensor_list = tensor_to_list(neuron.tensor)
+            tensor_key = tuple(float(x) for x in tensor_list)
+            tensor_idx = tensor_index.get(tensor_key)
+            if tensor_idx is None:
+                tensor_idx = len(tensor_values)
+                tensor_values.append(tensor_list)
+                tensor_index[tensor_key] = tensor_idx
+            tensor_refs_array.append(tensor_idx)
+
+        syn_source_array = array("i")
+        syn_target_array = array("i")
+        syn_weights_array = array("f")
+        syn_ages_array = array("i")
+        syn_type_ids_array = array("i")
+        syn_direction_ids_array = array("i")
+        synapse_count = 0
         for syn in self.synapses:
             src = getattr(syn.source, "position", None)
             dst = getattr(syn.target, "position", None)
@@ -2019,16 +2044,41 @@ class Brain:
             dst_idx = neuron_index.get(dst_tuple)
             if src_idx is None or dst_idx is None:
                 continue
-            data["synapses"].append(
-                {
-                    "source_idx": src_idx,
-                    "target_idx": dst_idx,
-                    "direction": _intern_string(getattr(syn, "direction", None)),
-                    "age": syn.age,
-                    "type_name": _intern_string(getattr(syn, "type_name", None)),
-                    "weight": syn.weight,
-                }
-            )
+            syn_source_array.append(int(src_idx))
+            syn_target_array.append(int(dst_idx))
+            syn_weights_array.append(float(getattr(syn, "weight", 1.0)))
+            syn_ages_array.append(int(getattr(syn, "age", 0)))
+            syn_type_idx = _intern_string(getattr(syn, "type_name", None))
+            syn_type_ids_array.append(syn_type_idx if syn_type_idx is not None else -1)
+            direction_value = getattr(syn, "direction", None)
+            if direction_value is None:
+                direction_value = "uni"
+            syn_direction_idx = _intern_string(direction_value)
+            syn_direction_ids_array.append(syn_direction_idx if syn_direction_idx is not None else -1)
+            synapse_count += 1
+
+        data["layout"] = "columnar"
+        data["neurons"] = {
+            "count": len(neuron_positions),
+            "position_dims": self.n,
+            "position_dtype": position_dtype,
+            "positions": positions_array,
+            "weights": weights_array,
+            "biases": biases_array,
+            "ages": ages_array,
+            "type_ids": type_ids_array,
+            "tensor_refs": tensor_refs_array,
+            "tensor_values": tensor_values,
+        }
+        data["synapses"] = {
+            "count": synapse_count,
+            "source_indices": syn_source_array,
+            "target_indices": syn_target_array,
+            "weights": syn_weights_array,
+            "ages": syn_ages_array,
+            "type_ids": syn_type_ids_array,
+            "direction_ids": syn_direction_ids_array,
+        }
         data["string_table"] = string_table
         codec_obj = getattr(self, "codec", None)
         if codec_obj is not None:
@@ -2114,67 +2164,201 @@ class Brain:
                 return None
             return value
 
+        def _coerce_list(value: Any) -> List[Any]:
+            if isinstance(value, list):
+                return value
+            if hasattr(value, "tolist"):
+                try:
+                    return value.tolist()  # type: ignore[call-arg]
+                except TypeError:
+                    pass
+            try:
+                return list(value)
+            except TypeError:
+                return []
+
         temp_syns: List[Synapse] = []
         prev_pos: Optional[Sequence[float]] = None
         neuron_positions: List[Tuple[Any, ...]] = []
-        for item in data.get("neurons", []):
-            pos = item.get("position", [])
-            try:
-                pos_tuple = tuple(pos)
-            except TypeError:
-                pos_tuple = tuple(list(pos))  # type: ignore[list-item]
-            neuron_positions.append(pos_tuple)
-            if prev_pos is None:
-                brain.add_neuron(
-                    pos,
-                    tensor=item.get("tensor", 0.0),
-                    weight=item.get("weight", 1.0),
-                    bias=item.get("bias", 0.0),
-                    age=item.get("age", 0),
-                    type_name=_resolve_string(item.get("type_name")),
-                )
+        layout = data.get("layout")
+        if layout == "columnar" and isinstance(data.get("neurons"), dict):
+            neurons_block = data.get("neurons", {})
+            position_dims = int(neurons_block.get("position_dims", brain.n))
+            if position_dims <= 0:
+                position_dims = brain.n
+            position_dtype = neurons_block.get(
+                "position_dtype", "int" if brain.mode == "grid" else "float"
+            )
+            positions_list = _coerce_list(neurons_block.get("positions", []))
+            weights_list = [float(v) for v in _coerce_list(neurons_block.get("weights", []))]
+            biases_list = [float(v) for v in _coerce_list(neurons_block.get("biases", []))]
+            ages_list = [int(v) for v in _coerce_list(neurons_block.get("ages", []))]
+            type_ids_list = [int(v) for v in _coerce_list(neurons_block.get("type_ids", []))]
+            tensor_refs_list = [int(v) for v in _coerce_list(neurons_block.get("tensor_refs", []))]
+            tensor_values_raw = neurons_block.get("tensor_values", [])
+            if isinstance(tensor_values_raw, list):
+                tensor_values_list = [list(tv) for tv in tensor_values_raw]
             else:
-                brain.add_neuron(
-                    pos,
-                    tensor=item.get("tensor", 0.0),
-                    weight=item.get("weight", 1.0),
-                    bias=item.get("bias", 0.0),
-                    age=item.get("age", 0),
-                    type_name=_resolve_string(item.get("type_name")),
-                    connect_to=prev_pos,
+                tensor_values_list = [list(tv) for tv in _coerce_list(tensor_values_raw)]
+            neuron_count = int(neurons_block.get("count", len(weights_list)))
+            if neuron_count <= 0 and position_dims > 0 and positions_list:
+                neuron_count = len(positions_list) // position_dims
+            prev_pos = None
+            for idx in range(neuron_count):
+                start = idx * position_dims
+                end = start + position_dims
+                if end > len(positions_list):
+                    break
+                coords_slice = positions_list[start:end]
+                if position_dtype == "float":
+                    coords = [float(v) for v in coords_slice]
+                else:
+                    coords = [int(v) for v in coords_slice]
+                pos_tuple = tuple(coords)
+                neuron_positions.append(pos_tuple)
+                weight = weights_list[idx] if idx < len(weights_list) else 1.0
+                bias = biases_list[idx] if idx < len(biases_list) else 0.0
+                age = ages_list[idx] if idx < len(ages_list) else 0
+                type_id = type_ids_list[idx] if idx < len(type_ids_list) else -1
+                type_name = (
+                    _resolve_string(type_id)
+                    if type_id is not None and type_id >= 0
+                    else None
                 )
-                temp_syns.append(brain.synapses[-1])
-            prev_pos = pos
+                tensor_idx = tensor_refs_list[idx] if idx < len(tensor_refs_list) else -1
+                if 0 <= tensor_idx < len(tensor_values_list):
+                    tensor_payload = list(tensor_values_list[tensor_idx])
+                else:
+                    tensor_payload = []
+                tensor_argument: Union[Sequence[float], float]
+                tensor_argument = tensor_payload if tensor_payload else 0.0
+                pos_for_add = list(coords)
+                if prev_pos is None:
+                    brain.add_neuron(
+                        pos_for_add,
+                        tensor=tensor_argument,
+                        weight=weight,
+                        bias=bias,
+                        age=age,
+                        type_name=type_name,
+                    )
+                else:
+                    brain.add_neuron(
+                        pos_for_add,
+                        tensor=tensor_argument,
+                        weight=weight,
+                        bias=bias,
+                        age=age,
+                        type_name=type_name,
+                        connect_to=list(prev_pos),
+                    )
+                    temp_syns.append(brain.synapses[-1])
+                prev_pos = pos_for_add
+        else:
+            for item in data.get("neurons", []):
+                pos = item.get("position", [])
+                try:
+                    pos_tuple = tuple(pos)
+                except TypeError:
+                    pos_tuple = tuple(list(pos))  # type: ignore[list-item]
+                neuron_positions.append(pos_tuple)
+                if prev_pos is None:
+                    brain.add_neuron(
+                        pos,
+                        tensor=item.get("tensor", 0.0),
+                        weight=item.get("weight", 1.0),
+                        bias=item.get("bias", 0.0),
+                        age=item.get("age", 0),
+                        type_name=_resolve_string(item.get("type_name")),
+                    )
+                else:
+                    brain.add_neuron(
+                        pos,
+                        tensor=item.get("tensor", 0.0),
+                        weight=item.get("weight", 1.0),
+                        bias=item.get("bias", 0.0),
+                        age=item.get("age", 0),
+                        type_name=_resolve_string(item.get("type_name")),
+                        connect_to=prev_pos,
+                    )
+                    temp_syns.append(brain.synapses[-1])
+                prev_pos = pos
         for syn in temp_syns:
             brain.remove_synapse(syn)
-        for syn in data.get("synapses", []):
-            if "source_idx" in syn or "target_idx" in syn:
-                if "source_idx" not in syn or "target_idx" not in syn:
-                    continue
-                try:
-                    src_idx = int(syn.get("source_idx"))
-                    dst_idx = int(syn.get("target_idx"))
-                except (TypeError, ValueError):
-                    continue
+        if layout == "columnar" and isinstance(data.get("synapses"), dict):
+            synapses_block = data.get("synapses", {})
+            source_list = [int(v) for v in _coerce_list(synapses_block.get("source_indices", []))]
+            target_list = [int(v) for v in _coerce_list(synapses_block.get("target_indices", []))]
+            weights_list = [float(v) for v in _coerce_list(synapses_block.get("weights", []))]
+            ages_list = [int(v) for v in _coerce_list(synapses_block.get("ages", []))]
+            type_ids_list = [int(v) for v in _coerce_list(synapses_block.get("type_ids", []))]
+            direction_ids_list = [int(v) for v in _coerce_list(synapses_block.get("direction_ids", []))]
+            syn_count = int(synapses_block.get("count", len(source_list)))
+            if syn_count <= 0:
+                syn_count = len(source_list)
+            for idx in range(syn_count):
+                if idx >= len(source_list) or idx >= len(target_list):
+                    break
+                src_idx = source_list[idx]
+                dst_idx = target_list[idx]
                 if src_idx < 0 or dst_idx < 0:
                     continue
                 if src_idx >= len(neuron_positions) or dst_idx >= len(neuron_positions):
                     continue
                 src_pos = list(neuron_positions[src_idx])
                 dst_pos = list(neuron_positions[dst_idx])
-            else:
-                src_pos = syn.get("source", [])
-                dst_pos = syn.get("target", [])
-            brain.connect(
-                src_pos,
-                dst_pos,
-                direction=_resolve_string(syn.get("direction"))
-                if "direction" in syn
-                else _resolve_string("uni"),
-                age=syn.get("age", 0),
-                type_name=_resolve_string(syn.get("type_name")),
-                weight=syn.get("weight", 1.0),
-            )
+                weight = weights_list[idx] if idx < len(weights_list) else 1.0
+                age = ages_list[idx] if idx < len(ages_list) else 0
+                type_id = type_ids_list[idx] if idx < len(type_ids_list) else -1
+                type_name = (
+                    _resolve_string(type_id)
+                    if type_id is not None and type_id >= 0
+                    else None
+                )
+                dir_id = direction_ids_list[idx] if idx < len(direction_ids_list) else -1
+                direction = (
+                    _resolve_string(dir_id)
+                    if dir_id is not None and dir_id >= 0
+                    else _resolve_string("uni")
+                )
+                direction_value = direction if direction is not None else _resolve_string("uni")
+                brain.connect(
+                    src_pos,
+                    dst_pos,
+                    direction=direction_value if direction_value is not None else "uni",
+                    age=age,
+                    type_name=type_name,
+                    weight=weight,
+                )
+        else:
+            for syn in data.get("synapses", []):
+                if "source_idx" in syn or "target_idx" in syn:
+                    if "source_idx" not in syn or "target_idx" not in syn:
+                        continue
+                    try:
+                        src_idx = int(syn.get("source_idx"))
+                        dst_idx = int(syn.get("target_idx"))
+                    except (TypeError, ValueError):
+                        continue
+                    if src_idx < 0 or dst_idx < 0:
+                        continue
+                    if src_idx >= len(neuron_positions) or dst_idx >= len(neuron_positions):
+                        continue
+                    src_pos = list(neuron_positions[src_idx])
+                    dst_pos = list(neuron_positions[dst_idx])
+                else:
+                    src_pos = syn.get("source", [])
+                    dst_pos = syn.get("target", [])
+                brain.connect(
+                    src_pos,
+                    dst_pos,
+                    direction=_resolve_string(syn.get("direction"))
+                    if "direction" in syn
+                    else _resolve_string("uni"),
+                    age=syn.get("age", 0),
+                    type_name=_resolve_string(syn.get("type_name")),
+                    weight=syn.get("weight", 1.0),
+                )
         codec_state = data.get("codec_state")
         if codec_state is not None:
             try:
