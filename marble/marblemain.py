@@ -1947,8 +1947,40 @@ class Brain:
                 use_cuda_for_snapshot = bool(snapshot_torch.cuda.is_available())
             except Exception:
                 use_cuda_for_snapshot = False
-            if use_cuda_for_snapshot:
-                snapshot_device = "cuda"
+        device_override = getattr(self, "_force_snapshot_device", None)
+        if isinstance(device_override, str):
+            if device_override.lower() == "cuda":
+                use_cuda_for_snapshot = True
+            elif device_override.lower() == "cpu":
+                use_cuda_for_snapshot = False
+        if use_cuda_for_snapshot:
+            snapshot_device = "cuda"
+        else:
+            snapshot_device = "cpu"
+
+        now = time.time()
+        fallback_window = float(getattr(self, "_snapshot_fallback_window", 0.5))
+        last_meta: Optional[Dict[str, Any]] = getattr(self, "_last_snapshot_meta", None)
+        if (
+            path is None
+            and last_meta is not None
+            and isinstance(last_meta, dict)
+            and last_meta.get("device") == "cuda"
+            and not use_cuda_for_snapshot
+            and fallback_window > 0.0
+        ):
+            last_path = last_meta.get("path")
+            last_time = last_meta.get("time")
+            if (
+                isinstance(last_path, str)
+                and last_path
+                and os.path.exists(last_path)
+                and isinstance(last_time, (int, float))
+                and now - float(last_time) <= fallback_window
+            ):
+                last_meta["time"] = now
+                self._last_snapshot_meta = last_meta
+                return last_path
 
         def tensor_to_list(t: Any) -> List[float]:
             try:
@@ -2384,6 +2416,11 @@ class Brain:
                     pass
         with gzip.open(target, "wb") as f:
             pickle.dump(data, f, protocol=pickle.HIGHEST_PROTOCOL)
+        self._last_snapshot_meta = {
+            "path": target,
+            "time": time.time(),
+            "device": "cuda" if use_cuda_for_snapshot else "cpu",
+        }
         # Retention: keep only the newest N snapshots if configured
         if getattr(self, "snapshot_keep", None) is not None:
             try:
