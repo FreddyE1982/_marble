@@ -1943,6 +1943,34 @@ class Brain:
                 pass
             return [float(x) for x in (t if isinstance(t, (list, tuple)) else [t])]
 
+        def _build_int_array(values: Iterable[int]) -> array:
+            values_list = [int(v) for v in values]
+            if not values_list:
+                return array("B")
+            min_value = min(values_list)
+            max_value = max(values_list)
+            if min_value < 0:
+                signed_ranges = (
+                    ("b", -128, 127),
+                    ("h", -32768, 32767),
+                    ("i", -2147483648, 2147483647),
+                    ("q", -9223372036854775808, 9223372036854775807),
+                )
+                for typecode, lower, upper in signed_ranges:
+                    if lower <= min_value and max_value <= upper:
+                        return array(typecode, values_list)
+                return array("q", values_list)
+            unsigned_ranges = (
+                ("B", 255),
+                ("H", 65535),
+                ("I", 4294967295),
+                ("Q", 18446744073709551615),
+            )
+            for typecode, upper in unsigned_ranges:
+                if max_value <= upper:
+                    return array(typecode, values_list)
+            return array("Q", values_list)
+
         size_attr = getattr(self, "size", None)
         if size_attr is None:
             size_list: List[Any] = []
@@ -1986,8 +2014,10 @@ class Brain:
         neuron_index: Dict[Tuple[Any, ...], int] = {}
         position_dtype = "int" if self.mode == "grid" else "float"
         positions_array: Optional[array]
+        int_positions: Optional[List[int]] = None
         if position_dtype == "int":
-            positions_array = array("i")
+            positions_array = None
+            int_positions = []
         else:
             positions_array = array("f")
         linear_indices_array: Optional[array] = None
@@ -2006,9 +2036,9 @@ class Brain:
             positions_array = None
         weights_array = array("f")
         biases_array = array("f")
-        ages_array = array("i")
-        type_ids_array = array("i")
-        tensor_refs_array = array("i")
+        ages_list: List[int] = []
+        type_ids_list: List[int] = []
+        tensor_refs_list: List[int] = []
         tensor_pool: List[Tuple[float, ...]] = []
         tensor_index: Dict[Tuple[float, ...], int] = {}
 
@@ -2029,14 +2059,18 @@ class Brain:
             elif positions_array is not None:
                 for coord in pos_tuple:
                     if position_dtype == "int":
-                        positions_array.append(int(coord))
+                        if int_positions is not None:
+                            int_positions.append(int(coord))
                     else:
                         positions_array.append(float(coord))
+            elif int_positions is not None:
+                for coord in pos_tuple:
+                    int_positions.append(int(coord))
             weights_array.append(float(getattr(neuron, "weight", 1.0)))
             biases_array.append(float(getattr(neuron, "bias", 0.0)))
-            ages_array.append(int(getattr(neuron, "age", 0)))
+            ages_list.append(int(getattr(neuron, "age", 0)))
             type_idx = _intern_string(getattr(neuron, "type_name", None))
-            type_ids_array.append(type_idx if type_idx is not None else -1)
+            type_ids_list.append(type_idx if type_idx is not None else -1)
             tensor_list = tensor_to_list(neuron.tensor)
             tensor_key = tuple(float(x) for x in tensor_list)
             tensor_idx = tensor_index.get(tensor_key)
@@ -2044,14 +2078,14 @@ class Brain:
                 tensor_idx = len(tensor_pool)
                 tensor_pool.append(tensor_key)
                 tensor_index[tensor_key] = tensor_idx
-            tensor_refs_array.append(tensor_idx)
+            tensor_refs_list.append(tensor_idx)
 
-        syn_source_array = array("i")
-        syn_target_array = array("i")
+        syn_source_list: List[int] = []
+        syn_target_list: List[int] = []
         syn_weights_array = array("f")
-        syn_ages_array = array("i")
-        syn_type_ids_array = array("i")
-        syn_direction_ids_array = array("i")
+        syn_ages_list: List[int] = []
+        syn_type_ids_list: List[int] = []
+        syn_direction_ids_list: List[int] = []
         synapse_count = 0
         for syn in self.synapses:
             src = getattr(syn.source, "position", None)
@@ -2069,17 +2103,17 @@ class Brain:
             dst_idx = neuron_index.get(dst_tuple)
             if src_idx is None or dst_idx is None:
                 continue
-            syn_source_array.append(int(src_idx))
-            syn_target_array.append(int(dst_idx))
+            syn_source_list.append(int(src_idx))
+            syn_target_list.append(int(dst_idx))
             syn_weights_array.append(float(getattr(syn, "weight", 1.0)))
-            syn_ages_array.append(int(getattr(syn, "age", 0)))
+            syn_ages_list.append(int(getattr(syn, "age", 0)))
             syn_type_idx = _intern_string(getattr(syn, "type_name", None))
-            syn_type_ids_array.append(syn_type_idx if syn_type_idx is not None else -1)
+            syn_type_ids_list.append(syn_type_idx if syn_type_idx is not None else -1)
             direction_value = getattr(syn, "direction", None)
             if direction_value is None:
                 direction_value = "uni"
             syn_direction_idx = _intern_string(direction_value)
-            syn_direction_ids_array.append(syn_direction_idx if syn_direction_idx is not None else -1)
+            syn_direction_ids_list.append(syn_direction_idx if syn_direction_idx is not None else -1)
             synapse_count += 1
 
         def _all_close(values: Iterable[float], target: float) -> bool:
@@ -2091,7 +2125,7 @@ class Brain:
         data["layout"] = "columnar"
         neurons_block: Dict[str, Any] = {
             "count": len(neuron_positions),
-            "tensor_refs": tensor_refs_array,
+            "tensor_refs": _build_int_array(tensor_refs_list),
         }
         if linear_indices_array is not None:
             neurons_block["position_encoding"] = "linear"
@@ -2101,31 +2135,34 @@ class Brain:
         else:
             neurons_block["position_dims"] = self.n
             neurons_block["position_dtype"] = position_dtype
-            neurons_block["positions"] = positions_array if positions_array is not None else array("i")
+            if position_dtype == "int":
+                neurons_block["positions"] = _build_int_array(int_positions or [])
+            else:
+                neurons_block["positions"] = positions_array if positions_array is not None else array("f")
         if len(weights_array) and not _all_close(weights_array, 1.0):
             neurons_block["weights"] = weights_array
         if len(biases_array) and not _all_close(biases_array, 0.0):
             neurons_block["biases"] = biases_array
-        if len(ages_array) and not _all_int(ages_array, 0):
-            neurons_block["ages"] = ages_array
-        if len(type_ids_array) and not _all_int(type_ids_array, -1):
-            neurons_block["type_ids"] = type_ids_array
+        if len(ages_list) and not _all_int(ages_list, 0):
+            neurons_block["ages"] = _build_int_array(ages_list)
+        if len(type_ids_list) and not _all_int(type_ids_list, -1):
+            neurons_block["type_ids"] = _build_int_array(type_ids_list)
         data["neurons"] = neurons_block
 
         synapses_block: Dict[str, Any] = {
             "count": synapse_count,
-            "source_indices": syn_source_array,
-            "target_indices": syn_target_array,
+            "source_indices": _build_int_array(syn_source_list),
+            "target_indices": _build_int_array(syn_target_list),
         }
         if len(syn_weights_array) and not _all_close(syn_weights_array, 1.0):
             synapses_block["weights"] = syn_weights_array
-        if len(syn_ages_array) and not _all_int(syn_ages_array, 0):
-            synapses_block["ages"] = syn_ages_array
-        if len(syn_type_ids_array) and not _all_int(syn_type_ids_array, -1):
-            synapses_block["type_ids"] = syn_type_ids_array
-        if syn_direction_ids_array:
+        if len(syn_ages_list) and not _all_int(syn_ages_list, 0):
+            synapses_block["ages"] = _build_int_array(syn_ages_list)
+        if len(syn_type_ids_list) and not _all_int(syn_type_ids_list, -1):
+            synapses_block["type_ids"] = _build_int_array(syn_type_ids_list)
+        if syn_direction_ids_list:
             all_default_direction = True
-            for dir_idx in syn_direction_ids_array:
+            for dir_idx in syn_direction_ids_list:
                 if dir_idx < 0 or dir_idx >= len(string_table):
                     all_default_direction = False
                     break
@@ -2133,7 +2170,7 @@ class Brain:
                     all_default_direction = False
                     break
             if not all_default_direction:
-                synapses_block["direction_ids"] = syn_direction_ids_array
+                synapses_block["direction_ids"] = _build_int_array(syn_direction_ids_list)
         data["synapses"] = synapses_block
         data["string_table"] = string_table
         if tensor_pool:
@@ -2225,6 +2262,11 @@ class Brain:
         def _coerce_list(value: Any) -> List[Any]:
             if isinstance(value, list):
                 return value
+            if isinstance(value, array):
+                try:
+                    return value.tolist()
+                except Exception:
+                    pass
             if hasattr(value, "tolist"):
                 try:
                     return value.tolist()  # type: ignore[call-arg]
