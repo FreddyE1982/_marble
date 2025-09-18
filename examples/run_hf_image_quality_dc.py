@@ -495,6 +495,25 @@ def main(
     prev_loss = 0.0
     prev_dt = 0.0
     print("Starting training loop...")
+    snapshot_freq_val: int | None = None
+    snapshot_dir: Path | None = None
+    baseline_snapshot_count = 0
+    cumulative_walks = 0
+    if getattr(brain, "store_snapshots", False):
+        freq_raw = getattr(brain, "snapshot_freq", None)
+        try:
+            snapshot_freq_val = int(freq_raw) if freq_raw is not None else None
+        except Exception:
+            snapshot_freq_val = None
+        snap_path = getattr(brain, "snapshot_path", None) or "."
+        snapshot_dir = Path(snap_path)
+        try:
+            snapshot_dir.mkdir(parents=True, exist_ok=True)
+        except Exception as err:
+            print(f"warning: could not create snapshot directory {snapshot_dir}: {err}")
+            snapshot_dir = None
+        if snapshot_dir is not None:
+            baseline_snapshot_count = len(list(snapshot_dir.glob("*.marble")))
     for _ in range(int(epochs)):
         hints = {name: {} for name in wplugins}
         actions = decide_with_pred(
@@ -546,6 +565,22 @@ def main(
         prev_loss = float(last_hist.get("loss", 0.0))
         step_metrics = last_hist.get("step_metrics", [])
         prev_dt = float(step_metrics[-1].get("dt", 0.0)) if step_metrics else 0.0
+        if snapshot_dir is not None and snapshot_freq_val:
+            history_list = list(res.get("history", []))
+            cumulative_walks += len(history_list)
+            expected_snapshots = cumulative_walks // snapshot_freq_val
+            current_total = len(list(snapshot_dir.glob("*.marble")))
+            produced_snapshots = max(0, current_total - baseline_snapshot_count)
+            while produced_snapshots < expected_snapshots:
+                try:
+                    path = brain.save_snapshot()
+                except Exception as err:
+                    print(f"failed to save scheduled snapshot: {err}")
+                    break
+                else:
+                    print(f"saved scheduled snapshot to {path}")
+                current_total = len(list(snapshot_dir.glob("*.marble")))
+                produced_snapshots = max(0, current_total - baseline_snapshot_count)
         clear_resources()
     if getattr(brain, "store_snapshots", False):
         try:
