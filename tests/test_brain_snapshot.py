@@ -35,6 +35,22 @@ class TestBrainSnapshot(unittest.TestCase):
         self.assertTrue(os.path.exists(snap_path))
         self.assertIn(os.path.basename(snap_path), os.listdir(tmp))
 
+    def test_snapshot_unique_filenames_when_saving_quickly(self):
+        clear_report_group("brain")
+        tmp = tempfile.mkdtemp()
+        b = Brain(
+            1,
+            size=3,
+            store_snapshots=True,
+            snapshot_path=tmp,
+            snapshot_freq=1,
+            snapshot_keep=50,
+        )
+        paths = [b.save_snapshot() for _ in range(3)]
+        basenames = [os.path.basename(p) for p in paths]
+        self.assertEqual(len(basenames), len(set(basenames)))
+        self.assertGreaterEqual(len(os.listdir(tmp)), 3)
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
