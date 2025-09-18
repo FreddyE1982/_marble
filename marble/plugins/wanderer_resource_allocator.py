@@ -30,6 +30,10 @@ class TensorRegistry:
 
     def __init__(self) -> None:
         self._entries: Dict[Tuple[int, str], weakref.ref] = {}
+        # Objects like ``_ParamHolder`` expose tensor attributes but disallow
+        # new attribute assignment.  Track their hit counters separately so we
+        # do not rely on ``setattr`` succeeding during iteration.
+        self._hits: Dict[int, Dict[str, Tuple[float, float]]] = {}
 
     def register(self, obj: Any, attr: str) -> None:
         """Register ``obj.attr`` as a tensor to be balanced.
@@ -40,7 +44,15 @@ class TensorRegistry:
         key = (id(obj), attr)
         if key in self._entries:
             return
-        self._entries[key] = weakref.ref(obj, lambda _r, k=key: self._entries.pop(k, None))
+        obj_id = id(obj)
+
+        def _cleanup(_ref, *, _key=key, _oid=obj_id) -> None:
+            self._entries.pop(_key, None)
+            # Remove cached hit counters once the owner vanishes.
+            self._hits.pop(_oid, None)
+
+        self._entries[key] = weakref.ref(obj, _cleanup)
+        self._hits.setdefault(obj_id, {})
 
     def iter_tensors(self, decay_rate: float):
         """Yield ``(obj, attr, tensor, hits)`` for valid registrations.
@@ -65,12 +77,27 @@ class TensorRegistry:
             except Exception:
                 continue
             if torch.is_tensor(t):
-                info = getattr(obj, "_tensor_hits", {})
+                try:
+                    info = getattr(obj, "_tensor_hits")
+                except Exception:
+                    info = None
+                if not isinstance(info, dict):
+                    info = self._hits.setdefault(id(obj), {})
+                    manage_locally = True
+                else:
+                    manage_locally = False
                 count, last = info.get(attr, (0.0, now))
                 dt = max(0.0, now - last)
                 count = count * math.exp(-decay_rate * dt) + 1.0
                 info[attr] = (count, now)
-                setattr(obj, "_tensor_hits", info)
+                if manage_locally:
+                    self._hits[id(obj)] = info
+                else:
+                    try:
+                        setattr(obj, "_tensor_hits", info)
+                    except Exception:
+                        # Fall back to the internal cache when ``setattr`` fails.
+                        self._hits[id(obj)] = info
                 yield obj, attr, t, count
 
 
@@ -973,6 +1000,7 @@ class ResourceAllocatorPlugin:
             except Exception:
                 pass
         TENSOR_REGISTRY._entries.clear()
+        TENSOR_REGISTRY._hits.clear()
         try:
             torch.cuda.empty_cache()
         except Exception:
