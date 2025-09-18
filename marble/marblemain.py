@@ -29,6 +29,7 @@ import hashlib
 import importlib
 import itertools
 import gc
+import datetime
 from . import plugin_cost_profiler as _pcp
 from .learnable_param import LearnableParam
 from .learnables_yaml import log_learnable_values, register_learnable
@@ -1918,8 +1919,17 @@ class Brain:
         if target is None:
             if not self.snapshot_path:
                 raise ValueError("snapshot_path is not configured")
-            ts = int(time.time())
-            target = os.path.join(self.snapshot_path, f"snapshot_{ts}.marble")
+            ts = datetime.datetime.fromtimestamp(time.time())
+            base = ts.strftime("%Y%m%d_%H%M%S_%f")
+            candidate = os.path.join(self.snapshot_path, f"snapshot_{base}.marble")
+            if os.path.exists(candidate):
+                suffix = 1
+                while os.path.exists(candidate):
+                    candidate = os.path.join(
+                        self.snapshot_path, f"snapshot_{base}_{suffix}.marble"
+                    )
+                    suffix += 1
+            target = candidate
         if not str(target).endswith(".marble"):
             target = str(target) + ".marble"
 
