@@ -1969,7 +1969,16 @@ class Brain:
             "neurons": [],
             "synapses": [],
         }
-        for pos, neuron in self.neurons.items():  # type: ignore[union-attr]
+        neuron_positions: List[Tuple[Any, ...]] = []
+        neuron_index: Dict[Tuple[Any, ...], int] = {}
+        for idx, (pos, neuron) in enumerate(self.neurons.items()):  # type: ignore[union-attr]
+            pos_tuple: Tuple[Any, ...]
+            try:
+                pos_tuple = tuple(pos)
+            except TypeError:
+                pos_tuple = tuple(list(pos))  # type: ignore[list-item]
+            neuron_positions.append(pos_tuple)
+            neuron_index[pos_tuple] = idx
             data["neurons"].append(
                 {
                     "position": list(pos),
@@ -1988,14 +1997,18 @@ class Brain:
                 # instead of failing with ``TypeError: 'NoneType' object is not iterable``.
                 continue
             try:
-                src_list = list(src)
-                dst_list = list(dst)
+                src_tuple = tuple(src)
+                dst_tuple = tuple(dst)
             except TypeError:
+                continue
+            src_idx = neuron_index.get(src_tuple)
+            dst_idx = neuron_index.get(dst_tuple)
+            if src_idx is None or dst_idx is None:
                 continue
             data["synapses"].append(
                 {
-                    "source": src_list,
-                    "target": dst_list,
+                    "source_idx": src_idx,
+                    "target_idx": dst_idx,
                     "direction": syn.direction,
                     "age": syn.age,
                     "type_name": syn.type_name,
@@ -2071,8 +2084,14 @@ class Brain:
             )
         temp_syns: List[Synapse] = []
         prev_pos: Optional[Sequence[float]] = None
+        neuron_positions: List[Tuple[Any, ...]] = []
         for item in data.get("neurons", []):
             pos = item.get("position", [])
+            try:
+                pos_tuple = tuple(pos)
+            except TypeError:
+                pos_tuple = tuple(list(pos))  # type: ignore[list-item]
+            neuron_positions.append(pos_tuple)
             if prev_pos is None:
                 brain.add_neuron(
                     pos,
@@ -2097,9 +2116,26 @@ class Brain:
         for syn in temp_syns:
             brain.remove_synapse(syn)
         for syn in data.get("synapses", []):
+            if "source_idx" in syn or "target_idx" in syn:
+                if "source_idx" not in syn or "target_idx" not in syn:
+                    continue
+                try:
+                    src_idx = int(syn.get("source_idx"))
+                    dst_idx = int(syn.get("target_idx"))
+                except (TypeError, ValueError):
+                    continue
+                if src_idx < 0 or dst_idx < 0:
+                    continue
+                if src_idx >= len(neuron_positions) or dst_idx >= len(neuron_positions):
+                    continue
+                src_pos = list(neuron_positions[src_idx])
+                dst_pos = list(neuron_positions[dst_idx])
+            else:
+                src_pos = syn.get("source", [])
+                dst_pos = syn.get("target", [])
             brain.connect(
-                syn.get("source", []),
-                syn.get("target", []),
+                src_pos,
+                dst_pos,
                 direction=syn.get("direction", "uni"),
                 age=syn.get("age", 0),
                 type_name=syn.get("type_name"),
