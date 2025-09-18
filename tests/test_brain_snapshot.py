@@ -5,6 +5,7 @@ import pickle
 import tempfile
 import time
 import unittest
+from unittest import mock
 from array import array
 
 from marble.marblemain import Brain, UniversalTensorCodec
@@ -604,6 +605,15 @@ class TestBrainSnapshot(unittest.TestCase):
         after_files = set(os.listdir(tmp))
         self.assertEqual(returned, existing_path)
         self.assertEqual(before_files, after_files)
+
+    def test_snapshot_rejects_cpu_override_when_cuda_available(self):
+        clear_report_group("brain")
+        tmp = tempfile.mkdtemp()
+        b = Brain(1, size=3, store_snapshots=True, snapshot_path=tmp, snapshot_freq=1)
+        b._force_snapshot_device = "cpu"
+        with mock.patch("torch.cuda.is_available", return_value=True):
+            with self.assertRaises(RuntimeError):
+                b.save_snapshot()
 
 
 if __name__ == "__main__":

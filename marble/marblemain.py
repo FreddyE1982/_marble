@@ -950,6 +950,8 @@ class Brain:
         self.snapshot_path = snapshot_path
         self.snapshot_freq = int(snapshot_freq) if snapshot_freq is not None else None
         self.snapshot_keep = int(snapshot_keep) if snapshot_keep is not None else None
+        # Snapshot enforcement policy: by default disallow CPU snapshots when CUDA is available.
+        self._allow_cpu_snapshot_when_cuda = False
         if self.store_snapshots:
             if not self.snapshot_path:
                 raise ValueError("snapshot_path must be provided when store_snapshots is True")
@@ -1936,27 +1938,34 @@ class Brain:
             target = str(target) + ".marble"
 
         snapshot_torch: Any
+        allow_cpu_override = bool(getattr(self, "_allow_cpu_snapshot_when_cuda", False))
         try:
             import torch as snapshot_torch  # type: ignore
         except Exception:
             snapshot_torch = None  # type: ignore
-        snapshot_device = "cpu"
-        use_cuda_for_snapshot = False
+        cuda_available = False
         if snapshot_torch is not None:
             try:
-                use_cuda_for_snapshot = bool(snapshot_torch.cuda.is_available())
-            except Exception:
-                use_cuda_for_snapshot = False
+                cuda_available = bool(snapshot_torch.cuda.is_available())
+            except Exception as exc:
+                if not allow_cpu_override:
+                    raise RuntimeError("Unable to determine CUDA availability for snapshots") from exc
+                cuda_available = False
+        use_cuda_for_snapshot = cuda_available
         device_override = getattr(self, "_force_snapshot_device", None)
         if isinstance(device_override, str):
-            if device_override.lower() == "cuda":
+            requested_device = device_override.lower()
+            if requested_device == "cuda":
+                if not cuda_available:
+                    raise RuntimeError("CUDA snapshot override requested but CUDA is unavailable")
                 use_cuda_for_snapshot = True
-            elif device_override.lower() == "cpu":
+            elif requested_device == "cpu":
+                if cuda_available and not allow_cpu_override:
+                    raise RuntimeError("CPU snapshots are disabled while CUDA is available")
                 use_cuda_for_snapshot = False
-        if use_cuda_for_snapshot:
-            snapshot_device = "cuda"
-        else:
-            snapshot_device = "cpu"
+        elif cuda_available and not use_cuda_for_snapshot and not allow_cpu_override:
+            raise RuntimeError("CUDA is available but snapshot would fall back to CPU")
+        snapshot_device = "cuda" if use_cuda_for_snapshot else "cpu"
 
         now = time.time()
         fallback_window = float(getattr(self, "_snapshot_fallback_window", 0.5))
