@@ -1935,13 +1935,65 @@ class Brain:
         if not str(target).endswith(".marble"):
             target = str(target) + ".marble"
 
+        snapshot_torch: Any
+        try:
+            import torch as snapshot_torch  # type: ignore
+        except Exception:
+            snapshot_torch = None  # type: ignore
+        snapshot_device = "cpu"
+        use_cuda_for_snapshot = False
+        if snapshot_torch is not None:
+            try:
+                use_cuda_for_snapshot = bool(snapshot_torch.cuda.is_available())
+            except Exception:
+                use_cuda_for_snapshot = False
+            if use_cuda_for_snapshot:
+                snapshot_device = "cuda"
+
         def tensor_to_list(t: Any) -> List[float]:
             try:
+                if snapshot_torch is not None and snapshot_torch.is_tensor(t):
+                    tensor = t.detach()
+                    try:
+                        tensor = tensor.to(device=snapshot_device, dtype=snapshot_torch.float32)
+                    except Exception:
+                        tensor = tensor.to(dtype=snapshot_torch.float32)
+                    tensor = tensor.reshape(-1)
+                    tensor = tensor.to("cpu")
+                    return [float(x) for x in tensor.tolist()]
                 if hasattr(t, "detach") and hasattr(t, "tolist"):
                     return [float(x) for x in t.detach().to("cpu").view(-1).tolist()]
             except Exception:
                 pass
             return [float(x) for x in (t if isinstance(t, (list, tuple)) else [t])]
+
+        def _values_to_tensor(values: Iterable[Any], *, dtype: Any) -> Optional[Any]:
+            if snapshot_torch is None:
+                return None
+            try:
+                tensor = snapshot_torch.as_tensor(values, dtype=dtype)
+                if use_cuda_for_snapshot:
+                    tensor = tensor.to(device=snapshot_device)
+                return tensor
+            except Exception:
+                return None
+
+        def _is_uniform_sequence(values: Sequence[float], *, tol: float = 1e-12) -> Tuple[bool, float]:
+            if not values:
+                return (False, 0.0)
+            first_value = float(values[0])
+            if snapshot_torch is not None and use_cuda_for_snapshot and len(values) > 1:
+                tensor = _values_to_tensor(values, dtype=snapshot_torch.float32)
+                if tensor is not None:
+                    ref = snapshot_torch.full_like(tensor, first_value)
+                    try:
+                        if bool(snapshot_torch.allclose(tensor, ref, rtol=tol, atol=tol)):
+                            return (True, first_value)
+                    except Exception:
+                        pass
+            if all(math.isclose(float(v), first_value, rel_tol=tol, abs_tol=tol) for v in values):
+                return (True, first_value)
+            return (False, first_value)
 
         def _build_int_array(values: Iterable[int]) -> array:
             values_list = [int(v) for v in values]
@@ -2078,13 +2130,9 @@ class Brain:
             tensor_idx = -1
             tensor_fill_idx = -1
             if tensor_list:
-                first_value = float(tensor_list[0])
-                is_uniform = all(
-                    math.isclose(float(v), first_value, rel_tol=1e-12, abs_tol=1e-12)
-                    for v in tensor_list
-                )
+                is_uniform, uniform_value = _is_uniform_sequence(tensor_list)
                 if is_uniform:
-                    fill_key = (float(first_value), len(tensor_list))
+                    fill_key = (float(uniform_value), len(tensor_list))
                     tensor_fill_idx = tensor_fill_index.get(fill_key, -1)
                     if tensor_fill_idx < 0:
                         tensor_fill_idx = len(tensor_pool_fills)
@@ -2137,9 +2185,26 @@ class Brain:
             synapse_count += 1
 
         def _all_close(values: Iterable[float], target: float) -> bool:
+            if snapshot_torch is not None and use_cuda_for_snapshot:
+                tensor = _values_to_tensor(values, dtype=snapshot_torch.float32)
+                if tensor is not None and getattr(tensor, "numel", lambda: 0)() > 0:
+                    ref = snapshot_torch.full_like(tensor, float(target))
+                    try:
+                        if bool(snapshot_torch.allclose(tensor, ref, rtol=1e-9, atol=1e-9)):
+                            return True
+                    except Exception:
+                        pass
             return all(math.isclose(float(v), target, rel_tol=1e-9, abs_tol=1e-9) for v in values)
 
         def _all_int(values: Iterable[int], target: int) -> bool:
+            if snapshot_torch is not None and use_cuda_for_snapshot:
+                tensor = _values_to_tensor(values, dtype=snapshot_torch.int64)
+                if tensor is not None and getattr(tensor, "numel", lambda: 0)() > 0:
+                    try:
+                        if bool(snapshot_torch.all(tensor == int(target))):
+                            return True
+                    except Exception:
+                        pass
             return all(int(v) == target for v in values)
 
         data["layout"] = "columnar"
