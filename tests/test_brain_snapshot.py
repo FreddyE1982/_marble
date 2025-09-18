@@ -1,3 +1,4 @@
+import gzip
 import os
 import pickle
 import tempfile
@@ -21,6 +22,11 @@ class TestBrainSnapshot(unittest.TestCase):
         with open(snap_path, "rb") as saved:
             header = saved.read(2)
         self.assertEqual(header, b"\x1f\x8b")
+        with gzip.open(snap_path, "rb") as payload_file:
+            payload = pickle.load(payload_file)
+        print("snapshot keys:", sorted(payload.keys()))
+        self.assertIn("codec_state", payload)
+        self.assertNotIn("codec_vocab", payload)
         print("snapshot path:", snap_path)
         loaded = Brain.load_snapshot(snap_path)
         print("loaded brain neurons:", len(loaded.neurons))
@@ -28,6 +34,43 @@ class TestBrainSnapshot(unittest.TestCase):
         self.assertTrue(hasattr(loaded, "codec"))
         decoded = loaded.codec.decode(tokens)
         self.assertEqual(decoded, "foo bar foo bar")
+
+    def test_load_snapshot_with_legacy_codec_vocab(self):
+        clear_report_group("brain")
+        tmp = tempfile.mkdtemp()
+        path = os.path.join(tmp, "legacy_codec_vocab.marble")
+        codec = UniversalTensorCodec()
+        legacy_data = {
+            "version": 1,
+            "n": 1,
+            "mode": "grid",
+            "size": [1],
+            "bounds": [[0.0, 1.0]],
+            "formula": None,
+            "max_iters": 50,
+            "escape_radius": 2.0,
+            "sparse_bounds": [],
+            "neurons": [
+                {
+                    "position": [0],
+                    "weight": 1.0,
+                    "bias": 0.0,
+                    "age": 0,
+                    "type_name": "default",
+                    "tensor": [0.0],
+                }
+            ],
+            "synapses": [],
+            "codec_vocab": codec.dump_vocab(),
+        }
+        with gzip.open(path, "wb") as f:
+            pickle.dump(legacy_data, f, protocol=pickle.HIGHEST_PROTOCOL)
+        loaded = Brain.load_snapshot(path)
+        print("loaded legacy codec via vocab", hasattr(loaded, "codec"))
+        self.assertTrue(hasattr(loaded, "codec"))
+        fresh_tokens = loaded.codec.encode("legacy payload")
+        decoded = loaded.codec.decode(fresh_tokens)
+        self.assertEqual(decoded, "legacy payload")
 
     def test_load_legacy_uncompressed_snapshot(self):
         clear_report_group("brain")

@@ -2007,11 +2007,10 @@ class Brain:
             try:
                 data["codec_state"] = codec_obj.export_state()
             except Exception:
-                pass
-            try:
-                data["codec_vocab"] = codec_obj.dump_vocab()
-            except Exception:
-                pass
+                try:
+                    data["codec_vocab"] = codec_obj.dump_vocab()
+                except Exception:
+                    pass
         with gzip.open(target, "wb") as f:
             pickle.dump(data, f, protocol=pickle.HIGHEST_PROTOCOL)
         # Retention: keep only the newest N snapshots if configured
