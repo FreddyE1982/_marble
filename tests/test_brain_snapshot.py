@@ -3,6 +3,7 @@ import math
 import os
 import pickle
 import tempfile
+import time
 import unittest
 from array import array
 
@@ -584,6 +585,25 @@ class TestBrainSnapshot(unittest.TestCase):
         basenames = [os.path.basename(p) for p in paths]
         self.assertEqual(len(basenames), len(set(basenames)))
         self.assertGreaterEqual(len(os.listdir(tmp)), 3)
+
+    def test_snapshot_cuda_fallback_does_not_duplicate(self):
+        clear_report_group("brain")
+        tmp = tempfile.mkdtemp()
+        b = Brain(1, size=3, store_snapshots=True, snapshot_path=tmp, snapshot_freq=1)
+        existing_path = os.path.join(tmp, "snapshot_cuda_seed.marble")
+        with open(existing_path, "wb") as fh:
+            fh.write(b"cuda snapshot placeholder")
+        b._last_snapshot_meta = {
+            "path": existing_path,
+            "time": time.time(),
+            "device": "cuda",
+        }
+        b._snapshot_fallback_window = 10.0
+        before_files = set(os.listdir(tmp))
+        returned = b.save_snapshot()
+        after_files = set(os.listdir(tmp))
+        self.assertEqual(returned, existing_path)
+        self.assertEqual(before_files, after_files)
 
 
 if __name__ == "__main__":
