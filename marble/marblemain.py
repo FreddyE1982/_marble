@@ -1991,7 +1991,7 @@ class Brain:
         ages_array = array("i")
         type_ids_array = array("i")
         tensor_refs_array = array("i")
-        tensor_values: List[List[float]] = []
+        tensor_pool: List[Tuple[float, ...]] = []
         tensor_index: Dict[Tuple[float, ...], int] = {}
 
         for idx, (pos, neuron) in enumerate(self.neurons.items()):  # type: ignore[union-attr]
@@ -2016,8 +2016,8 @@ class Brain:
             tensor_key = tuple(float(x) for x in tensor_list)
             tensor_idx = tensor_index.get(tensor_key)
             if tensor_idx is None:
-                tensor_idx = len(tensor_values)
-                tensor_values.append(tensor_list)
+                tensor_idx = len(tensor_pool)
+                tensor_pool.append(tensor_key)
                 tensor_index[tensor_key] = tensor_idx
             tensor_refs_array.append(tensor_idx)
 
@@ -2070,7 +2070,6 @@ class Brain:
             "position_dtype": position_dtype,
             "positions": positions_array,
             "tensor_refs": tensor_refs_array,
-            "tensor_values": tensor_values,
         }
         if len(weights_array) and not _all_close(weights_array, 1.0):
             neurons_block["weights"] = weights_array
@@ -2106,6 +2105,8 @@ class Brain:
                 synapses_block["direction_ids"] = syn_direction_ids_array
         data["synapses"] = synapses_block
         data["string_table"] = string_table
+        if tensor_pool:
+            data["tensor_pool"] = [list(entry) for entry in tensor_pool]
         codec_obj = getattr(self, "codec", None)
         if codec_obj is not None:
             try:
@@ -2203,6 +2204,16 @@ class Brain:
             except TypeError:
                 return []
 
+        tensor_pool_raw = data.get("tensor_pool")
+        tensor_pool_list: List[List[float]] = []
+        if tensor_pool_raw is not None:
+            if isinstance(tensor_pool_raw, list):
+                candidates = tensor_pool_raw
+            else:
+                candidates = _coerce_list(tensor_pool_raw)
+            for entry in candidates:
+                tensor_pool_list.append([float(v) for v in _coerce_list(entry)])
+
         temp_syns: List[Synapse] = []
         prev_pos: Optional[Sequence[float]] = None
         neuron_positions: List[Tuple[Any, ...]] = []
@@ -2255,7 +2266,9 @@ class Brain:
                     else None
                 )
                 tensor_idx = tensor_refs_list[idx] if idx < len(tensor_refs_list) else -1
-                if 0 <= tensor_idx < len(tensor_values_list):
+                if tensor_pool_list and 0 <= tensor_idx < len(tensor_pool_list):
+                    tensor_payload = list(tensor_pool_list[tensor_idx])
+                elif 0 <= tensor_idx < len(tensor_values_list):
                     tensor_payload = list(tensor_values_list[tensor_idx])
                 else:
                     tensor_payload = []

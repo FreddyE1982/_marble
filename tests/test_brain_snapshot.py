@@ -70,10 +70,10 @@ class TestBrainSnapshot(unittest.TestCase):
         self.assertEqual(neurons_block["biases"].tolist(), [-0.25, 0.75])
         self.assertEqual(neurons_block["ages"].tolist(), [5, 3])
         tensor_refs = neurons_block["tensor_refs"].tolist()
-        tensor_values = neurons_block["tensor_values"]
-        self.assertIsInstance(tensor_values, list)
-        self.assertTrue(tensor_values)
-        self.assertTrue(all(0 <= ref < len(tensor_values) for ref in tensor_refs))
+        tensor_pool = payload.get("tensor_pool")
+        self.assertIsInstance(tensor_pool, list)
+        self.assertTrue(tensor_pool)
+        self.assertTrue(all(0 <= ref < len(tensor_pool) for ref in tensor_refs))
         syn_block = payload["synapses"]
         self.assertIsInstance(syn_block, dict)
         self.assertIn("source_indices", syn_block)
@@ -129,6 +129,7 @@ class TestBrainSnapshot(unittest.TestCase):
         snap_path = b.save_snapshot()
         with gzip.open(snap_path, "rb") as payload_file:
             payload = pickle.load(payload_file)
+        self.assertIn("tensor_pool", payload)
         neurons_block = payload["neurons"]
         self.assertNotIn("weights", neurons_block)
         self.assertNotIn("biases", neurons_block)
@@ -157,6 +158,76 @@ class TestBrainSnapshot(unittest.TestCase):
         self.assertEqual(syn.age, 0)
         self.assertEqual(syn.type_name, None)
         self.assertEqual(syn.direction, "uni")
+
+    def test_snapshot_tensor_pool_deduplicates_neuron_tensors(self):
+        clear_report_group("brain")
+        tmp = tempfile.mkdtemp()
+        b = Brain(1, size=3, store_snapshots=True, snapshot_path=tmp, snapshot_freq=1)
+        shared_tensor = [0.5, 0.25]
+        b.add_neuron((0,), tensor=shared_tensor)
+        b.add_neuron((1,), tensor=shared_tensor, connect_to=(0,), direction="uni")
+        b.add_neuron((2,), tensor=[1.25], connect_to=(1,), direction="uni")
+        snap_path = b.save_snapshot()
+        with gzip.open(snap_path, "rb") as payload_file:
+            payload = pickle.load(payload_file)
+        tensor_pool = payload.get("tensor_pool")
+        self.assertIsInstance(tensor_pool, list)
+        self.assertEqual(len(tensor_pool), 2)
+        tensor_refs = payload["neurons"]["tensor_refs"].tolist()
+        self.assertEqual(tensor_refs[0], tensor_refs[1])
+        self.assertNotEqual(tensor_refs[0], tensor_refs[2])
+        reloaded = Brain.load_snapshot(snap_path)
+        self.assertEqual(len(reloaded.neurons), 3)
+        tensors = []
+        for neuron in reloaded.neurons.values():
+            value = neuron.tensor
+            if hasattr(value, "detach") and hasattr(value, "tolist"):
+                tensors.append(value.detach().to("cpu").tolist())
+            else:
+                tensors.append(list(value))
+        self.assertIn([0.5, 0.25], tensors)
+        self.assertIn([1.25], tensors)
+
+    def test_load_legacy_snapshot_without_tensor_pool(self):
+        clear_report_group("brain")
+        tmp = tempfile.mkdtemp()
+        path = os.path.join(tmp, "legacy_pool_snapshot.marble")
+        legacy_payload = {
+            "version": 1,
+            "n": 1,
+            "mode": "grid",
+            "size": [3],
+            "bounds": [[0.0, 1.0]],
+            "formula": None,
+            "max_iters": 50,
+            "escape_radius": 2.0,
+            "sparse_bounds": [],
+            "layout": "columnar",
+            "neurons": {
+                "count": 2,
+                "position_dims": 1,
+                "position_dtype": "int",
+                "positions": array("i", [0, 1]),
+                "tensor_refs": array("i", [0, 0]),
+                "tensor_values": [[0.125], [0.125]],
+            },
+            "synapses": {
+                "count": 0,
+                "source_indices": array("i"),
+                "target_indices": array("i"),
+            },
+        }
+        with gzip.open(path, "wb") as f:
+            pickle.dump(legacy_payload, f, protocol=pickle.HIGHEST_PROTOCOL)
+        loaded = Brain.load_snapshot(path)
+        self.assertEqual(len(loaded.neurons), 2)
+        for neuron in loaded.neurons.values():
+            value = neuron.tensor
+            if hasattr(value, "detach") and hasattr(value, "tolist"):
+                payload_vals = value.detach().to("cpu").tolist()
+            else:
+                payload_vals = list(value)
+            self.assertEqual(payload_vals, [0.125])
 
     def test_load_snapshot_with_index_synapses(self):
         clear_report_group("brain")
