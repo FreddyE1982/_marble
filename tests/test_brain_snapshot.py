@@ -1,4 +1,5 @@
 import gzip
+import math
 import os
 import pickle
 import tempfile
@@ -66,18 +67,39 @@ class TestBrainSnapshot(unittest.TestCase):
         self.assertIsInstance(neurons_block["ages"], array)
         self.assertIsInstance(neurons_block["type_ids"], array)
         self.assertIsInstance(neurons_block["tensor_refs"], array)
-        self.assertEqual(neurons_block["tensor_refs"].typecode, "B")
-        self.assertEqual(neurons_block["count"], 2)
+        self.assertIn(
+            neurons_block["tensor_refs"].typecode,
+            ("b", "B", "h", "H", "i", "I", "q", "Q"),
+        )
+        tensor_fill_refs = neurons_block.get("tensor_fill_refs")
+        self.assertIsNotNone(tensor_fill_refs)
+        self.assertIsInstance(tensor_fill_refs, array)
+        self.assertIn(
+            tensor_fill_refs.typecode,
+            ("b", "B", "h", "H", "i", "I", "q", "Q"),
+        )
+        self.assertEqual(neurons_block.get("count"), 2)
         self.assertEqual(neurons_block["weights"].tolist(), [2.0, 1.5])
         self.assertEqual(neurons_block["biases"].tolist(), [-0.25, 0.75])
         self.assertEqual(neurons_block["ages"].tolist(), [5, 3])
         tensor_refs = neurons_block["tensor_refs"].tolist()
+        fill_refs = tensor_fill_refs.tolist()
         linear_indices = neurons_block["linear_indices"].tolist()
         self.assertEqual(sorted(linear_indices), [0, 1])
-        tensor_pool = payload.get("tensor_pool")
-        self.assertIsInstance(tensor_pool, list)
-        self.assertTrue(tensor_pool)
-        self.assertTrue(all(0 <= ref < len(tensor_pool) for ref in tensor_refs))
+        tensor_pool = payload.get("tensor_pool") or []
+        if tensor_pool:
+            self.assertIsInstance(tensor_pool, list)
+        tensor_pool_fills = payload.get("tensor_pool_fills")
+        self.assertIsInstance(tensor_pool_fills, list)
+        fills_as_pairs = [
+            (entry["value"], entry["length"])
+            for entry in tensor_pool_fills
+            if isinstance(entry, dict)
+        ]
+        self.assertIn((0.0, 1), fills_as_pairs)
+        self.assertIn((1.0, 1), fills_as_pairs)
+        self.assertTrue(all(ref == -1 for ref in tensor_refs))
+        self.assertTrue(all(ref >= 0 for ref in fill_refs))
         syn_block = payload["synapses"]
         self.assertIsInstance(syn_block, dict)
         self.assertIn("source_indices", syn_block)
@@ -136,12 +158,16 @@ class TestBrainSnapshot(unittest.TestCase):
         snap_path = b.save_snapshot()
         with gzip.open(snap_path, "rb") as payload_file:
             payload = pickle.load(payload_file)
-        self.assertIn("tensor_pool", payload)
+        self.assertNotIn("tensor_pool", payload)
+        self.assertIn("tensor_pool_fills", payload)
         neurons_block = payload["neurons"]
         self.assertEqual(neurons_block.get("position_encoding"), "linear")
         self.assertIn("linear_indices", neurons_block)
         self.assertNotIn("positions", neurons_block)
         self.assertEqual(sorted(neurons_block["linear_indices"].tolist()), [0, 1])
+        self.assertIn("tensor_fill_refs", neurons_block)
+        fill_refs = neurons_block["tensor_fill_refs"].tolist()
+        self.assertTrue(all(ref >= 0 for ref in fill_refs))
         self.assertNotIn("weights", neurons_block)
         self.assertNotIn("biases", neurons_block)
         self.assertNotIn("ages", neurons_block)
@@ -183,10 +209,16 @@ class TestBrainSnapshot(unittest.TestCase):
             payload = pickle.load(payload_file)
         tensor_pool = payload.get("tensor_pool")
         self.assertIsInstance(tensor_pool, list)
-        self.assertEqual(len(tensor_pool), 2)
+        self.assertEqual(len(tensor_pool), 1)
         tensor_refs = payload["neurons"]["tensor_refs"].tolist()
+        fill_refs = payload["neurons"].get("tensor_fill_refs")
+        self.assertIsNotNone(fill_refs)
+        fill_refs_list = fill_refs.tolist()
         self.assertEqual(tensor_refs[0], tensor_refs[1])
-        self.assertNotEqual(tensor_refs[0], tensor_refs[2])
+        self.assertEqual(fill_refs_list[0], -1)
+        self.assertEqual(fill_refs_list[1], -1)
+        self.assertEqual(tensor_refs[2], -1)
+        self.assertGreaterEqual(fill_refs_list[2], 0)
         reloaded = Brain.load_snapshot(snap_path)
         self.assertEqual(len(reloaded.neurons), 3)
         tensors = []
@@ -198,6 +230,58 @@ class TestBrainSnapshot(unittest.TestCase):
                 tensors.append(list(value))
         self.assertIn([0.5, 0.25], tensors)
         self.assertIn([1.25], tensors)
+
+    def test_snapshot_records_fill_metadata_for_uniform_tensors(self):
+        clear_report_group("brain")
+        tmp = tempfile.mkdtemp()
+        b = Brain(1, size=4, store_snapshots=True, snapshot_path=tmp, snapshot_freq=1)
+        huge_constant = [3.75] * 4096
+        normal_tensor = [0.1, 0.2, 0.3]
+        b.add_neuron((0,), tensor=huge_constant)
+        b.add_neuron((1,), tensor=normal_tensor, connect_to=(0,), direction="uni")
+        snap_path = b.save_snapshot()
+        with gzip.open(snap_path, "rb") as payload_file:
+            payload = pickle.load(payload_file)
+        tensor_pool = payload.get("tensor_pool")
+        tensor_pool_fills = payload.get("tensor_pool_fills")
+        self.assertIsInstance(tensor_pool, list)
+        self.assertIsInstance(tensor_pool_fills, list)
+        self.assertEqual(len(tensor_pool), 1)
+        self.assertTrue(
+            any(
+                len(entry) == len(normal_tensor)
+                and all(math.isclose(a, b, rel_tol=1e-6, abs_tol=1e-6) for a, b in zip(entry, normal_tensor))
+                for entry in tensor_pool
+            )
+        )
+        fills_as_dicts = [entry for entry in tensor_pool_fills if isinstance(entry, dict)]
+        self.assertTrue(any(entry.get("length") == 4096 for entry in fills_as_dicts))
+        fill_entry = next(entry for entry in fills_as_dicts if entry.get("length") == 4096)
+        self.assertAlmostEqual(fill_entry.get("value"), 3.75)
+        neurons_block = payload["neurons"]
+        tensor_refs = neurons_block["tensor_refs"].tolist()
+        fill_refs = neurons_block["tensor_fill_refs"].tolist()
+        self.assertEqual(tensor_refs[0], -1)
+        self.assertEqual(fill_refs[0], 0)
+        self.assertEqual(fill_refs[1], -1)
+        self.assertEqual(tensor_refs[1], 0)
+        reloaded = Brain.load_snapshot(snap_path)
+        self.assertEqual(len(reloaded.neurons), 2)
+        tensors = []
+        for neuron in reloaded.neurons.values():
+            value = neuron.tensor
+            if hasattr(value, "detach") and hasattr(value, "tolist"):
+                tensors.append(value.detach().to("cpu").tolist())
+            else:
+                tensors.append(list(value))
+        self.assertTrue(any(tensor == huge_constant for tensor in tensors))
+        self.assertTrue(
+            any(
+                len(tensor) == len(normal_tensor)
+                and all(math.isclose(a, b, rel_tol=1e-6, abs_tol=1e-6) for a, b in zip(tensor, normal_tensor))
+                for tensor in tensors
+            )
+        )
 
     def test_snapshot_uses_signed_byte_arrays_when_needed(self):
         clear_report_group("brain")
@@ -224,7 +308,15 @@ class TestBrainSnapshot(unittest.TestCase):
         self.assertIn("type_ids", neurons_block)
         self.assertEqual(neurons_block["type_ids"].typecode, "b")
         self.assertIn("tensor_refs", neurons_block)
-        self.assertEqual(neurons_block["tensor_refs"].typecode, "B")
+        self.assertIn(
+            neurons_block["tensor_refs"].typecode,
+            ("b", "B", "h", "H", "i", "I", "q", "Q"),
+        )
+        self.assertIn("tensor_fill_refs", neurons_block)
+        self.assertIn(
+            neurons_block["tensor_fill_refs"].typecode,
+            ("b", "B", "h", "H", "i", "I", "q", "Q"),
+        )
         self.assertIn("source_indices", syn_block)
         self.assertEqual(syn_block["source_indices"].typecode, "B")
         self.assertIn("target_indices", syn_block)
@@ -263,7 +355,9 @@ class TestBrainSnapshot(unittest.TestCase):
             syn_block["source_indices"].typecode,
             syn_block["target_indices"].typecode,
         )
-        self.assertEqual(neurons_block["tensor_refs"].typecode, "H")
+        self.assertEqual(neurons_block["tensor_refs"].typecode, "b")
+        self.assertIn("tensor_fill_refs", neurons_block)
+        self.assertEqual(neurons_block["tensor_fill_refs"].typecode, "H")
         self.assertEqual(syn_block["source_indices"].typecode, "H")
         self.assertEqual(syn_block["target_indices"].typecode, "H")
         reloaded = Brain.load_snapshot(snap_path)
