@@ -3,6 +3,7 @@ import os
 import pickle
 import tempfile
 import unittest
+from array import array
 
 from marble.marblemain import Brain, UniversalTensorCodec
 from marble.reporter import clear_report_group
@@ -25,27 +26,66 @@ class TestBrainSnapshot(unittest.TestCase):
         with gzip.open(snap_path, "rb") as payload_file:
             payload = pickle.load(payload_file)
         print("snapshot keys:", sorted(payload.keys()))
+        print("snapshot layout:", payload.get("layout"))
         self.assertIn("codec_state", payload)
         self.assertNotIn("codec_vocab", payload)
         self.assertIn("string_table", payload)
         table = payload["string_table"]
         self.assertIsInstance(table, list)
         self.assertTrue(all(isinstance(entry, str) for entry in table))
-        self.assertTrue(payload["synapses"])
-        for syn in payload["synapses"]:
-            self.assertIn("source_idx", syn)
-            self.assertIn("target_idx", syn)
-            self.assertNotIn("source", syn)
-            self.assertNotIn("target", syn)
-            self.assertIsInstance(syn["direction"], int)
-            self.assertEqual(table[syn["direction"]], "uni")
-            if syn.get("type_name") is not None:
-                self.assertIsInstance(syn["type_name"], int)
-        idx_pairs = {(syn["source_idx"], syn["target_idx"]) for syn in payload["synapses"]}
+        self.assertEqual(payload.get("layout"), "columnar")
+        neurons_block = payload["neurons"]
+        self.assertIsInstance(neurons_block, dict)
+        self.assertIn("positions", neurons_block)
+        self.assertIsInstance(neurons_block["positions"], array)
+        self.assertEqual(neurons_block["positions"].typecode, "i")
+        self.assertEqual(neurons_block["position_dims"], 1)
+        self.assertEqual(neurons_block["position_dtype"], "int")
+        self.assertIsInstance(neurons_block["weights"], array)
+        self.assertEqual(neurons_block["weights"].typecode, "f")
+        self.assertIsInstance(neurons_block["biases"], array)
+        self.assertEqual(neurons_block["biases"].typecode, "f")
+        self.assertIsInstance(neurons_block["ages"], array)
+        self.assertEqual(neurons_block["ages"].typecode, "i")
+        self.assertIsInstance(neurons_block["type_ids"], array)
+        self.assertEqual(neurons_block["type_ids"].typecode, "i")
+        self.assertIsInstance(neurons_block["tensor_refs"], array)
+        self.assertEqual(neurons_block["tensor_refs"].typecode, "i")
+        self.assertEqual(neurons_block["count"], len(neurons_block["weights"]))
+        tensor_refs = neurons_block["tensor_refs"].tolist()
+        tensor_values = neurons_block["tensor_values"]
+        self.assertIsInstance(tensor_values, list)
+        self.assertTrue(tensor_values)
+        self.assertTrue(all(0 <= ref < len(tensor_values) for ref in tensor_refs))
+        syn_block = payload["synapses"]
+        self.assertIsInstance(syn_block, dict)
+        self.assertIn("source_indices", syn_block)
+        self.assertIsInstance(syn_block["source_indices"], array)
+        self.assertEqual(syn_block["source_indices"].typecode, "i")
+        self.assertIsInstance(syn_block["target_indices"], array)
+        self.assertEqual(syn_block["target_indices"].typecode, "i")
+        self.assertIsInstance(syn_block["weights"], array)
+        self.assertEqual(syn_block["weights"].typecode, "f")
+        self.assertIsInstance(syn_block["ages"], array)
+        self.assertEqual(syn_block["ages"].typecode, "i")
+        self.assertIsInstance(syn_block["type_ids"], array)
+        self.assertEqual(syn_block["type_ids"].typecode, "i")
+        self.assertIsInstance(syn_block["direction_ids"], array)
+        self.assertEqual(syn_block["direction_ids"].typecode, "i")
+        self.assertEqual(syn_block["count"], len(syn_block["source_indices"]))
+        idx_pairs = set(
+            zip(
+                syn_block["source_indices"].tolist(),
+                syn_block["target_indices"].tolist(),
+            )
+        )
         self.assertIn((1, 0), idx_pairs)
-        neuron_type_indexes = [entry.get("type_name") for entry in payload["neurons"]]
-        self.assertTrue(all((idx is None or isinstance(idx, int)) for idx in neuron_type_indexes))
-        resolved_types = [table[idx] if idx is not None else None for idx in neuron_type_indexes]
+        for dir_idx in syn_block["direction_ids"].tolist():
+            self.assertGreaterEqual(dir_idx, 0)
+            self.assertEqual(table[dir_idx], "uni")
+        neuron_type_indexes = neurons_block["type_ids"].tolist()
+        self.assertTrue(all(isinstance(idx, int) for idx in neuron_type_indexes))
+        resolved_types = [table[idx] if idx >= 0 else None for idx in neuron_type_indexes]
         self.assertIn("alpha", resolved_types)
         self.assertIn("beta", resolved_types)
         print("snapshot path:", snap_path)
@@ -112,6 +152,15 @@ class TestBrainSnapshot(unittest.TestCase):
         dst_pos = getattr(syn.target, "position")
         self.assertEqual(tuple(src_pos), (0,))
         self.assertEqual(tuple(dst_pos), (1,))
+        roundtrip_path = os.path.join(tmp, "roundtrip_snapshot.marble")
+        saved_roundtrip = loaded.save_snapshot(roundtrip_path)
+        with gzip.open(saved_roundtrip, "rb") as saved_payload:
+            new_payload = pickle.load(saved_payload)
+        print("roundtrip snapshot layout:", new_payload.get("layout"))
+        self.assertEqual(new_payload.get("layout"), "columnar")
+        reloaded = Brain.load_snapshot(saved_roundtrip)
+        self.assertEqual(len(reloaded.neurons), len(loaded.neurons))
+        self.assertEqual(len(reloaded.synapses), len(loaded.synapses))
 
     def test_load_snapshot_with_legacy_codec_vocab(self):
         clear_report_group("brain")
