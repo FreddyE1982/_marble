@@ -2057,28 +2057,54 @@ class Brain:
             syn_direction_ids_array.append(syn_direction_idx if syn_direction_idx is not None else -1)
             synapse_count += 1
 
+        def _all_close(values: Iterable[float], target: float) -> bool:
+            return all(math.isclose(float(v), target, rel_tol=1e-9, abs_tol=1e-9) for v in values)
+
+        def _all_int(values: Iterable[int], target: int) -> bool:
+            return all(int(v) == target for v in values)
+
         data["layout"] = "columnar"
-        data["neurons"] = {
+        neurons_block: Dict[str, Any] = {
             "count": len(neuron_positions),
             "position_dims": self.n,
             "position_dtype": position_dtype,
             "positions": positions_array,
-            "weights": weights_array,
-            "biases": biases_array,
-            "ages": ages_array,
-            "type_ids": type_ids_array,
             "tensor_refs": tensor_refs_array,
             "tensor_values": tensor_values,
         }
-        data["synapses"] = {
+        if len(weights_array) and not _all_close(weights_array, 1.0):
+            neurons_block["weights"] = weights_array
+        if len(biases_array) and not _all_close(biases_array, 0.0):
+            neurons_block["biases"] = biases_array
+        if len(ages_array) and not _all_int(ages_array, 0):
+            neurons_block["ages"] = ages_array
+        if len(type_ids_array) and not _all_int(type_ids_array, -1):
+            neurons_block["type_ids"] = type_ids_array
+        data["neurons"] = neurons_block
+
+        synapses_block: Dict[str, Any] = {
             "count": synapse_count,
             "source_indices": syn_source_array,
             "target_indices": syn_target_array,
-            "weights": syn_weights_array,
-            "ages": syn_ages_array,
-            "type_ids": syn_type_ids_array,
-            "direction_ids": syn_direction_ids_array,
         }
+        if len(syn_weights_array) and not _all_close(syn_weights_array, 1.0):
+            synapses_block["weights"] = syn_weights_array
+        if len(syn_ages_array) and not _all_int(syn_ages_array, 0):
+            synapses_block["ages"] = syn_ages_array
+        if len(syn_type_ids_array) and not _all_int(syn_type_ids_array, -1):
+            synapses_block["type_ids"] = syn_type_ids_array
+        if syn_direction_ids_array:
+            all_default_direction = True
+            for dir_idx in syn_direction_ids_array:
+                if dir_idx < 0 or dir_idx >= len(string_table):
+                    all_default_direction = False
+                    break
+                if string_table[dir_idx] != "uni":
+                    all_default_direction = False
+                    break
+            if not all_default_direction:
+                synapses_block["direction_ids"] = syn_direction_ids_array
+        data["synapses"] = synapses_block
         data["string_table"] = string_table
         codec_obj = getattr(self, "codec", None)
         if codec_obj is not None:
@@ -2203,6 +2229,9 @@ class Brain:
             neuron_count = int(neurons_block.get("count", len(weights_list)))
             if neuron_count <= 0 and position_dims > 0 and positions_list:
                 neuron_count = len(positions_list) // position_dims
+            default_neuron_weight = 1.0
+            default_neuron_bias = 0.0
+            default_neuron_age = 0
             prev_pos = None
             for idx in range(neuron_count):
                 start = idx * position_dims
@@ -2216,9 +2245,9 @@ class Brain:
                     coords = [int(v) for v in coords_slice]
                 pos_tuple = tuple(coords)
                 neuron_positions.append(pos_tuple)
-                weight = weights_list[idx] if idx < len(weights_list) else 1.0
-                bias = biases_list[idx] if idx < len(biases_list) else 0.0
-                age = ages_list[idx] if idx < len(ages_list) else 0
+                weight = weights_list[idx] if idx < len(weights_list) else default_neuron_weight
+                bias = biases_list[idx] if idx < len(biases_list) else default_neuron_bias
+                age = ages_list[idx] if idx < len(ages_list) else default_neuron_age
                 type_id = type_ids_list[idx] if idx < len(type_ids_list) else -1
                 type_name = (
                     _resolve_string(type_id)
@@ -2262,22 +2291,25 @@ class Brain:
                 except TypeError:
                     pos_tuple = tuple(list(pos))  # type: ignore[list-item]
                 neuron_positions.append(pos_tuple)
+                default_weight = 1.0
+                default_bias = 0.0
+                default_age = 0
                 if prev_pos is None:
                     brain.add_neuron(
                         pos,
                         tensor=item.get("tensor", 0.0),
-                        weight=item.get("weight", 1.0),
-                        bias=item.get("bias", 0.0),
-                        age=item.get("age", 0),
+                        weight=item.get("weight", default_weight),
+                        bias=item.get("bias", default_bias),
+                        age=item.get("age", default_age),
                         type_name=_resolve_string(item.get("type_name")),
                     )
                 else:
                     brain.add_neuron(
                         pos,
                         tensor=item.get("tensor", 0.0),
-                        weight=item.get("weight", 1.0),
-                        bias=item.get("bias", 0.0),
-                        age=item.get("age", 0),
+                        weight=item.get("weight", default_weight),
+                        bias=item.get("bias", default_bias),
+                        age=item.get("age", default_age),
                         type_name=_resolve_string(item.get("type_name")),
                         connect_to=prev_pos,
                     )
@@ -2296,6 +2328,9 @@ class Brain:
             syn_count = int(synapses_block.get("count", len(source_list)))
             if syn_count <= 0:
                 syn_count = len(source_list)
+            default_synapse_weight = 1.0
+            default_synapse_age = 0
+            default_direction_value = _resolve_string("uni") or "uni"
             for idx in range(syn_count):
                 if idx >= len(source_list) or idx >= len(target_list):
                     break
@@ -2307,8 +2342,8 @@ class Brain:
                     continue
                 src_pos = list(neuron_positions[src_idx])
                 dst_pos = list(neuron_positions[dst_idx])
-                weight = weights_list[idx] if idx < len(weights_list) else 1.0
-                age = ages_list[idx] if idx < len(ages_list) else 0
+                weight = weights_list[idx] if idx < len(weights_list) else default_synapse_weight
+                age = ages_list[idx] if idx < len(ages_list) else default_synapse_age
                 type_id = type_ids_list[idx] if idx < len(type_ids_list) else -1
                 type_name = (
                     _resolve_string(type_id)
@@ -2319,9 +2354,9 @@ class Brain:
                 direction = (
                     _resolve_string(dir_id)
                     if dir_id is not None and dir_id >= 0
-                    else _resolve_string("uni")
+                    else default_direction_value
                 )
-                direction_value = direction if direction is not None else _resolve_string("uni")
+                direction_value = direction if direction is not None else default_direction_value
                 brain.connect(
                     src_pos,
                     dst_pos,
