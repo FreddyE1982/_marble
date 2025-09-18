@@ -280,6 +280,9 @@ def main(
     batch_size: int = 10,
     launch_kuzu: bool | None = None,
     min_new_neurons: int = 1,
+    snapshot_path: str | None = None,
+    snapshot_freq: int | None = None,
+    snapshot_keep: int | None = None,
 ) -> None:
     enabled_learnables = enable_quality_learnables()
     if enabled_learnables:
@@ -322,16 +325,35 @@ def main(
     )
     kuzu_db = os.environ.get("MARBLE_KUZU_DB", "brain_topology.db")
     
+    script_dir = Path(__file__).resolve().parent
+
+    snap_raw = snapshot_path or os.environ.get("MARBLE_SNAPSHOT_PATH") or "."
+    snap_path = Path(snap_raw)
+    if not snap_path.is_absolute():
+        if snapshot_path is not None or os.environ.get("MARBLE_SNAPSHOT_PATH") is not None:
+            snap_path = (script_dir / snap_path).resolve()
+        else:
+            snap_path = (Path.cwd() / snap_path).resolve()
+    try:
+        freq_val = snapshot_freq if snapshot_freq is not None else int(os.environ.get("MARBLE_SNAPSHOT_FREQ", "100"))
+    except Exception:
+        freq_val = 100
+    try:
+        keep_val = snapshot_keep if snapshot_keep is not None else os.environ.get("MARBLE_SNAPSHOT_KEEP")
+        keep_val = int(keep_val) if keep_val is not None else 10
+    except Exception:
+        keep_val = 10
+
     print("Initializing brain...")
-    
+
     brain = Brain(
         dims,
         size=None,
         formula=formula,
         store_snapshots=True,
-        snapshot_path=".",
-        snapshot_freq=100,
-        snapshot_keep=10,
+        snapshot_path=str(snap_path),
+        snapshot_freq=freq_val,
+        snapshot_keep=keep_val,
         kuzu_path=kuzu_db,
     )
     
@@ -566,8 +588,11 @@ def main(
         step_metrics = last_hist.get("step_metrics", [])
         prev_dt = float(step_metrics[-1].get("dt", 0.0)) if step_metrics else 0.0
         if snapshot_dir is not None and snapshot_freq_val:
-            history_list = list(res.get("history", []))
-            cumulative_walks += len(history_list)
+            walks_this_epoch = int(cnt)
+            cumulative_walks += walks_this_epoch
+            print(
+                f"walks this epoch: {walks_this_epoch} (cumulative={cumulative_walks}, freq={snapshot_freq_val})"
+            )
             expected_snapshots = cumulative_walks // snapshot_freq_val
             current_total = len(list(snapshot_dir.glob("*.marble")))
             produced_snapshots = max(0, current_total - baseline_snapshot_count)
