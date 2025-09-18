@@ -1956,6 +1956,20 @@ class Brain:
             except TypeError:
                 return []
 
+        string_table: List[str] = []
+        string_index: Dict[str, int] = {}
+
+        def _intern_string(value: Optional[str]) -> Optional[int]:
+            if value is None:
+                return None
+            key = str(value)
+            existing = string_index.get(key)
+            if existing is not None:
+                return existing
+            string_index[key] = len(string_table)
+            string_table.append(key)
+            return string_index[key]
+
         data: Dict[str, Any] = {
             "version": 1,
             "n": self.n,
@@ -1985,7 +1999,7 @@ class Brain:
                     "weight": neuron.weight,
                     "bias": neuron.bias,
                     "age": neuron.age,
-                    "type_name": neuron.type_name,
+                    "type_name": _intern_string(getattr(neuron, "type_name", None)),
                     "tensor": tensor_to_list(neuron.tensor),
                 }
             )
@@ -2009,12 +2023,13 @@ class Brain:
                 {
                     "source_idx": src_idx,
                     "target_idx": dst_idx,
-                    "direction": syn.direction,
+                    "direction": _intern_string(getattr(syn, "direction", None)),
                     "age": syn.age,
-                    "type_name": syn.type_name,
+                    "type_name": _intern_string(getattr(syn, "type_name", None)),
                     "weight": syn.weight,
                 }
             )
+        data["string_table"] = string_table
         codec_obj = getattr(self, "codec", None)
         if codec_obj is not None:
             try:
@@ -2082,6 +2097,23 @@ class Brain:
                 escape_radius=float(data.get("escape_radius", 2.0)),
                 store_snapshots=False,
             )
+        table_raw = data.get("string_table")
+        if isinstance(table_raw, list):
+            string_table = [str(entry) for entry in table_raw]
+        else:
+            string_table = None
+
+        def _resolve_string(value: Any) -> Optional[str]:
+            if value is None:
+                return None
+            if isinstance(value, bool):
+                return str(value)
+            if isinstance(value, int):
+                if string_table is not None and 0 <= value < len(string_table):
+                    return string_table[value]
+                return None
+            return value
+
         temp_syns: List[Synapse] = []
         prev_pos: Optional[Sequence[float]] = None
         neuron_positions: List[Tuple[Any, ...]] = []
@@ -2099,7 +2131,7 @@ class Brain:
                     weight=item.get("weight", 1.0),
                     bias=item.get("bias", 0.0),
                     age=item.get("age", 0),
-                    type_name=item.get("type_name"),
+                    type_name=_resolve_string(item.get("type_name")),
                 )
             else:
                 brain.add_neuron(
@@ -2108,7 +2140,7 @@ class Brain:
                     weight=item.get("weight", 1.0),
                     bias=item.get("bias", 0.0),
                     age=item.get("age", 0),
-                    type_name=item.get("type_name"),
+                    type_name=_resolve_string(item.get("type_name")),
                     connect_to=prev_pos,
                 )
                 temp_syns.append(brain.synapses[-1])
@@ -2136,9 +2168,11 @@ class Brain:
             brain.connect(
                 src_pos,
                 dst_pos,
-                direction=syn.get("direction", "uni"),
+                direction=_resolve_string(syn.get("direction"))
+                if "direction" in syn
+                else _resolve_string("uni"),
                 age=syn.get("age", 0),
-                type_name=syn.get("type_name"),
+                type_name=_resolve_string(syn.get("type_name")),
                 weight=syn.get("weight", 1.0),
             )
         codec_state = data.get("codec_state")
