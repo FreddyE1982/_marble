@@ -18,7 +18,6 @@ from __future__ import annotations
 # Only file allowed to import
 import json
 import pickle
-import gzip
 import math
 import random
 import threading
@@ -31,12 +30,12 @@ import importlib
 import itertools
 import gc
 import datetime
-import subprocess
-import shutil
+import weakref
 from array import array
 from . import plugin_cost_profiler as _pcp
 from .learnable_param import LearnableParam
 from .learnables_yaml import log_learnable_values, register_learnable
+from .snapshot_stream import SnapshotStreamWriter, SnapshotStreamError, read_latest_state
 try:
     import msvcrt  # type: ignore
 except Exception:
@@ -84,66 +83,6 @@ _DEFAULT_SNAPSHOT_COMPRESS_LEVEL = _coerce_snapshot_compress_level(
     default=2,
 )
 
-
-_PIGZ_REPO_URL = "https://github.com/madler/pigz.git"
-_PIGZ_PATH: Optional[str] = None
-
-
-def _which_pigz() -> Optional[str]:
-    from shutil import which
-
-    path = which("pigz")
-    if path:
-        return path
-    home_bin = os.path.join(os.path.expanduser("~"), ".local", "bin", "pigz")
-    if os.path.exists(home_bin):
-        return home_bin
-    return None
-
-
-def _install_pigz() -> Optional[str]:
-    tmp_root = tempfile.mkdtemp(prefix="pigz_build_")
-    repo_dir = os.path.join(tmp_root, "pigz")
-    try:
-        clone_cmd = [
-            "git",
-            "clone",
-            "--depth",
-            "1",
-            _PIGZ_REPO_URL,
-            repo_dir,
-        ]
-        subprocess.run(clone_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
-        subprocess.run(["make"], cwd=repo_dir, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
-        bin_dir = os.path.join(os.path.expanduser("~"), ".local", "bin")
-        os.makedirs(bin_dir, exist_ok=True)
-        for binary in ("pigz", "unpigz"):
-            src = os.path.join(repo_dir, binary)
-            if os.path.exists(src):
-                dst = os.path.join(bin_dir, binary)
-                shutil.copy2(src, dst)
-                try:
-                    os.chmod(dst, 0o755)
-                except Exception:
-                    pass
-        return _which_pigz()
-    except Exception:
-        return None
-    finally:
-        shutil.rmtree(tmp_root, ignore_errors=True)
-
-
-def _ensure_pigz_path() -> str:
-    global _PIGZ_PATH
-    if _PIGZ_PATH and os.path.exists(_PIGZ_PATH):
-        return _PIGZ_PATH
-    path = _which_pigz()
-    if not path:
-        path = _install_pigz()
-    if not path or not os.path.exists(path):
-        raise RuntimeError("pigz compressor is required for snapshots but could not be installed")
-    _PIGZ_PATH = path
-    return _PIGZ_PATH
 
 from .codec import UniversalTensorCodec, TensorLike
 
@@ -1050,6 +989,9 @@ class Brain:
         # Snapshot enforcement policy: by default disallow CPU snapshots when CUDA is available.
         self._allow_cpu_snapshot_when_cuda = False
         self._snapshot_compress_level = _DEFAULT_SNAPSHOT_COMPRESS_LEVEL
+        self._snapshot_stream_writer: Optional[SnapshotStreamWriter] = None
+        self._current_snapshot_path: Optional[str] = None
+        self._snapshot_stream_finalizer = weakref.finalize(self, Brain._finalize_snapshot_stream, self)
         if self.store_snapshots:
             if not self.snapshot_path:
                 raise ValueError("snapshot_path must be provided when store_snapshots is True")
@@ -1331,6 +1273,7 @@ class Brain:
                     )
                 self.connect(idx, connect_to, direction=direction)
             self._notify_tensorboard_graph()
+            self._stream_snapshot_if_configured("add_neuron")
             return neuron
         else:
             coords = tuple(float(v) for v in index)
@@ -1357,6 +1300,7 @@ class Brain:
                     )
                 self.connect(coords, connect_to, direction=direction)
             self._notify_tensorboard_graph()
+            self._stream_snapshot_if_configured("add_neuron")
             return neuron
 
     def get_neuron(self, index: Sequence[int]) -> Optional[Neuron]:
@@ -1394,6 +1338,7 @@ class Brain:
             except Exception:
                 pass
         self._notify_tensorboard_graph()
+        self._stream_snapshot_if_configured("connect")
         return syn
 
     def define_lobe(
@@ -1485,11 +1430,12 @@ class Brain:
         else:
             self.sparse_bounds = self.sparse_bounds + ((0.0, None),)
             new_map: Dict[Tuple[float, ...], Neuron] = {}
-            for pos, n in list(self.neurons.items()):
-                new_pos = tuple(list(pos) + [0.0])
-                setattr(n, "position", new_pos)
-                new_map[new_pos] = n
-            self.neurons = new_map
+        for pos, n in list(self.neurons.items()):
+            new_pos = tuple(list(pos) + [0.0])
+            setattr(n, "position", new_pos)
+            new_map[new_pos] = n
+        self.neurons = new_map
+        self._stream_snapshot_if_configured("add_dimension")
 
     def remove_last_dimension(self) -> None:
         if self.n <= 1:
@@ -1511,6 +1457,7 @@ class Brain:
             new_map[new_pos] = n
         self.neurons = new_map
         self.n -= 1
+        self._stream_snapshot_if_configured("remove_dimension")
 
     # Remove a synapse and clean references
     def remove_synapse(self, synapse: "Synapse") -> None:
@@ -1551,6 +1498,7 @@ class Brain:
         except Exception:
             pass
         self._notify_tensorboard_graph()
+        self._stream_snapshot_if_configured("remove_synapse")
 
     # Remove a neuron and bridge its synapses to avoid gaps
     def remove_neuron(self, neuron: "Neuron") -> None:
@@ -1599,6 +1547,7 @@ class Brain:
         except Exception:
             pass
         self._notify_tensorboard_graph()
+        self._stream_snapshot_if_configured("remove_neuron")
 
     def status(self) -> Dict[str, Any]:
         """Return a snapshot of training/runtime stats."""
@@ -2011,29 +1960,47 @@ class Brain:
         return brain
 
     # --- Snapshot persistence ---
-    def save_snapshot(self, path: Optional[str] = None) -> str:
+    def _finalize_snapshot_stream(self) -> None:
+        writer = getattr(self, "_snapshot_stream_writer", None)
+        if writer is not None:
+            try:
+                writer.close()
+            except Exception:
+                pass
+            self._snapshot_stream_writer = None
+
+    def _stream_snapshot_if_configured(self, reason: str) -> None:
+        if not getattr(self, "store_snapshots", False):
+            return
+        try:
+            self.save_snapshot(reason=reason)
+        except Exception:
+            pass
+
+    def save_snapshot(self, path: Optional[str] = None, *, reason: str = "manual") -> str:
         """Persist full brain state to a single `.marble` file.
 
         If *path* is None, uses configured ``snapshot_path`` and auto-generates a
         filename ``snapshot_<timestamp>.marble``. Returns the path written.
         """
-        target = path
+        target = path if path is not None else self._current_snapshot_path
         if target is None:
             if not self.snapshot_path:
                 raise ValueError("snapshot_path is not configured")
             ts = datetime.datetime.fromtimestamp(time.time())
             base = ts.strftime("%Y%m%d_%H%M%S_%f")
-            candidate = os.path.join(self.snapshot_path, f"snapshot_{base}.marble")
-            if os.path.exists(candidate):
-                suffix = 1
-                while os.path.exists(candidate):
-                    candidate = os.path.join(
-                        self.snapshot_path, f"snapshot_{base}_{suffix}.marble"
-                    )
-                    suffix += 1
+            candidate = os.path.join(self.snapshot_path, f"stream_{base}.marble")
+            suffix = 1
+            while os.path.exists(candidate):
+                candidate = os.path.join(
+                    self.snapshot_path, f"stream_{base}_{suffix}.marble"
+                )
+                suffix += 1
             target = candidate
         if not str(target).endswith(".marble"):
             target = str(target) + ".marble"
+        target = str(target)
+        self._current_snapshot_path = target
 
         snapshot_torch: Any
         allow_cpu_override = bool(getattr(self, "_allow_cpu_snapshot_when_cuda", False))
@@ -2517,35 +2484,30 @@ class Brain:
         compress_level = _coerce_snapshot_compress_level(raw_compress_level, _DEFAULT_SNAPSHOT_COMPRESS_LEVEL)
         self._snapshot_compress_level = compress_level
 
-        pigz_path = _ensure_pigz_path()
-        tmp_target = f"{target}.tmp"
         try:
-            payload = pickle.dumps(data, protocol=pickle.HIGHEST_PROTOCOL)
-            with open(tmp_target, "wb") as outfile:
-                subprocess.run(
-                    [pigz_path, f"-{compress_level}", "-c"],
-                    input=payload,
-                    stdout=outfile,
-                    stderr=subprocess.PIPE,
-                    check=True,
-                )
-            os.replace(tmp_target, target)
+            writer = self._snapshot_stream_writer
+            if writer is None or getattr(writer, "path", None) != target:
+                if writer is not None:
+                    try:
+                        writer.close()
+                    except Exception:
+                        pass
+                writer = SnapshotStreamWriter(target, compress_level=compress_level)
+                self._snapshot_stream_writer = writer
+            writer.append_state(data, reason=reason)
         except Exception as exc:
-            try:
-                if os.path.exists(tmp_target):
-                    os.remove(tmp_target)
-            except Exception:
-                pass
-            raise RuntimeError(f"pigz compression failed: {exc}") from exc
+            raise RuntimeError(f"snapshot streaming failed: {exc}") from exc
         self._last_snapshot_meta = {
             "path": target,
             "time": time.time(),
             "device": "cuda" if use_cuda_for_snapshot else "cpu",
             "compress_level": compress_level,
-            "compressor": "pigz",
+            "compressor": "zlib-stream",
+            "mode": "append",
+            "reason": reason,
         }
-        # Retention: keep only the newest N snapshots if configured
-        if getattr(self, "snapshot_keep", None) is not None:
+        # Retention: keep only the newest N snapshot streams if configured
+        if getattr(self, "snapshot_keep", None) is not None and self.snapshot_path:
             files = [
                 os.path.join(self.snapshot_path, p)
                 for p in os.listdir(self.snapshot_path)
@@ -2553,26 +2515,24 @@ class Brain:
             ]
             files.sort(key=os.path.getmtime, reverse=True)
             for old in files[int(self.snapshot_keep) :]:
-                os.remove(old)
-        report("brain", "snapshot_saved", {"path": target}, "io")
+                if os.path.abspath(old) == os.path.abspath(target):
+                    continue
+                try:
+                    os.remove(old)
+                except Exception:
+                    pass
+        report("brain", "snapshot_saved", {"path": target, "reason": reason}, "io")
         return target
 
     @classmethod
     def load_snapshot(cls, path: str) -> "Brain":
         """Load a brain snapshot previously saved with ``save_snapshot``."""
         try:
-            with open(path, "rb") as probe:
-                magic = probe.read(2)
-        except FileNotFoundError:
-            raise
-        if magic == b"\x1f\x8b":
-            with gzip.open(path, "rb") as f:
-                data = pickle.load(f)
-        else:
-            with open(path, "rb") as f:
-                data = pickle.load(f)
-        if not isinstance(data, dict):
-            raise ValueError("Invalid brain snapshot")
+            data = read_latest_state(path)
+        except SnapshotStreamError as exc:
+            raise ValueError(f"Invalid brain snapshot stream: {exc}") from exc
+        if data is None or not isinstance(data, dict):
+            raise ValueError("Snapshot stream does not contain a valid state")
         mode = data.get("mode", "grid")
         if mode == "sparse":
             brain = cls(
