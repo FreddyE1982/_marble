@@ -2546,6 +2546,53 @@ class Brain:
                 "data": blob,
             }
 
+        def _pack_sparse_numeric(
+            values: Sequence[Any],
+            *,
+            default: Union[int, float],
+            kind: str,
+        ) -> Optional[Dict[str, Any]]:
+            total = len(values) if hasattr(values, "__len__") else sum(1 for _ in values)
+            if total <= 0:
+                return None
+            indices: List[int] = []
+            if kind == "float":
+                encoded_values: List[float] = []
+                default_value = float(default)
+                for idx, entry in enumerate(values):
+                    current = float(entry)
+                    if not math.isclose(
+                        current,
+                        default_value,
+                        rel_tol=1e-9,
+                        abs_tol=1e-9,
+                    ):
+                        indices.append(idx)
+                        encoded_values.append(current)
+            else:
+                encoded_values_int: List[int] = []
+                default_value_int = int(default)
+                for idx, entry in enumerate(values):
+                    current = int(entry)
+                    if current != default_value_int:
+                        indices.append(idx)
+                        encoded_values_int.append(current)
+            if not indices:
+                return None
+            # Store sparsely only if it actually reduces the payload size.
+            if len(indices) * 2 >= total:
+                return None
+            packed: Dict[str, Any] = {
+                "enc": "sparse",
+                "count": total,
+                "indices": _build_int_array(indices),
+            }
+            if kind == "float":
+                packed["values"] = array("f", encoded_values)
+            else:
+                packed["values"] = _build_int_array(encoded_values_int)
+            return packed
+
         def _pack_ragged_float_vectors(vectors: Sequence[Iterable[float]]) -> Optional[Dict[str, Any]]:
             if not vectors:
                 return None
@@ -2573,11 +2620,29 @@ class Brain:
             "count": len(neuron_positions),
         }
         if not _all_int(tensor_refs_list, -1):
-            neurons_block["tensor_refs"] = _build_int_array(tensor_refs_list)
+            sparse_refs = _pack_sparse_numeric(
+                tensor_refs_list,
+                default=-1,
+                kind="int",
+            )
+            if sparse_refs is not None:
+                neurons_block["tensor_refs"] = sparse_refs
+            else:
+                neurons_block["tensor_refs"] = _build_int_array(tensor_refs_list)
         if tensor_assignment_requests:
             neurons_block["tensor_ref_mode"] = "segmented"
         if any(idx >= 0 for idx in tensor_fill_refs_list):
-            neurons_block["tensor_fill_refs"] = _build_int_array(tensor_fill_refs_list)
+            sparse_fill_refs = _pack_sparse_numeric(
+                tensor_fill_refs_list,
+                default=-1,
+                kind="int",
+            )
+            if sparse_fill_refs is not None:
+                neurons_block["tensor_fill_refs"] = sparse_fill_refs
+            else:
+                neurons_block["tensor_fill_refs"] = _build_int_array(
+                    tensor_fill_refs_list
+                )
         if linear_indices_array is not None:
             neurons_block["position_encoding"] = "linear"
             neurons_block["linear_indices"] = linear_indices_array
@@ -2591,13 +2656,43 @@ class Brain:
             else:
                 neurons_block["positions"] = positions_array if positions_array is not None else array("f")
         if len(weights_array) and not _all_close(weights_array, 1.0):
-            neurons_block["weights"] = weights_array
+            sparse_weights = _pack_sparse_numeric(
+                weights_array,
+                default=1.0,
+                kind="float",
+            )
+            neurons_block["weights"] = (
+                sparse_weights if sparse_weights is not None else weights_array
+            )
         if len(biases_array) and not _all_close(biases_array, 0.0):
-            neurons_block["biases"] = biases_array
+            sparse_biases = _pack_sparse_numeric(
+                biases_array,
+                default=0.0,
+                kind="float",
+            )
+            neurons_block["biases"] = (
+                sparse_biases if sparse_biases is not None else biases_array
+            )
         if len(ages_list) and not _all_int(ages_list, 0):
-            neurons_block["ages"] = _build_int_array(ages_list)
+            sparse_ages = _pack_sparse_numeric(
+                ages_list,
+                default=0,
+                kind="int",
+            )
+            neurons_block["ages"] = (
+                sparse_ages if sparse_ages is not None else _build_int_array(ages_list)
+            )
         if len(type_ids_list) and not _all_int(type_ids_list, -1):
-            neurons_block["type_ids"] = _build_int_array(type_ids_list)
+            sparse_types = _pack_sparse_numeric(
+                type_ids_list,
+                default=-1,
+                kind="int",
+            )
+            neurons_block["type_ids"] = (
+                sparse_types
+                if sparse_types is not None
+                else _build_int_array(type_ids_list)
+            )
         tensor_values_block = _pack_ragged_float_vectors(tensor_values)
         if tensor_values_block is not None:
             neurons_block["tensor_values"] = tensor_values_block
@@ -2618,11 +2713,38 @@ class Brain:
             "target_indices": _build_int_array(syn_target_list),
         }
         if len(syn_weights_array) and not _all_close(syn_weights_array, 1.0):
-            synapses_block["weights"] = syn_weights_array
+            sparse_syn_weights = _pack_sparse_numeric(
+                syn_weights_array,
+                default=1.0,
+                kind="float",
+            )
+            synapses_block["weights"] = (
+                sparse_syn_weights
+                if sparse_syn_weights is not None
+                else syn_weights_array
+            )
         if len(syn_ages_list) and not _all_int(syn_ages_list, 0):
-            synapses_block["ages"] = _build_int_array(syn_ages_list)
+            sparse_syn_ages = _pack_sparse_numeric(
+                syn_ages_list,
+                default=0,
+                kind="int",
+            )
+            synapses_block["ages"] = (
+                sparse_syn_ages
+                if sparse_syn_ages is not None
+                else _build_int_array(syn_ages_list)
+            )
         if len(syn_type_ids_list) and not _all_int(syn_type_ids_list, -1):
-            synapses_block["type_ids"] = _build_int_array(syn_type_ids_list)
+            sparse_syn_types = _pack_sparse_numeric(
+                syn_type_ids_list,
+                default=-1,
+                kind="int",
+            )
+            synapses_block["type_ids"] = (
+                sparse_syn_types
+                if sparse_syn_types is not None
+                else _build_int_array(syn_type_ids_list)
+            )
         if syn_direction_ids_list:
             store_direction_ids = False
             for dir_idx in syn_direction_ids_list:
@@ -2635,7 +2757,16 @@ class Brain:
                     store_direction_ids = True
                     break
             if store_direction_ids:
-                synapses_block["direction_ids"] = _build_int_array(syn_direction_ids_list)
+                sparse_directions = _pack_sparse_numeric(
+                    syn_direction_ids_list,
+                    default=-1,
+                    kind="int",
+                )
+                synapses_block["direction_ids"] = (
+                    sparse_directions
+                    if sparse_directions is not None
+                    else _build_int_array(syn_direction_ids_list)
+                )
         if synapses_block.get("count", 0) == len(syn_source_list):
             synapses_block.pop("count", None)
         data["synapses"] = synapses_block
@@ -2887,6 +3018,77 @@ class Brain:
             except TypeError:
                 return []
 
+        def _sequence_length(raw: Any) -> int:
+            if isinstance(raw, dict):
+                encoding = raw.get("enc") or raw.get("encoding") or raw.get("mode")
+                if isinstance(encoding, str) and encoding.lower().startswith("sparse"):
+                    try:
+                        return max(0, int(raw.get("count", 0)))
+                    except Exception:
+                        return 0
+                return 0
+            return len(_coerce_list(raw))
+
+        def _decode_numeric_sequence(
+            raw: Any,
+            *,
+            count: int,
+            default: Union[int, float],
+            expect_float: bool,
+        ) -> List[Union[int, float]]:
+            if isinstance(raw, dict):
+                encoding = raw.get("enc") or raw.get("encoding") or raw.get("mode")
+                if isinstance(encoding, str) and encoding.lower().startswith("sparse"):
+                    try:
+                        count_value = int(raw.get("count", count))
+                    except Exception:
+                        count_value = count
+                    if count_value <= 0:
+                        count_value = count
+                    indices = [int(v) for v in _coerce_list(raw.get("indices", []))]
+                    values_source = _coerce_list(raw.get("values", []))
+                    if indices:
+                        max_index = max(indices) + 1
+                    else:
+                        max_index = 0
+                    target_len = max(count_value, count, max_index)
+                    if expect_float:
+                        default_value = float(default)
+                        decoded: List[Union[int, float]] = [default_value] * target_len
+                        for pos, idx in enumerate(indices):
+                            if 0 <= idx < len(decoded):
+                                value = (
+                                    values_source[pos]
+                                    if pos < len(values_source)
+                                    else default_value
+                                )
+                                decoded[idx] = float(value)
+                    else:
+                        default_value_int = int(default)
+                        decoded = [default_value_int] * target_len
+                        for pos, idx in enumerate(indices):
+                            if 0 <= idx < len(decoded):
+                                value = (
+                                    values_source[pos]
+                                    if pos < len(values_source)
+                                    else default_value_int
+                                )
+                                decoded[idx] = int(value)
+                    if count > len(decoded):
+                        fill_value = decoded[0] if decoded else default
+                        decoded.extend([fill_value] * (count - len(decoded)))
+                    return decoded
+            seq = _coerce_list(raw)
+            if expect_float:
+                values: List[Union[int, float]] = [float(v) for v in seq]
+                default_value = float(default)
+            else:
+                values = [int(v) for v in seq]
+                default_value = int(default)
+            if count > len(values):
+                values.extend([default_value] * (count - len(values)))
+            return values
+
         def _decode_ragged_float_vectors(raw: Any) -> List[List[float]]:
             if raw is None:
                 return []
@@ -2990,14 +3192,12 @@ class Brain:
                     int(v) for v in _coerce_list(neurons_block.get("linear_indices", []))
                 ]
             positions_list = [] if position_encoding == "linear" else _coerce_list(neurons_block.get("positions", []))
-            weights_list = [float(v) for v in _coerce_list(neurons_block.get("weights", []))]
-            biases_list = [float(v) for v in _coerce_list(neurons_block.get("biases", []))]
-            ages_list = [int(v) for v in _coerce_list(neurons_block.get("ages", []))]
-            type_ids_list = [int(v) for v in _coerce_list(neurons_block.get("type_ids", []))]
-            tensor_refs_list = [int(v) for v in _coerce_list(neurons_block.get("tensor_refs", []))]
-            tensor_fill_refs_list = [
-                int(v) for v in _coerce_list(neurons_block.get("tensor_fill_refs", []))
-            ]
+            weights_raw = neurons_block.get("weights")
+            biases_raw = neurons_block.get("biases")
+            ages_raw = neurons_block.get("ages")
+            type_ids_raw = neurons_block.get("type_ids")
+            tensor_refs_raw = neurons_block.get("tensor_refs")
+            tensor_fill_refs_raw = neurons_block.get("tensor_fill_refs")
             tensor_values_raw = neurons_block.get("tensor_values")
             tensor_values_list = _decode_ragged_float_vectors(tensor_values_raw)
             tensor_ref_mode = neurons_block.get("tensor_ref_mode")
@@ -3006,11 +3206,75 @@ class Brain:
             if "count" in neurons_block:
                 neuron_count = int(neurons_block.get("count", 0))
             else:
-                neuron_count = len(weights_list)
+                neuron_count = _sequence_length(weights_raw)
+            if neuron_count <= 0:
+                neuron_count = _sequence_length(biases_raw)
+            if neuron_count <= 0:
+                neuron_count = _sequence_length(ages_raw)
+            if neuron_count <= 0:
+                neuron_count = _sequence_length(type_ids_raw)
+            if neuron_count <= 0:
+                neuron_count = _sequence_length(tensor_refs_raw)
+            if neuron_count <= 0:
+                neuron_count = _sequence_length(tensor_fill_refs_raw)
             if neuron_count <= 0 and position_encoding == "linear":
                 neuron_count = len(linear_indices_list)
             if neuron_count <= 0 and position_dims > 0 and positions_list:
                 neuron_count = len(positions_list) // position_dims
+            weights_list = [
+                float(v)
+                for v in _decode_numeric_sequence(
+                    weights_raw,
+                    count=neuron_count,
+                    default=1.0,
+                    expect_float=True,
+                )
+            ]
+            biases_list = [
+                float(v)
+                for v in _decode_numeric_sequence(
+                    biases_raw,
+                    count=neuron_count,
+                    default=0.0,
+                    expect_float=True,
+                )
+            ]
+            ages_list = [
+                int(v)
+                for v in _decode_numeric_sequence(
+                    ages_raw,
+                    count=neuron_count,
+                    default=0,
+                    expect_float=False,
+                )
+            ]
+            type_ids_list = [
+                int(v)
+                for v in _decode_numeric_sequence(
+                    type_ids_raw,
+                    count=neuron_count,
+                    default=-1,
+                    expect_float=False,
+                )
+            ]
+            tensor_refs_list = [
+                int(v)
+                for v in _decode_numeric_sequence(
+                    tensor_refs_raw,
+                    count=neuron_count,
+                    default=-1,
+                    expect_float=False,
+                )
+            ]
+            tensor_fill_refs_list = [
+                int(v)
+                for v in _decode_numeric_sequence(
+                    tensor_fill_refs_raw,
+                    count=neuron_count,
+                    default=-1,
+                    expect_float=False,
+                )
+            ]
             default_neuron_weight = 1.0
             default_neuron_bias = 0.0
             default_neuron_age = 0
@@ -3138,13 +3402,49 @@ class Brain:
             synapses_block = data.get("synapses", {})
             source_list = [int(v) for v in _coerce_list(synapses_block.get("source_indices", []))]
             target_list = [int(v) for v in _coerce_list(synapses_block.get("target_indices", []))]
-            weights_list = [float(v) for v in _coerce_list(synapses_block.get("weights", []))]
-            ages_list = [int(v) for v in _coerce_list(synapses_block.get("ages", []))]
-            type_ids_list = [int(v) for v in _coerce_list(synapses_block.get("type_ids", []))]
-            direction_ids_list = [int(v) for v in _coerce_list(synapses_block.get("direction_ids", []))]
+            weights_raw = synapses_block.get("weights")
+            ages_raw = synapses_block.get("ages")
+            type_ids_raw = synapses_block.get("type_ids")
+            direction_ids_raw = synapses_block.get("direction_ids")
             syn_count = int(synapses_block.get("count", len(source_list)))
             if syn_count <= 0:
                 syn_count = len(source_list)
+            syn_weights_list = [
+                float(v)
+                for v in _decode_numeric_sequence(
+                    weights_raw,
+                    count=syn_count,
+                    default=1.0,
+                    expect_float=True,
+                )
+            ]
+            syn_ages_list = [
+                int(v)
+                for v in _decode_numeric_sequence(
+                    ages_raw,
+                    count=syn_count,
+                    default=0,
+                    expect_float=False,
+                )
+            ]
+            syn_type_ids_list = [
+                int(v)
+                for v in _decode_numeric_sequence(
+                    type_ids_raw,
+                    count=syn_count,
+                    default=-1,
+                    expect_float=False,
+                )
+            ]
+            direction_ids_list = [
+                int(v)
+                for v in _decode_numeric_sequence(
+                    direction_ids_raw,
+                    count=syn_count,
+                    default=-1,
+                    expect_float=False,
+                )
+            ]
             default_synapse_weight = 1.0
             default_synapse_age = 0
             default_direction_value = _resolve_string("uni") or "uni"
@@ -3159,9 +3459,9 @@ class Brain:
                     continue
                 src_pos = list(neuron_positions[src_idx])
                 dst_pos = list(neuron_positions[dst_idx])
-                weight = weights_list[idx] if idx < len(weights_list) else default_synapse_weight
-                age = ages_list[idx] if idx < len(ages_list) else default_synapse_age
-                type_id = type_ids_list[idx] if idx < len(type_ids_list) else -1
+                weight = syn_weights_list[idx] if idx < len(syn_weights_list) else default_synapse_weight
+                age = syn_ages_list[idx] if idx < len(syn_ages_list) else default_synapse_age
+                type_id = syn_type_ids_list[idx] if idx < len(syn_type_ids_list) else -1
                 type_name = (
                     _resolve_string(type_id)
                     if type_id is not None and type_id >= 0
