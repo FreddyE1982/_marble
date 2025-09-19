@@ -2206,6 +2206,83 @@ class Brain:
             data.pop("escape_radius", None)
         if self.mode != "sparse" or not sparse_bounds_list:
             data.pop("sparse_bounds", None)
+
+        def _pack_numeric_matrix(matrix: Sequence[Iterable[Any]]) -> Optional[Any]:
+            if not matrix:
+                return None
+            normalized: List[Tuple[Any, ...]] = []
+            for entry in matrix:
+                if isinstance(entry, Iterable) and not isinstance(entry, (str, bytes, bytearray)):
+                    normalized.append(tuple(entry))
+                else:
+                    normalized.append((entry,))
+            if not normalized:
+                return tuple()
+
+            def _is_int_like(value: Any) -> bool:
+                return isinstance(value, int) and not isinstance(value, bool)
+
+            all_ints = True
+            for entry in normalized:
+                for value in entry:
+                    if isinstance(value, bool) or _is_int_like(value):
+                        continue
+                    all_ints = False
+                    break
+                if not all_ints:
+                    break
+            if all_ints:
+                lengths_array = _build_int_array(len(entry) for entry in normalized)
+                flat_values = _build_int_array(
+                    int(value) if not isinstance(value, bool) else int(bool(value))
+                    for entry in normalized
+                    for value in entry
+                )
+                return {
+                    "lengths": lengths_array,
+                    "values": flat_values,
+                }
+
+            float_candidates = True
+            for entry in normalized:
+                for value in entry:
+                    if isinstance(value, float):
+                        continue
+                    if isinstance(value, bool):
+                        continue
+                    if _is_int_like(value):
+                        if abs(int(value)) >= (1 << 53):
+                            float_candidates = False
+                            break
+                        continue
+                    float_candidates = False
+                    break
+                if not float_candidates:
+                    break
+            if float_candidates:
+                lengths_array = _build_int_array(len(entry) for entry in normalized)
+                flat = array("d")
+                for entry in normalized:
+                    if entry:
+                        flat.extend(float(value) for value in entry)
+                return {
+                    "lengths": lengths_array,
+                    "values": flat,
+                }
+
+            return tuple(normalized)
+
+        if "size" in data:
+            size_encoded = _build_int_array(size_list)
+            data["size"] = size_encoded
+        if "bounds" in data:
+            bounds_encoded = _pack_numeric_matrix(bounds_list)
+            if bounds_encoded is not None:
+                data["bounds"] = bounds_encoded
+        if "sparse_bounds" in data:
+            sparse_bounds_encoded = _pack_numeric_matrix(sparse_bounds_list)
+            if sparse_bounds_encoded is not None:
+                data["sparse_bounds"] = sparse_bounds_encoded
         neuron_positions: List[Tuple[Any, ...]] = []
         neuron_index: Dict[Tuple[Any, ...], int] = {}
         position_dtype = "int" if self.mode == "grid" else "float"
@@ -2448,7 +2525,26 @@ class Brain:
                         return True
             return all(int(v) == target for v in values)
 
-        data["layout"] = "columnar"
+        def _pack_string_table(strings: Sequence[str]) -> Optional[Any]:
+            if not strings:
+                return None
+            normalized = tuple(str(entry) for entry in strings)
+            total_chars = sum(len(entry) for entry in normalized)
+            if len(normalized) < 4 and total_chars < 32:
+                return normalized
+            try:
+                encoded_segments = [entry.encode("utf-8") for entry in normalized]
+            except Exception:
+                return normalized
+            lengths_array = _build_int_array(len(segment) for segment in encoded_segments)
+            blob = b"".join(encoded_segments)
+            if not blob:
+                return normalized
+            return {
+                "enc": "utf-8",
+                "lengths": lengths_array,
+                "data": blob,
+            }
 
         def _pack_ragged_float_vectors(vectors: Sequence[Iterable[float]]) -> Optional[Dict[str, Any]]:
             if not vectors:
@@ -2544,7 +2640,9 @@ class Brain:
             synapses_block.pop("count", None)
         data["synapses"] = synapses_block
         if string_table:
-            data["string_table"] = string_table
+            packed_table = _pack_string_table(string_table)
+            if packed_table is not None:
+                data["string_table"] = packed_table
         tensor_pool_block = _pack_ragged_float_vectors(tensor_pool)
         if tensor_pool_block is not None:
             data["tensor_pool"] = tensor_pool_block
@@ -2617,6 +2715,59 @@ class Brain:
         mode = data.get("mode", "grid")
         n_value = int(data.get("n", 1))
 
+        def _coerce_sequence(value: Any) -> List[Any]:
+            if isinstance(value, list):
+                return value
+            if isinstance(value, array):
+                try:
+                    return value.tolist()
+                except Exception:
+                    return list(value)
+            if isinstance(value, tuple):
+                return list(value)
+            if value is None:
+                return []
+            if isinstance(value, (str, bytes, bytearray)):
+                return [value]
+            try:
+                return list(value)
+            except TypeError:
+                return [value]
+
+        def _decode_numeric_matrix(raw: Any) -> Optional[List[List[Any]]]:
+            if raw is None:
+                return None
+            if isinstance(raw, dict) and "lengths" in raw and "values" in raw:
+                lengths_source = raw.get("lengths", [])
+                values_source = raw.get("values")
+                lengths_list = [int(v) for v in _coerce_sequence(lengths_source)]
+                values_list = _coerce_sequence(values_source)
+                decoded: List[List[Any]] = []
+                cursor = 0
+                for length in lengths_list:
+                    safe_length = max(0, int(length))
+                    end = cursor + safe_length
+                    segment = values_list[cursor:end]
+                    cursor = end
+                    decoded.append(list(segment))
+                if len(lengths_list) > len(decoded):
+                    decoded.extend([[]] * (len(lengths_list) - len(decoded)))
+                return decoded
+            if isinstance(raw, (list, tuple)):
+                items: List[List[Any]] = []
+                for entry in raw:
+                    if isinstance(entry, (list, tuple, array)):
+                        items.append(list(_coerce_sequence(entry)))
+                    else:
+                        items.append([entry])
+                return items
+            if isinstance(raw, array):
+                return [list(_coerce_sequence(raw))]
+            seq = _coerce_sequence(raw)
+            if not seq:
+                return []
+            return [seq]
+
         size_raw = data.get("size") if "size" in data else None
         if isinstance(size_raw, array):
             try:
@@ -2637,21 +2788,7 @@ class Brain:
         else:
             size_param = None
 
-        bounds_raw = data.get("bounds") if "bounds" in data else None
-        if isinstance(bounds_raw, (list, tuple)):
-            bounds_items = list(bounds_raw)
-        elif isinstance(bounds_raw, array):
-            try:
-                bounds_items = bounds_raw.tolist()
-            except Exception:
-                bounds_items = list(bounds_raw)
-        elif bounds_raw is None:
-            bounds_items = None
-        else:
-            try:
-                bounds_items = list(bounds_raw)
-            except TypeError:
-                bounds_items = [bounds_raw]
+        bounds_items = _decode_numeric_matrix(data.get("bounds") if "bounds" in data else None)
         if bounds_items:
             bounds_param = tuple(
                 tuple(float(v) for v in entry) for entry in bounds_items  # type: ignore[arg-type]
@@ -2659,24 +2796,12 @@ class Brain:
         else:
             bounds_param = None
 
-        sparse_bounds_raw = data.get("sparse_bounds") if "sparse_bounds" in data else None
-        if isinstance(sparse_bounds_raw, (list, tuple)):
-            sparse_bounds_items = list(sparse_bounds_raw)
-        elif isinstance(sparse_bounds_raw, array):
-            try:
-                sparse_bounds_items = sparse_bounds_raw.tolist()
-            except Exception:
-                sparse_bounds_items = list(sparse_bounds_raw)
-        elif sparse_bounds_raw is None:
-            sparse_bounds_items = None
-        else:
-            try:
-                sparse_bounds_items = list(sparse_bounds_raw)
-            except TypeError:
-                sparse_bounds_items = [sparse_bounds_raw]
+        sparse_bounds_items = _decode_numeric_matrix(
+            data.get("sparse_bounds") if "sparse_bounds" in data else None
+        )
         if sparse_bounds_items:
             sparse_bounds_param = tuple(
-                tuple(entry) if isinstance(entry, (list, tuple)) else (entry,)
+                tuple(entry) if isinstance(entry, (list, tuple)) else tuple(_coerce_sequence(entry))
                 for entry in sparse_bounds_items
             )
         else:
@@ -2700,7 +2825,35 @@ class Brain:
                 store_snapshots=False,
             )
         table_raw = data.get("string_table")
-        if isinstance(table_raw, list):
+        if isinstance(table_raw, dict) and "lengths" in table_raw:
+            lengths_seq = _coerce_sequence(table_raw.get("lengths", []))
+            try:
+                lengths = [int(v) for v in lengths_seq]
+            except Exception:
+                lengths = []
+            payload = table_raw.get("data", table_raw.get("payload", b""))
+            if isinstance(payload, memoryview):
+                payload_bytes = payload.tobytes()
+            elif isinstance(payload, (bytes, bytearray)):
+                payload_bytes = bytes(payload)
+            else:
+                try:
+                    payload_bytes = bytes(payload)
+                except Exception:
+                    payload_bytes = b""
+            encoding = str(table_raw.get("enc", table_raw.get("encoding", "utf-8")))
+            offset = 0
+            decoded_entries: List[str] = []
+            for length in lengths:
+                safe_length = max(0, int(length))
+                chunk = payload_bytes[offset : offset + safe_length]
+                offset += safe_length
+                try:
+                    decoded_entries.append(chunk.decode(encoding))
+                except Exception:
+                    decoded_entries.append(chunk.decode("utf-8", errors="replace"))
+            string_table = decoded_entries
+        elif isinstance(table_raw, (list, tuple)):
             string_table = [str(entry) for entry in table_raw]
         else:
             string_table = None
@@ -2819,7 +2972,9 @@ class Brain:
             if remaining:
                 coords[0] += remaining * max(1, dims[0])
             return coords
-        layout = data.get("layout")
+        layout = data.get("layout") or (
+            "columnar" if isinstance(data.get("neurons"), dict) else None
+        )
         if layout == "columnar" and isinstance(data.get("neurons"), dict):
             neurons_block = data.get("neurons", {})
             position_dims = int(neurons_block.get("position_dims", brain.n))
