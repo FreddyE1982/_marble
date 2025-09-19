@@ -19,6 +19,49 @@ class TestBrainSnapshot(unittest.TestCase):
         self.assertIsInstance(payload, dict)
         return payload  # type: ignore[return-value]
 
+    def _normalize_fills(self, raw):
+        if raw is None:
+            return []
+        if isinstance(raw, dict):
+            values = raw.get("values", [])
+            lengths = raw.get("lengths", [])
+            values_list = self._to_list(values)
+            lengths_list = [int(v) for v in self._to_list(lengths)]
+            normalized = []
+            for idx, value in enumerate(values_list):
+                length = lengths_list[idx] if idx < len(lengths_list) else 0
+                normalized.append((float(value), int(length)))
+            extra = raw.get("pairs")
+            if extra is not None:
+                for entry in self._to_list(extra):
+                    if isinstance(entry, (list, tuple)) and len(entry) >= 2:
+                        normalized.append((float(entry[0]), int(entry[1])))
+            return normalized
+        normalized = []
+        for entry in self._to_list(raw):
+            if isinstance(entry, dict):
+                value = float(entry.get("value", 0.0))
+                length = int(entry.get("length", 0))
+                normalized.append((value, length))
+            elif isinstance(entry, (list, tuple)) and len(entry) >= 2:
+                normalized.append((float(entry[0]), int(entry[1])))
+        return normalized
+
+    def _to_list(self, value):
+        if isinstance(value, list):
+            return value
+        if isinstance(value, array):
+            return value.tolist()
+        if hasattr(value, "tolist"):
+            try:
+                return value.tolist()
+            except Exception:
+                pass
+        try:
+            return list(value)
+        except TypeError:
+            return []
+
     def test_snapshot_save_and_load(self):
         clear_report_group("brain")
         tmp = tempfile.mkdtemp()
@@ -96,20 +139,8 @@ class TestBrainSnapshot(unittest.TestCase):
         if tensor_pool:
             self.assertIsInstance(tensor_pool, list)
         tensor_pool_fills = payload.get("tensor_pool_fills")
-        self.assertIsInstance(tensor_pool_fills, list)
-        normalized_fills = []
-        saw_tuple_fill = False
-        for entry in tensor_pool_fills:
-            if isinstance(entry, dict):
-                value = entry.get("value")
-                length = entry.get("length")
-            elif isinstance(entry, tuple) and len(entry) >= 2:
-                value, length = entry[:2]
-                saw_tuple_fill = True
-            else:
-                continue
-            normalized_fills.append((float(value), int(length)))
-        self.assertTrue(saw_tuple_fill)
+        self.assertIsInstance(tensor_pool_fills, dict)
+        normalized_fills = self._normalize_fills(tensor_pool_fills)
         self.assertIn((0.0, 1), normalized_fills)
         self.assertIn((1.0, 1), normalized_fills)
         self.assertTrue(all(ref == -1 for ref in tensor_refs))
@@ -310,18 +341,18 @@ class TestBrainSnapshot(unittest.TestCase):
         neurons_block = payload["neurons"]
         tensor_values = neurons_block.get("tensor_values")
         self.assertTrue(tensor_pool is None or tensor_pool == [])
-        self.assertIsInstance(tensor_pool_fills, list)
+        self.assertIsInstance(tensor_pool_fills, dict)
         self.assertIsInstance(tensor_values, list)
         self.assertEqual(len(tensor_values), 1)
         self.assertEqual(len(tensor_values[0]), len(normal_tensor))
         for actual, expected in zip(tensor_values[0], normal_tensor):
             self.assertTrue(math.isclose(actual, expected, rel_tol=1e-6, abs_tol=1e-6))
-        tuple_fills = [entry for entry in tensor_pool_fills if isinstance(entry, tuple)]
-        self.assertTrue(tuple_fills, "expected tuple-based fill metadata")
+        normalized_fills = self._normalize_fills(tensor_pool_fills)
+        self.assertTrue(normalized_fills, "expected fill metadata")
         fill_entry = None
-        for entry in tuple_fills:
-            if len(entry) >= 2 and int(entry[1]) == 4096:
-                fill_entry = entry
+        for value, length in normalized_fills:
+            if int(length) == 4096:
+                fill_entry = (value, length)
                 break
         self.assertIsNotNone(fill_entry)
         fill_value, fill_length = fill_entry

@@ -2247,7 +2247,7 @@ class Brain:
             if pending_tensor_key is not None:
                 tensor_assignment_requests.append((idx, pending_tensor_key))
 
-        tensor_values: List[List[float]] = []
+        tensor_values: List[Any] = []
         if tensor_assignment_requests:
             tensor_pool_map: Dict[Tuple[float, ...], int] = {}
             tensor_values_map: Dict[Tuple[float, ...], int] = {}
@@ -2265,7 +2265,7 @@ class Brain:
                     if inline_idx is None:
                         inline_idx = len(tensor_values)
                         tensor_values_map[tensor_key] = inline_idx
-                        tensor_values.append([float(v) for v in tensor_payloads[tensor_key]])
+                        tensor_values.append(array("f", [float(v) for v in tensor_payloads[tensor_key]]))
                     tensor_refs_list[neuron_idx] = len(tensor_pool) + inline_idx
 
         if linear_indices_array is not None and linear_index_strides is not None:
@@ -2437,7 +2437,11 @@ class Brain:
         if len(type_ids_list) and not _all_int(type_ids_list, -1):
             neurons_block["type_ids"] = _build_int_array(type_ids_list)
         if tensor_values:
-            neurons_block["tensor_values"] = [list(entry) for entry in tensor_values]
+            neurons_block["tensor_values"] = [
+                entry if isinstance(entry, array)
+                else array("f", [float(v) for v in entry])
+                for entry in tensor_values
+            ]
         data["neurons"] = neurons_block
 
         synapses_block: Dict[str, Any] = {
@@ -2463,17 +2467,20 @@ class Brain:
             if not all_default_direction:
                 synapses_block["direction_ids"] = _build_int_array(syn_direction_ids_list)
         data["synapses"] = synapses_block
-        data["string_table"] = string_table
+        if string_table:
+            data["string_table"] = string_table
         if tensor_pool:
             data["tensor_pool"] = [
                 array("f", [float(v) for v in entry])
                 for entry in tensor_pool
             ]
         if tensor_pool_fills:
-            data["tensor_pool_fills"] = [
-                (float(value), int(length))
-                for value, length in tensor_pool_fills
-            ]
+            fill_values = array("f", [float(value) for value, _ in tensor_pool_fills])
+            fill_lengths = _build_int_array(length for _, length in tensor_pool_fills)
+            data["tensor_pool_fills"] = {
+                "values": fill_values,
+                "lengths": fill_lengths,
+            }
         codec_obj = getattr(self, "codec", None)
         if codec_obj is not None:
             if hasattr(codec_obj, "export_state"):
@@ -2599,20 +2606,35 @@ class Brain:
         tensor_pool_fills_raw = data.get("tensor_pool_fills")
         tensor_pool_fills: List[Tuple[float, int]] = []
         if tensor_pool_fills_raw is not None:
-            if isinstance(tensor_pool_fills_raw, list):
-                fill_candidates = tensor_pool_fills_raw
+            if isinstance(tensor_pool_fills_raw, dict):
+                values_list = _coerce_list(tensor_pool_fills_raw.get("values", []))
+                lengths_list = [int(v) for v in _coerce_list(tensor_pool_fills_raw.get("lengths", []))]
+                for idx, value in enumerate(values_list):
+                    length = lengths_list[idx] if idx < len(lengths_list) else 0
+                    tensor_pool_fills.append((float(value), max(0, length)))
+                extra_entries = tensor_pool_fills_raw.get("pairs")
+                if extra_entries:
+                    extra_candidates = extra_entries if isinstance(extra_entries, list) else _coerce_list(extra_entries)
+                    for entry in extra_candidates:
+                        if isinstance(entry, (list, tuple)) and len(entry) >= 2:
+                            value = float(entry[0])
+                            length = int(entry[1])
+                            tensor_pool_fills.append((value, max(0, length)))
             else:
-                fill_candidates = _coerce_list(tensor_pool_fills_raw)
-            for entry in fill_candidates:
-                if isinstance(entry, dict):
-                    value = float(entry.get("value", 0.0))
-                    length = int(entry.get("length", 0))
-                elif isinstance(entry, (list, tuple)) and len(entry) >= 2:
-                    value = float(entry[0])
-                    length = int(entry[1])
+                if isinstance(tensor_pool_fills_raw, list):
+                    fill_candidates = tensor_pool_fills_raw
                 else:
-                    continue
-                tensor_pool_fills.append((value, max(0, length)))
+                    fill_candidates = _coerce_list(tensor_pool_fills_raw)
+                for entry in fill_candidates:
+                    if isinstance(entry, dict):
+                        value = float(entry.get("value", 0.0))
+                        length = int(entry.get("length", 0))
+                    elif isinstance(entry, (list, tuple)) and len(entry) >= 2:
+                        value = float(entry[0])
+                        length = int(entry[1])
+                    else:
+                        continue
+                    tensor_pool_fills.append((value, max(0, length)))
 
         temp_syns: List[Synapse] = []
         prev_pos: Optional[Sequence[float]] = None

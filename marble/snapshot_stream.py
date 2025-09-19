@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import os
 import pickle
+import pickletools
 import struct
 import threading
 import time
@@ -110,7 +111,17 @@ class SnapshotStreamWriter:
             "state": dict(state),
         }
         raw = pickle.dumps(payload, protocol=pickle.HIGHEST_PROTOCOL)
-        compressed = zlib.compress(raw, self.compress_level)
+        try:
+            raw = pickletools.optimize(raw)
+        except Exception:
+            pass
+        compressor = zlib.compressobj(
+            self.compress_level,
+            zlib.DEFLATED,
+            15,
+            memLevel=9,
+        )
+        compressed = compressor.compress(raw) + compressor.flush(zlib.Z_FINISH)
         length = len(compressed)
         crc = zlib.crc32(compressed) & 0xFFFFFFFF
         header = FRAME_HEADER_STRUCT.pack(FRAME_TYPE_FULL, length, crc)
