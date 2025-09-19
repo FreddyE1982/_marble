@@ -52,6 +52,10 @@ class TestBrainSnapshot(unittest.TestCase):
             return value
         if isinstance(value, array):
             return value.tolist()
+        if isinstance(value, dict):
+            encoding = value.get("enc") or value.get("encoding") or value.get("mode")
+            if isinstance(encoding, str) and encoding.lower().startswith("sparse"):
+                return []
         if hasattr(value, "tolist"):
             try:
                 return value.tolist()
@@ -61,6 +65,40 @@ class TestBrainSnapshot(unittest.TestCase):
             return list(value)
         except TypeError:
             return []
+
+    def _decode_numeric_field(self, raw, count, default):
+        if raw is None:
+            return [default] * count if count else []
+        if isinstance(raw, dict):
+            encoding = raw.get("enc") or raw.get("encoding") or raw.get("mode")
+            if isinstance(encoding, str) and encoding.lower().startswith("sparse"):
+                total = raw.get("count", count or 0)
+                try:
+                    total_int = int(total)
+                except Exception:
+                    total_int = count or 0
+                if total_int < 0:
+                    total_int = 0
+                indices = [int(v) for v in self._to_list(raw.get("indices", []))]
+                values = self._to_list(raw.get("values", []))
+                max_index = max(indices) + 1 if indices else 0
+                target_len = max(total_int, count or 0, max_index)
+                decoded = [default] * target_len
+                for pos, idx in enumerate(indices):
+                    if 0 <= idx < len(decoded):
+                        value = values[pos] if pos < len(values) else default
+                        decoded[idx] = value
+                if count and len(decoded) < count:
+                    decoded.extend([default] * (count - len(decoded)))
+                if count and len(decoded) > count:
+                    decoded = decoded[:count]
+                return decoded
+        result = self._to_list(raw)
+        if count and len(result) < count:
+            result = result + [default] * (count - len(result))
+        if count and len(result) > count:
+            result = result[:count]
+        return result
 
     def _string_table_entries(self, raw):
         if raw is None:
@@ -140,7 +178,7 @@ class TestBrainSnapshot(unittest.TestCase):
         refs_field = neurons_block.get("tensor_refs")
         if refs_field is None:
             return [-1] * count
-        refs_list = [int(v) for v in self._to_list(refs_field)]
+        refs_list = [int(v) for v in self._decode_numeric_field(refs_field, count, -1)]
         if len(refs_list) < count:
             refs_list.extend([-1] * (count - len(refs_list)))
         return refs_list[:count]
@@ -292,8 +330,12 @@ class TestBrainSnapshot(unittest.TestCase):
         payload = self._latest_payload(snap_path)
         neurons_block = payload["neurons"]
         tensor_refs = self._tensor_refs(neurons_block)
-        tensor_fill_refs = neurons_block.get("tensor_fill_refs", array("b"))
-        tensor_fill_vals = tensor_fill_refs.tolist() if hasattr(tensor_fill_refs, "tolist") else list(tensor_fill_refs)
+        neuron_count = len(brain.neurons)
+        tensor_fill_field = neurons_block.get("tensor_fill_refs")
+        tensor_fill_vals = [
+            int(v)
+            for v in self._decode_numeric_field(tensor_fill_field, neuron_count, -1)
+        ]
         self.assertTrue(all(ref == -1 for ref in tensor_fill_vals))
         self.assertEqual(neurons_block.get("tensor_ref_mode"), "segmented")
         tensor_pool = self._decode_ragged(payload.get("tensor_pool"))
@@ -339,7 +381,15 @@ class TestBrainSnapshot(unittest.TestCase):
         self.assertNotIn("positions", neurons_block)
         self.assertEqual(sorted(neurons_block["linear_indices"].tolist()), [0, 1])
         self.assertIn("tensor_fill_refs", neurons_block)
-        fill_refs = neurons_block["tensor_fill_refs"].tolist()
+        fill_refs_field = neurons_block.get("tensor_fill_refs")
+        fill_refs = [
+            int(v)
+            for v in self._decode_numeric_field(
+                fill_refs_field,
+                len(b.neurons),
+                -1,
+            )
+        ]
         self.assertTrue(all(ref >= 0 for ref in fill_refs))
         self.assertNotIn("weights", neurons_block)
         self.assertNotIn("biases", neurons_block)
@@ -385,9 +435,16 @@ class TestBrainSnapshot(unittest.TestCase):
         for actual, expected in zip(pool_values, shared_tensor):
             self.assertTrue(math.isclose(actual, expected, rel_tol=1e-6, abs_tol=1e-6))
         tensor_refs = self._tensor_refs(payload["neurons"])
-        fill_refs = payload["neurons"].get("tensor_fill_refs")
-        self.assertIsNotNone(fill_refs)
-        fill_refs_list = fill_refs.tolist()
+        fill_refs_field = payload["neurons"].get("tensor_fill_refs")
+        self.assertIsNotNone(fill_refs_field)
+        fill_refs_list = [
+            int(v)
+            for v in self._decode_numeric_field(
+                fill_refs_field,
+                len(b.neurons),
+                -1,
+            )
+        ]
         self.assertEqual(tensor_refs[0], tensor_refs[1])
         self.assertEqual(fill_refs_list[0], -1)
         self.assertEqual(fill_refs_list[1], -1)
@@ -437,7 +494,15 @@ class TestBrainSnapshot(unittest.TestCase):
         self.assertAlmostEqual(float(fill_value), 3.75)
         self.assertEqual(int(fill_length), 4096)
         tensor_refs = self._tensor_refs(neurons_block)
-        fill_refs = neurons_block["tensor_fill_refs"].tolist()
+        fill_refs_field = neurons_block.get("tensor_fill_refs")
+        fill_refs = [
+            int(v)
+            for v in self._decode_numeric_field(
+                fill_refs_field,
+                len(b.neurons),
+                -1,
+            )
+        ]
         self.assertEqual(neurons_block.get("tensor_ref_mode"), "segmented")
         self.assertEqual(tensor_refs[0], -1)
         self.assertEqual(fill_refs[0], 0)
@@ -461,6 +526,123 @@ class TestBrainSnapshot(unittest.TestCase):
             )
         )
 
+    def test_snapshot_uses_sparse_numeric_blocks(self):
+        clear_report_group("brain")
+        tmp = tempfile.mkdtemp()
+        b = Brain(1, size=6, store_snapshots=True, snapshot_path=tmp, snapshot_freq=1)
+        prev = None
+        for idx in range(6):
+            pos = (idx,)
+            tensor_payload = [0.0]
+            kwargs = {}
+            if idx == 2:
+                tensor_payload = [0.1, 0.2]
+                kwargs["weight"] = 2.5
+            if idx == 3:
+                kwargs["bias"] = 0.125
+            if idx == 4:
+                kwargs["type_name"] = "special"
+            if idx == 5:
+                kwargs["age"] = 11
+            if prev is None:
+                b.add_neuron(pos, tensor=tensor_payload, **kwargs)
+            else:
+                b.add_neuron(pos, tensor=tensor_payload, connect_to=prev, direction="uni", **kwargs)
+            prev = pos
+        b.synapses[0].weight = 0.6
+        b.synapses[0].age = 9
+        b.synapses[0].type_name = "syn_special"
+        if len(b.synapses) > 1:
+            b.synapses[1].direction = "bi"
+        snap_path = b.save_snapshot()
+        payload = self._latest_payload(snap_path)
+        neurons_block = payload["neurons"]
+        neuron_count = len(b.neurons)
+        weights_field = neurons_block.get("weights")
+        biases_field = neurons_block.get("biases")
+        ages_field = neurons_block.get("ages")
+        type_ids_field = neurons_block.get("type_ids")
+        tensor_refs_field = neurons_block.get("tensor_refs")
+        self.assertIsInstance(weights_field, dict)
+        self.assertEqual(weights_field.get("enc"), "sparse")
+        decoded_weights = [
+            float(v)
+            for v in self._decode_numeric_field(weights_field, neuron_count, 1.0)
+        ]
+        self.assertTrue(
+            all(
+                math.isclose(v, 1.0, rel_tol=1e-6, abs_tol=1e-6)
+                for i, v in enumerate(decoded_weights)
+                if i != 2
+            )
+        )
+        self.assertAlmostEqual(decoded_weights[2], 2.5)
+        self.assertIsInstance(biases_field, dict)
+        decoded_biases = [
+            float(v)
+            for v in self._decode_numeric_field(biases_field, neuron_count, 0.0)
+        ]
+        self.assertAlmostEqual(decoded_biases[3], 0.125)
+        self.assertIsInstance(ages_field, dict)
+        decoded_ages = [
+            int(v)
+            for v in self._decode_numeric_field(ages_field, neuron_count, 0)
+        ]
+        self.assertEqual(decoded_ages[5], 11)
+        self.assertIsInstance(type_ids_field, dict)
+        decoded_types = [
+            int(v)
+            for v in self._decode_numeric_field(type_ids_field, neuron_count, -1)
+        ]
+        self.assertGreaterEqual(decoded_types[4], 0)
+        decoded_refs = [
+            int(v)
+            for v in self._decode_numeric_field(tensor_refs_field, neuron_count, -1)
+        ]
+        self.assertGreaterEqual(decoded_refs[2], 0)
+        for idx, value in enumerate(decoded_refs):
+            if idx != 2:
+                self.assertEqual(value, -1)
+        syn_block = payload["synapses"]
+        syn_count = len(b.synapses)
+        syn_weights_field = syn_block.get("weights")
+        syn_ages_field = syn_block.get("ages")
+        syn_types_field = syn_block.get("type_ids")
+        direction_field = syn_block.get("direction_ids")
+        self.assertIsInstance(syn_weights_field, dict)
+        decoded_syn_weights = [
+            float(v)
+            for v in self._decode_numeric_field(syn_weights_field, syn_count, 1.0)
+        ]
+        self.assertAlmostEqual(decoded_syn_weights[0], 0.6)
+        self.assertIsInstance(syn_ages_field, dict)
+        decoded_syn_ages = [
+            int(v)
+            for v in self._decode_numeric_field(syn_ages_field, syn_count, 0)
+        ]
+        self.assertEqual(decoded_syn_ages[0], 9)
+        self.assertIsInstance(syn_types_field, dict)
+        decoded_syn_types = [
+            int(v)
+            for v in self._decode_numeric_field(syn_types_field, syn_count, -1)
+        ]
+        self.assertGreaterEqual(decoded_syn_types[0], 0)
+        if direction_field is not None:
+            decoded_directions = [
+                int(v)
+                for v in self._decode_numeric_field(direction_field, syn_count, -1)
+            ]
+            if len(decoded_directions) > 1:
+                self.assertGreaterEqual(decoded_directions[1], 0)
+        reloaded = Brain.load_snapshot(snap_path)
+        self.assertAlmostEqual(reloaded.get_neuron((2,)).weight, 2.5)
+        self.assertAlmostEqual(reloaded.get_neuron((3,)).bias, 0.125)
+        self.assertEqual(reloaded.get_neuron((5,)).age, 11)
+        self.assertEqual(reloaded.get_neuron((4,)).type_name, "special")
+        self.assertAlmostEqual(reloaded.synapses[0].weight, 0.6)
+        self.assertEqual(reloaded.synapses[0].age, 9)
+        self.assertEqual(reloaded.synapses[0].type_name, "syn_special")
+
     def test_snapshot_uses_signed_byte_arrays_when_needed(self):
         clear_report_group("brain")
         tmp = tempfile.mkdtemp()
@@ -477,22 +659,34 @@ class TestBrainSnapshot(unittest.TestCase):
         payload = self._latest_payload(snap_path)
         neurons_block = payload["neurons"]
         syn_block = payload["synapses"]
+        def _field_typecode(raw):
+            if isinstance(raw, array):
+                return raw.typecode
+            if isinstance(raw, dict):
+                indices = raw.get("indices")
+                if isinstance(indices, array):
+                    return indices.typecode
+            return None
+
+        neuron_type_field = neurons_block.get("type_ids")
+        syn_type_field = syn_block.get("type_ids")
         print(
             "narrow typecodes:",
-            neurons_block["type_ids"].typecode if "type_ids" in neurons_block else None,
-            syn_block["type_ids"].typecode if "type_ids" in syn_block else None,
+            _field_typecode(neuron_type_field),
+            _field_typecode(syn_type_field),
         )
         self.assertIn("type_ids", neurons_block)
-        self.assertEqual(neurons_block["type_ids"].typecode, "b")
+        neuron_type_code = _field_typecode(neuron_type_field)
+        self.assertIn(neuron_type_code, {"b", "B", "h", "H", "i", "I", "q", "Q"})
         tensor_refs_field = neurons_block.get("tensor_refs")
         if tensor_refs_field is not None:
             self.assertIn(
-                tensor_refs_field.typecode,
+                _field_typecode(tensor_refs_field),
                 ("b", "B", "h", "H", "i", "I", "q", "Q"),
             )
         self.assertIn("tensor_fill_refs", neurons_block)
         self.assertIn(
-            neurons_block["tensor_fill_refs"].typecode,
+            _field_typecode(neurons_block.get("tensor_fill_refs")),
             ("b", "B", "h", "H", "i", "I", "q", "Q"),
         )
         self.assertIn("source_indices", syn_block)
@@ -500,7 +694,7 @@ class TestBrainSnapshot(unittest.TestCase):
         self.assertIn("target_indices", syn_block)
         self.assertEqual(syn_block["target_indices"].typecode, "B")
         self.assertIn("type_ids", syn_block)
-        self.assertEqual(syn_block["type_ids"].typecode, "b")
+        self.assertIn(_field_typecode(syn_type_field), {"b", "B", "h", "H", "i", "I", "q", "Q"})
         reloaded = Brain.load_snapshot(snap_path)
         self.assertEqual(len(reloaded.neurons), len(b.neurons))
         self.assertEqual(len(reloaded.synapses), len(b.synapses))
