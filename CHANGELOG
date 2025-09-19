@@ -1,3 +1,12 @@
+2025-10-04
+- Brain snapshot writer now reads `snapshot.compress_level` from `config.yaml`
+  (default `2`) and requires the multi-threaded `pigz` compressor. If `pigz`
+  is missing the runtime auto-clones the upstream repo, builds and installs it
+  under `~/.local/bin`, and deletes the clone; failures now raise an error
+  instead of silently falling back. Snapshot metadata records both compression
+  level and the enforced compressor, delivering faster saves without altering
+  payloads.
+
 2025-10-01
 - Added ``snapshot_to_image`` helper to render network topology PNGs from
   ``.marble`` snapshot files.

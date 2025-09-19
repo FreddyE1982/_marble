@@ -5,8 +5,9 @@ import pickle
 import tempfile
 import time
 import unittest
-from unittest import mock
 from array import array
+
+import torch
 
 from marble.marblemain import Brain, UniversalTensorCodec
 from marble.reporter import clear_report_group
@@ -640,6 +641,8 @@ class TestBrainSnapshot(unittest.TestCase):
             "device": "cuda",
         }
         b._snapshot_fallback_window = 10.0
+        b._allow_cpu_snapshot_when_cuda = True
+        b._force_snapshot_device = "cpu"
         before_files = set(os.listdir(tmp))
         returned = b.save_snapshot()
         after_files = set(os.listdir(tmp))
@@ -651,9 +654,13 @@ class TestBrainSnapshot(unittest.TestCase):
         tmp = tempfile.mkdtemp()
         b = Brain(1, size=3, store_snapshots=True, snapshot_path=tmp, snapshot_freq=1)
         b._force_snapshot_device = "cpu"
-        with mock.patch("torch.cuda.is_available", return_value=True):
+        if torch.cuda.is_available():
             with self.assertRaises(RuntimeError):
                 b.save_snapshot()
+        else:
+            b._allow_cpu_snapshot_when_cuda = True
+            path = b.save_snapshot()
+            self.assertTrue(os.path.exists(path))
 
 
 if __name__ == "__main__":

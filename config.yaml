@@ -5,6 +5,8 @@ resource_allocator:
   ram_offload_threshold: 0.9  # offload tensors to disk when RAM usage exceeds this ratio
   vram_offload_threshold: 0.9  # move tensors off GPU when VRAM usage exceeds this ratio
   disk_usage_threshold: 0.95  # stop offloading when disk usage exceeds this ratio
+snapshot:
+  compress_level: 2  # gzip compression level (1-9) for Brain.save_snapshot
 reporter:
   tensorboard:
     enabled: true  # write all reporter updates to TensorBoard
