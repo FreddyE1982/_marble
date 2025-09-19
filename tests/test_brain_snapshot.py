@@ -420,6 +420,42 @@ class TestBrainSnapshot(unittest.TestCase):
                     if isinstance(default, float) and not isinstance(default, int):
                         return [float(v) for v in decoded]
                     return [int(v) for v in decoded]
+                if enc_lower == "pattern":
+                    pattern_raw = raw.get("pattern")
+                    pattern_seq = self._decode_numeric_field(pattern_raw, 0, default)
+                    try:
+                        repeats_val = int(raw.get("repeats", raw.get("repeat", 0)))
+                    except Exception:
+                        repeats_val = 0
+                    repeats_val = max(0, repeats_val)
+                    sequence: list = []
+                    for _ in range(repeats_val):
+                        sequence.extend(pattern_seq)
+                    if "tail" in raw:
+                        tail_seq = self._decode_numeric_field(raw.get("tail"), 0, default)
+                        sequence.extend(tail_seq)
+                    try:
+                        count_val = int(raw.get("count", count or len(sequence)))
+                    except Exception:
+                        count_val = count or len(sequence)
+                    desired = max(count or 0, max(0, count_val))
+                    if desired and len(sequence) < desired and pattern_seq:
+                        pattern_len = len(pattern_seq)
+                        if pattern_len > 0:
+                            while len(sequence) < desired:
+                                remaining = desired - len(sequence)
+                                if remaining >= pattern_len:
+                                    sequence.extend(pattern_seq)
+                                else:
+                                    sequence.extend(pattern_seq[:remaining])
+                                    break
+                    if desired and len(sequence) > desired:
+                        sequence = sequence[:desired]
+                    if not desired:
+                        desired = len(sequence)
+                    if isinstance(default, int):
+                        return [int(round(float(v))) if isinstance(v, (int, float)) else int(default) for v in sequence[:desired]]
+                    return [float(v) for v in sequence[:desired]]
                 if enc_lower == "palette":
                     try:
                         count_val = int(raw.get("count", count or 0))
@@ -524,7 +560,11 @@ class TestBrainSnapshot(unittest.TestCase):
                 return [base[:] for _ in range(max(0, count_val))]
         if isinstance(raw, dict) and "lengths" in raw and "values" in raw:
             lengths = [int(v) for v in self._to_list(raw.get("lengths", []))]
-            values = [float(v) for v in self._to_list(raw.get("values", []))]
+            total = sum(max(0, int(length)) for length in lengths)
+            values = [
+                float(v)
+                for v in self._decode_numeric_field(raw.get("values"), total, 0.0)
+            ]
             count_hint = int(raw.get("count", len(lengths))) if hasattr(raw, "get") else len(lengths)
             result = []
             cursor = 0
@@ -1333,26 +1373,22 @@ class TestBrainSnapshot(unittest.TestCase):
             payload = self._latest_payload(snap_path)
             neurons_block = payload["neurons"]
             type_field = neurons_block.get("type_ids")
-            self.assertIsInstance(type_field, dict)
-            self.assertEqual(type_field.get("enc"), "palette")
-            palette_values = self._to_list(type_field.get("values", []))
-            indices_list = self._to_list(type_field.get("indices", []))
-            self.assertGreaterEqual(len(palette_values), 2)
-            self.assertEqual(len(indices_list), len(brain.neurons))
-            decoded = []
-            fallback = palette_values[0]
-            for idx in range(len(indices_list)):
-                try:
-                    palette_idx = int(indices_list[idx])
-                except Exception:
-                    palette_idx = 0
-                if 0 <= palette_idx < len(palette_values):
-                    decoded.append(palette_values[palette_idx])
-                else:
-                    decoded.append(fallback)
+            self.assertIsNotNone(type_field)
+            if isinstance(type_field, dict):
+                encoding = type_field.get("enc")
+                self.assertIn(encoding, {"palette", "pattern"})
+            decoded = self._decode_numeric_field(type_field, len(brain.neurons), -1)
             self.assertIn(-1, decoded)
             self.assertIn(0, decoded)
             self.assertIn(1, decoded)
+            string_entries = self._string_table_entries(payload.get("string_table"))
+            resolved = [
+                string_entries[idx] if 0 <= idx < len(string_entries) else None
+                for idx in decoded
+            ]
+            self.assertIn(None, resolved)
+            self.assertIn("alpha", resolved)
+            self.assertIn("beta", resolved)
             reloaded = Brain.load_snapshot(snap_path)
             self.assertEqual(len(reloaded.neurons), len(brain.neurons))
             decoded_types = [
@@ -1361,6 +1397,86 @@ class TestBrainSnapshot(unittest.TestCase):
             self.assertIn(None, decoded_types)
             self.assertIn("alpha", decoded_types)
             self.assertIn("beta", decoded_types)
+
+    def test_snapshot_pattern_encoding_for_type_ids(self):
+        clear_report_group("brain")
+        with tempfile.TemporaryDirectory() as tmp:
+            brain = Brain(1, size=40, store_snapshots=True, snapshot_path=tmp, snapshot_freq=1)
+            previous = None
+            type_cycle = ["alpha", "beta", "gamma", "delta"]
+            for idx in range(40):
+                pos = (idx,)
+                kwargs = {"tensor": [float(idx)], "type_name": type_cycle[idx % len(type_cycle)]}
+                if previous is None:
+                    brain.add_neuron(pos, **kwargs)
+                else:
+                    brain.add_neuron(pos, connect_to=previous, direction="uni", **kwargs)
+                previous = pos
+            snap_path = brain.save_snapshot()
+            payload = self._latest_payload(snap_path)
+            neurons_block = payload["neurons"]
+            type_field = neurons_block.get("type_ids")
+            self.assertIsInstance(type_field, dict)
+            self.assertEqual(type_field.get("enc"), "pattern")
+            pattern_payload = type_field.get("pattern")
+            self.assertIsNotNone(pattern_payload)
+            pattern_values = [int(v) for v in self._to_list(pattern_payload)]
+            self.assertEqual(pattern_values, [0, 1, 2, 3])
+            repeats = int(type_field.get("repeats", 0))
+            self.assertGreaterEqual(repeats, 1)
+            decoded_ids = self._decode_numeric_field(type_field, len(brain.neurons), -1)
+            string_entries = self._string_table_entries(payload.get("string_table"))
+            resolved = [
+                string_entries[idx] if 0 <= idx < len(string_entries) else None
+                for idx in decoded_ids
+            ]
+            expected = [type_cycle[idx % len(type_cycle)] for idx in range(len(brain.neurons))]
+            self.assertEqual(resolved, expected)
+            reloaded = Brain.load_snapshot(snap_path)
+            reloaded_types = [getattr(neuron, "type_name", None) for neuron in reloaded.neurons.values()]
+            self.assertEqual(reloaded_types, expected)
+
+    def test_palette_bitpack_supports_five_bit_indices(self):
+        clear_report_group("brain")
+        with tempfile.TemporaryDirectory() as tmp:
+            type_names = [f"type{idx}" for idx in range(32)]
+            blocks = 20
+            total_neurons = len(type_names) * blocks
+            brain = Brain(1, size=total_neurons, store_snapshots=True, snapshot_path=tmp, snapshot_freq=1)
+            previous = None
+            expected_sequence: list[str] = []
+            for block_idx in range(blocks):
+                rotation = type_names[block_idx % len(type_names) :] + type_names[: block_idx % len(type_names)]
+                for offset, type_name in enumerate(rotation):
+                    global_idx = block_idx * len(type_names) + offset
+                    pos = (global_idx,)
+                    kwargs = {"tensor": [float(global_idx)], "type_name": type_name}
+                    if previous is None:
+                        brain.add_neuron(pos, **kwargs)
+                    else:
+                        brain.add_neuron(pos, connect_to=previous, direction="uni", **kwargs)
+                    previous = pos
+                    expected_sequence.append(type_name)
+            snap_path = brain.save_snapshot()
+            payload = self._latest_payload(snap_path)
+            neurons_block = payload["neurons"]
+            type_field = neurons_block.get("type_ids")
+            self.assertIsInstance(type_field, dict)
+            self.assertEqual(type_field.get("enc"), "palette")
+            indices_field = type_field.get("indices")
+            self.assertIsInstance(indices_field, dict)
+            self.assertEqual(indices_field.get("enc"), "bitpack")
+            self.assertGreaterEqual(int(indices_field.get("bits_per", 0)), 5)
+            decoded_ids = self._decode_numeric_field(type_field, len(brain.neurons), -1)
+            string_entries = self._string_table_entries(payload.get("string_table"))
+            resolved = [
+                string_entries[idx] if 0 <= idx < len(string_entries) else None
+                for idx in decoded_ids
+            ]
+            self.assertEqual(resolved, expected_sequence)
+            reloaded = Brain.load_snapshot(snap_path)
+            reloaded_types = [getattr(neuron, "type_name", None) for neuron in reloaded.neurons.values()]
+            self.assertEqual(reloaded_types, expected_sequence)
 
     def test_sparse_float_values_use_palette_encoding(self):
         clear_report_group("brain")
