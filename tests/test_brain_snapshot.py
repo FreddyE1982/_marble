@@ -1,7 +1,5 @@
-import gzip
 import math
 import os
-import pickle
 import tempfile
 import time
 import unittest
@@ -11,9 +9,16 @@ import torch
 
 from marble.marblemain import Brain, UniversalTensorCodec
 from marble.reporter import clear_report_group
+from marble.snapshot_stream import SnapshotStreamWriter, iterate_snapshot_frames, read_latest_state
 
 
 class TestBrainSnapshot(unittest.TestCase):
+    def _latest_payload(self, path: str) -> dict:
+        payload = read_latest_state(path)
+        self.assertIsNotNone(payload)
+        self.assertIsInstance(payload, dict)
+        return payload  # type: ignore[return-value]
+
     def test_snapshot_save_and_load(self):
         clear_report_group("brain")
         tmp = tempfile.mkdtemp()
@@ -38,11 +43,9 @@ class TestBrainSnapshot(unittest.TestCase):
         synapse.type_name = "gamma"
         synapse.direction = "bi"
         snap_path = b.save_snapshot()
-        with open(snap_path, "rb") as saved:
-            header = saved.read(2)
-        self.assertEqual(header, b"\x1f\x8b")
-        with gzip.open(snap_path, "rb") as payload_file:
-            payload = pickle.load(payload_file)
+        frames = list(iterate_snapshot_frames(snap_path))
+        self.assertGreaterEqual(len(frames), 1)
+        payload = frames[-1].state
         print("snapshot keys:", sorted(payload.keys()))
         print("snapshot layout:", payload.get("layout"))
         self.assertIn("codec_state", payload)
@@ -170,8 +173,7 @@ class TestBrainSnapshot(unittest.TestCase):
         brain.add_neuron((1,), tensor=repeated_tensor, connect_to=(0,), direction="uni", type_name="dup")
         brain.add_neuron((2,), tensor=inline_tensor, connect_to=(1,), direction="uni", type_name="unique")
         snap_path = brain.save_snapshot()
-        with gzip.open(snap_path, "rb") as payload_file:
-            payload = pickle.load(payload_file)
+        payload = self._latest_payload(snap_path)
         neurons_block = payload["neurons"]
         tensor_refs = neurons_block["tensor_refs"].tolist()
         tensor_fill_refs = neurons_block.get("tensor_fill_refs", array("b"))
@@ -216,8 +218,7 @@ class TestBrainSnapshot(unittest.TestCase):
         b.add_neuron((0,), tensor=[0.0])
         b.add_neuron((1,), tensor=[1.0], connect_to=(0,), direction="uni")
         snap_path = b.save_snapshot()
-        with gzip.open(snap_path, "rb") as payload_file:
-            payload = pickle.load(payload_file)
+        payload = self._latest_payload(snap_path)
         self.assertNotIn("tensor_pool", payload)
         self.assertIn("tensor_pool_fills", payload)
         neurons_block = payload["neurons"]
@@ -265,8 +266,7 @@ class TestBrainSnapshot(unittest.TestCase):
         b.add_neuron((1,), tensor=shared_tensor, connect_to=(0,), direction="uni")
         b.add_neuron((2,), tensor=[1.25], connect_to=(1,), direction="uni")
         snap_path = b.save_snapshot()
-        with gzip.open(snap_path, "rb") as payload_file:
-            payload = pickle.load(payload_file)
+        payload = self._latest_payload(snap_path)
         tensor_pool = payload.get("tensor_pool")
         self.assertIsInstance(tensor_pool, list)
         self.assertEqual(len(tensor_pool), 1)
@@ -304,8 +304,7 @@ class TestBrainSnapshot(unittest.TestCase):
         b.add_neuron((0,), tensor=huge_constant)
         b.add_neuron((1,), tensor=normal_tensor, connect_to=(0,), direction="uni")
         snap_path = b.save_snapshot()
-        with gzip.open(snap_path, "rb") as payload_file:
-            payload = pickle.load(payload_file)
+        payload = self._latest_payload(snap_path)
         tensor_pool = payload.get("tensor_pool")
         tensor_pool_fills = payload.get("tensor_pool_fills")
         neurons_block = payload["neurons"]
@@ -366,8 +365,7 @@ class TestBrainSnapshot(unittest.TestCase):
         second_syn = b.synapses[-1]
         second_syn.age = 1
         snap_path = b.save_snapshot()
-        with gzip.open(snap_path, "rb") as fh:
-            payload = pickle.load(fh)
+        payload = self._latest_payload(snap_path)
         neurons_block = payload["neurons"]
         syn_block = payload["synapses"]
         print(
@@ -415,8 +413,7 @@ class TestBrainSnapshot(unittest.TestCase):
                 b.add_neuron(pos, tensor=tensor_payload, connect_to=prev_pos, age=idx % 5)
             prev_pos = pos
         snap_path = b.save_snapshot()
-        with gzip.open(snap_path, "rb") as fh:
-            payload = pickle.load(fh)
+        payload = self._latest_payload(snap_path)
         neurons_block = payload["neurons"]
         syn_block = payload["synapses"]
         print(
@@ -463,8 +460,11 @@ class TestBrainSnapshot(unittest.TestCase):
                 "target_indices": array("i"),
             },
         }
-        with gzip.open(path, "wb") as f:
-            pickle.dump(legacy_payload, f, protocol=pickle.HIGHEST_PROTOCOL)
+        writer = SnapshotStreamWriter(path)
+        try:
+            writer.append_state(legacy_payload, reason="legacy-no-pool")
+        finally:
+            writer.close()
         loaded = Brain.load_snapshot(path)
         self.assertEqual(len(loaded.neurons), 2)
         for neuron in loaded.neurons.values():
@@ -518,8 +518,11 @@ class TestBrainSnapshot(unittest.TestCase):
                 }
             ],
         }
-        with gzip.open(path, "wb") as f:
-            pickle.dump(snapshot, f, protocol=pickle.HIGHEST_PROTOCOL)
+        writer = SnapshotStreamWriter(path)
+        try:
+            writer.append_state(snapshot, reason="legacy-index")
+        finally:
+            writer.close()
         loaded = Brain.load_snapshot(path)
         self.assertEqual(len(loaded.neurons), 2)
         self.assertEqual(len(loaded.synapses), 1)
@@ -532,8 +535,7 @@ class TestBrainSnapshot(unittest.TestCase):
         self.assertEqual(tuple(dst_pos), (1,))
         roundtrip_path = os.path.join(tmp, "roundtrip_snapshot.marble")
         saved_roundtrip = loaded.save_snapshot(roundtrip_path)
-        with gzip.open(saved_roundtrip, "rb") as saved_payload:
-            new_payload = pickle.load(saved_payload)
+        new_payload = self._latest_payload(saved_roundtrip)
         print("roundtrip snapshot layout:", new_payload.get("layout"))
         self.assertEqual(new_payload.get("layout"), "columnar")
         reloaded = Brain.load_snapshot(saved_roundtrip)
@@ -568,8 +570,11 @@ class TestBrainSnapshot(unittest.TestCase):
             "synapses": [],
             "codec_vocab": codec.dump_vocab(),
         }
-        with gzip.open(path, "wb") as f:
-            pickle.dump(legacy_data, f, protocol=pickle.HIGHEST_PROTOCOL)
+        writer = SnapshotStreamWriter(path)
+        try:
+            writer.append_state(legacy_data, reason="legacy-codec")
+        finally:
+            writer.close()
         loaded = Brain.load_snapshot(path)
         print("loaded legacy codec via vocab", hasattr(loaded, "codec"))
         self.assertTrue(hasattr(loaded, "codec"))
@@ -612,8 +617,11 @@ class TestBrainSnapshot(unittest.TestCase):
                 }
             ],
         }
-        with open(legacy_path, "wb") as f:
-            pickle.dump(legacy_data, f, protocol=pickle.HIGHEST_PROTOCOL)
+        writer = SnapshotStreamWriter(legacy_path)
+        try:
+            writer.append_state(legacy_data, reason="legacy-uncompressed")
+        finally:
+            writer.close()
         loaded = Brain.load_snapshot(legacy_path)
         self.assertEqual(len(loaded.neurons), 1)
         neuron = next(iter(loaded.neurons.values()))
@@ -651,9 +659,12 @@ class TestBrainSnapshot(unittest.TestCase):
             snapshot_keep=50,
         )
         paths = [b.save_snapshot() for _ in range(3)]
-        basenames = [os.path.basename(p) for p in paths]
-        self.assertEqual(len(basenames), len(set(basenames)))
-        self.assertGreaterEqual(len(os.listdir(tmp)), 3)
+        self.assertEqual(len(set(paths)), 1)
+        stream_path = paths[0]
+        self.assertTrue(os.path.exists(stream_path))
+        frames = list(iterate_snapshot_frames(stream_path))
+        self.assertGreaterEqual(len(frames), 3)
+        self.assertEqual(len(os.listdir(tmp)), 1)
 
     def test_snapshot_cuda_fallback_does_not_duplicate(self):
         clear_report_group("brain")

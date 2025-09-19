@@ -9,13 +9,13 @@ environments where the heavy training stack (and torch) is unavailable.
 
 from __future__ import annotations
 
-import gzip
 import math
-import pickle
 from array import array
 from typing import Any, Dict, Iterable, List, Mapping, Sequence, Tuple
 
 from PIL import Image, ImageDraw
+
+from .snapshot_stream import SnapshotStreamError, read_latest_state
 
 
 __all__ = ["snapshot_to_image"]
@@ -26,14 +26,10 @@ _TOL = 1e-9
 def _load_snapshot_payload(snapshot_path: str) -> Mapping[str, Any]:
     """Load and return the raw snapshot payload dictionary."""
 
-    with open(snapshot_path, "rb") as probe:
-        magic = probe.read(2)
-    if magic == b"\x1f\x8b":
-        with gzip.open(snapshot_path, "rb") as handle:
-            data = pickle.load(handle)
-    else:
-        with open(snapshot_path, "rb") as handle:
-            data = pickle.load(handle)
+    try:
+        data = read_latest_state(snapshot_path)
+    except SnapshotStreamError as exc:
+        raise ValueError(f"Invalid snapshot stream: {exc}") from exc
     if not isinstance(data, Mapping):
         raise ValueError("Snapshot payload must be a mapping")
     return data
