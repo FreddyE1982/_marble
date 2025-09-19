@@ -101,12 +101,25 @@ def _decode_neuron_positions(data: Mapping[str, Any]) -> List[Tuple[float, ...]]
                 positions.append(tuple(coord_list))
         return positions
 
-    count = int(neurons_block.get("count", 0) or 0)
+    count_value = neurons_block.get("count")
+    count = int(count_value or 0) if count_value is not None else 0
+    encoding = str(neurons_block.get("position_encoding", ""))
+    dims = int(neurons_block.get("position_dims", data.get("n", 0) or 0))
+    if count <= 0 and encoding == "linear":
+        count = len(_coerce_sequence(neurons_block.get("linear_indices", [])))
+    if count <= 0:
+        raw_positions = _coerce_sequence(neurons_block.get("positions", []))
+        if dims > 0 and raw_positions:
+            count = len(raw_positions) // max(dims, 1)
+    if count <= 0:
+        weights_values = _coerce_sequence(neurons_block.get("weights", []))
+        if weights_values:
+            count = len(weights_values)
     if count <= 0:
         return []
-    dims = int(neurons_block.get("position_dims", data.get("n", 0) or 0))
+    if dims <= 0:
+        dims = int(data.get("n", 0) or 0)
     dtype = str(neurons_block.get("position_dtype", "int"))
-    encoding = str(neurons_block.get("position_encoding", ""))
 
     positions: List[Tuple[float, ...]] = []
     if encoding == "linear":

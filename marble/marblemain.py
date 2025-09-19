@@ -83,6 +83,10 @@ _DEFAULT_SNAPSHOT_COMPRESS_LEVEL = _coerce_snapshot_compress_level(
     default=2,
 )
 
+_DEFAULT_BRAIN_MAX_ITERS = 50
+_DEFAULT_BRAIN_ESCAPE_RADIUS = 2.0
+_DEFAULT_SYNAPSE_DIRECTION = "uni"
+
 
 from .codec import UniversalTensorCodec, TensorLike
 
@@ -2162,17 +2166,46 @@ class Brain:
             string_table.append(key)
             return string_index[key]
 
+        bounds_list = _listify_bounds(getattr(self, "bounds", None))
+        sparse_bounds_list = _listify_bounds(getattr(self, "sparse_bounds", None))
+        formula_value = getattr(self, "formula", None)
+        max_iters_value = getattr(self, "max_iters", None)
+        escape_radius_value = getattr(self, "escape_radius", None)
+
         data: Dict[str, Any] = {
             "version": 1,
             "n": self.n,
             "mode": self.mode,
             "size": size_list,
-            "bounds": _listify_bounds(getattr(self, "bounds", None)),
-            "formula": getattr(self, "formula", None),
-            "max_iters": getattr(self, "max_iters", None),
-            "escape_radius": getattr(self, "escape_radius", None),
-            "sparse_bounds": _listify_bounds(getattr(self, "sparse_bounds", None)),
+            "bounds": bounds_list,
+            "formula": formula_value,
+            "max_iters": max_iters_value,
+            "escape_radius": escape_radius_value,
+            "sparse_bounds": sparse_bounds_list,
         }
+
+        if not size_list:
+            data.pop("size", None)
+        if not bounds_list:
+            data.pop("bounds", None)
+        elif self.mode == "grid":
+            try:
+                default_bounds = [list(b) for b in self._normalize_bounds(None)]
+            except Exception:
+                default_bounds = []
+            if bounds_list == default_bounds:
+                data.pop("bounds", None)
+        if formula_value is None:
+            data.pop("formula", None)
+        if max_iters_value is None or int(max_iters_value) == _DEFAULT_BRAIN_MAX_ITERS:
+            data.pop("max_iters", None)
+        if (
+            escape_radius_value is None
+            or math.isclose(float(escape_radius_value), _DEFAULT_BRAIN_ESCAPE_RADIUS)
+        ):
+            data.pop("escape_radius", None)
+        if self.mode != "sparse" or not sparse_bounds_list:
+            data.pop("sparse_bounds", None)
         neuron_positions: List[Tuple[Any, ...]] = []
         neuron_index: Dict[Tuple[Any, ...], int] = {}
         position_dtype = "int" if self.mode == "grid" else "float"
@@ -2384,10 +2417,18 @@ class Brain:
             syn_type_idx = _intern_string(getattr(syn, "type_name", None))
             syn_type_ids_list.append(syn_type_idx if syn_type_idx is not None else -1)
             direction_value = getattr(syn, "direction", None)
-            if direction_value is None:
-                direction_value = "uni"
-            syn_direction_idx = _intern_string(direction_value)
-            syn_direction_ids_list.append(syn_direction_idx if syn_direction_idx is not None else -1)
+            normalized_direction = (
+                _DEFAULT_SYNAPSE_DIRECTION
+                if direction_value is None
+                else str(direction_value)
+            )
+            if normalized_direction == _DEFAULT_SYNAPSE_DIRECTION:
+                syn_direction_ids_list.append(-1)
+            else:
+                syn_direction_idx = _intern_string(normalized_direction)
+                syn_direction_ids_list.append(
+                    syn_direction_idx if syn_direction_idx is not None else -1
+                )
             synapse_count += 1
 
         def _all_close(values: Iterable[float], target: float) -> bool:
@@ -2428,8 +2469,6 @@ class Brain:
             if not lengths_list or not any(lengths_list):
                 return None
             return {
-                "layout": "flat",
-                "count": len(lengths_list),
                 "lengths": _build_int_array(lengths_list),
                 "values": flat,
             }
@@ -2466,6 +2505,15 @@ class Brain:
         tensor_values_block = _pack_ragged_float_vectors(tensor_values)
         if tensor_values_block is not None:
             neurons_block["tensor_values"] = tensor_values_block
+
+        if neurons_block.get("count", 0) == len(neuron_positions):
+            neurons_block.pop("count", None)
+        position_dims_default = self.n
+        if neurons_block.get("position_dims", position_dims_default) == position_dims_default:
+            neurons_block.pop("position_dims", None)
+        default_position_dtype = "int" if self.mode == "grid" else "float"
+        if neurons_block.get("position_dtype", default_position_dtype) == default_position_dtype:
+            neurons_block.pop("position_dtype", None)
         data["neurons"] = neurons_block
 
         synapses_block: Dict[str, Any] = {
@@ -2480,16 +2528,20 @@ class Brain:
         if len(syn_type_ids_list) and not _all_int(syn_type_ids_list, -1):
             synapses_block["type_ids"] = _build_int_array(syn_type_ids_list)
         if syn_direction_ids_list:
-            all_default_direction = True
+            store_direction_ids = False
             for dir_idx in syn_direction_ids_list:
-                if dir_idx < 0 or dir_idx >= len(string_table):
-                    all_default_direction = False
+                if dir_idx < 0:
+                    continue
+                if dir_idx >= len(string_table):
+                    store_direction_ids = True
                     break
-                if string_table[dir_idx] != "uni":
-                    all_default_direction = False
+                if string_table[dir_idx] != _DEFAULT_SYNAPSE_DIRECTION:
+                    store_direction_ids = True
                     break
-            if not all_default_direction:
+            if store_direction_ids:
                 synapses_block["direction_ids"] = _build_int_array(syn_direction_ids_list)
+        if synapses_block.get("count", 0) == len(syn_source_list):
+            synapses_block.pop("count", None)
         data["synapses"] = synapses_block
         if string_table:
             data["string_table"] = string_table
@@ -2563,21 +2615,88 @@ class Brain:
         if data is None or not isinstance(data, dict):
             raise ValueError("Snapshot stream does not contain a valid state")
         mode = data.get("mode", "grid")
+        n_value = int(data.get("n", 1))
+
+        size_raw = data.get("size") if "size" in data else None
+        if isinstance(size_raw, array):
+            try:
+                size_items = size_raw.tolist()
+            except Exception:
+                size_items = list(size_raw)
+        elif isinstance(size_raw, (list, tuple)):
+            size_items = list(size_raw)
+        elif size_raw is None:
+            size_items = None
+        else:
+            try:
+                size_items = list(size_raw)
+            except TypeError:
+                size_items = [size_raw]
+        if size_items:
+            size_param = tuple(int(s) for s in size_items)
+        else:
+            size_param = None
+
+        bounds_raw = data.get("bounds") if "bounds" in data else None
+        if isinstance(bounds_raw, (list, tuple)):
+            bounds_items = list(bounds_raw)
+        elif isinstance(bounds_raw, array):
+            try:
+                bounds_items = bounds_raw.tolist()
+            except Exception:
+                bounds_items = list(bounds_raw)
+        elif bounds_raw is None:
+            bounds_items = None
+        else:
+            try:
+                bounds_items = list(bounds_raw)
+            except TypeError:
+                bounds_items = [bounds_raw]
+        if bounds_items:
+            bounds_param = tuple(
+                tuple(float(v) for v in entry) for entry in bounds_items  # type: ignore[arg-type]
+            )
+        else:
+            bounds_param = None
+
+        sparse_bounds_raw = data.get("sparse_bounds") if "sparse_bounds" in data else None
+        if isinstance(sparse_bounds_raw, (list, tuple)):
+            sparse_bounds_items = list(sparse_bounds_raw)
+        elif isinstance(sparse_bounds_raw, array):
+            try:
+                sparse_bounds_items = sparse_bounds_raw.tolist()
+            except Exception:
+                sparse_bounds_items = list(sparse_bounds_raw)
+        elif sparse_bounds_raw is None:
+            sparse_bounds_items = None
+        else:
+            try:
+                sparse_bounds_items = list(sparse_bounds_raw)
+            except TypeError:
+                sparse_bounds_items = [sparse_bounds_raw]
+        if sparse_bounds_items:
+            sparse_bounds_param = tuple(
+                tuple(entry) if isinstance(entry, (list, tuple)) else (entry,)
+                for entry in sparse_bounds_items
+            )
+        else:
+            sparse_bounds_param = None
+
         if mode == "sparse":
             brain = cls(
-                int(data.get("n", 1)),
+                n_value,
                 mode="sparse",
-                sparse_bounds=tuple(tuple(b) for b in data.get("sparse_bounds", [])),
+                sparse_bounds=tuple(sparse_bounds_param or ()),
                 store_snapshots=False,
             )
         else:
             brain = cls(
-                int(data.get("n", 1)),
-                size=tuple(data.get("size", [])),
-                bounds=tuple(tuple(b) for b in data.get("bounds", [])),
+                n_value,
+                size=size_param,
+                bounds=bounds_param,
                 formula=data.get("formula"),
-                max_iters=int(data.get("max_iters", 50)),
-                escape_radius=float(data.get("escape_radius", 2.0)),
+                max_iters=int(data.get("max_iters", _DEFAULT_BRAIN_MAX_ITERS)),
+                escape_radius=float(data.get("escape_radius", _DEFAULT_BRAIN_ESCAPE_RADIUS)),
                 store_snapshots=False,
             )
         table_raw = data.get("string_table")
@@ -2680,7 +2799,10 @@ class Brain:
         temp_syns: List[Synapse] = []
         prev_pos: Optional[Sequence[float]] = None
         neuron_positions: List[Tuple[Any, ...]] = []
-        size_tuple: Tuple[int, ...] = tuple(int(s) for s in data.get("size", []))
+        if size_param is not None:
+            size_tuple = tuple(int(s) for s in size_param)
+        else:
+            size_tuple = tuple(int(s) for s in data.get("size", []))
         if not size_tuple and isinstance(getattr(brain, "size", None), tuple):
             size_tuple = tuple(int(s) for s in getattr(brain, "size"))
 
@@ -2726,7 +2848,12 @@ class Brain:
             tensor_ref_mode = neurons_block.get("tensor_ref_mode")
             segmented_tensor_refs = tensor_ref_mode == "segmented"
             tensor_pool_length = len(tensor_pool_list)
-            neuron_count = int(neurons_block.get("count", len(weights_list)))
+            if "count" in neurons_block:
+                neuron_count = int(neurons_block.get("count", 0))
+            else:
+                neuron_count = len(weights_list)
+            if neuron_count <= 0 and position_encoding == "linear":
+                neuron_count = len(linear_indices_list)
             if neuron_count <= 0 and position_dims > 0 and positions_list:
                 neuron_count = len(positions_list) // position_dims
             default_neuron_weight = 1.0
