@@ -3683,10 +3683,7 @@ def run_training_with_datapairs(
         start: Optional[Neuron] = None
         if left_to_start is not None:
             for raw_left in raw_left_values:
-                try:
-                    candidate = left_to_start(raw_left, brain)  # type: ignore[arg-type]
-                except Exception:
-                    candidate = None
+                candidate = left_to_start(raw_left, brain)  # type: ignore[arg-type]
                 if start is None and candidate is not None:
                     start = candidate
         if start is None:
