@@ -2139,6 +2139,88 @@ class Brain:
                     return array(typecode, values_list)
             return array("Q", values_list)
 
+        def _encode_int_sequence(values: Iterable[int]) -> Any:
+            values_list = [int(v) for v in values]
+            if not values_list:
+                return array("B")
+            first_value = values_list[0]
+            if len(values_list) >= 4 and all(v == first_value for v in values_list):
+                return {
+                    "enc": "const",
+                    "count": len(values_list),
+                    "value": first_value,
+                }
+            if len(values_list) >= 4:
+                step = values_list[1] - first_value
+                if all(values_list[idx] - values_list[idx - 1] == step for idx in range(1, len(values_list))):
+                    return {
+                        "enc": "range",
+                        "start": first_value,
+                        "step": step,
+                        "count": len(values_list),
+                    }
+            if len(values_list) >= 8 and all(v in (0, 1) for v in values_list):
+                bit_length = len(values_list)
+                byte_length = (bit_length + 7) // 8
+                packed_bits = bytearray(byte_length)
+                for idx, bit in enumerate(values_list):
+                    if bit:
+                        packed_bits[idx // 8] |= 1 << (idx % 8)
+                return {
+                    "enc": "bits",
+                    "count": len(values_list),
+                    "data": bytes(packed_bits),
+                }
+            base_array = _build_int_array(values_list)
+            if len(values_list) >= 4:
+                deltas = [values_list[idx] - values_list[idx - 1] for idx in range(1, len(values_list))]
+                if any(delta != 0 for delta in deltas):
+                    delta_array = _build_int_array(deltas)
+                    base_bytes = base_array.itemsize * len(values_list)
+                    delta_bytes = delta_array.itemsize * len(deltas)
+                    first_bytes = _build_int_array([first_value]).itemsize
+                    if delta_bytes + first_bytes < base_bytes:
+                        return {
+                            "enc": "delta",
+                            "start": first_value,
+                            "deltas": delta_array,
+                            "count": len(values_list),
+                        }
+            return base_array
+
+        def _encode_float_sequence(values: Iterable[float]) -> Any:
+            values_list = [float(v) for v in values]
+            if not values_list:
+                return array("f")
+            first_value = values_list[0]
+            if len(values_list) >= 4 and all(
+                math.isclose(float(v), first_value, rel_tol=1e-9, abs_tol=1e-9)
+                for v in values_list
+            ):
+                return {
+                    "enc": "const",
+                    "count": len(values_list),
+                    "value": first_value,
+                }
+            if len(values_list) >= 4:
+                step = values_list[1] - first_value
+                if all(
+                    math.isclose(
+                        float(values_list[idx] - values_list[idx - 1]),
+                        step,
+                        rel_tol=1e-9,
+                        abs_tol=1e-9,
+                    )
+                    for idx in range(1, len(values_list))
+                ):
+                    return {
+                        "enc": "range",
+                        "start": first_value,
+                        "step": step,
+                        "count": len(values_list),
+                    }
+            return array("f", values_list)
+
         size_attr = getattr(self, "size", None)
         if size_attr is None:
             size_list: List[Any] = []
@@ -2219,6 +2301,15 @@ class Brain:
             if not normalized:
                 return tuple()
 
+            if len(normalized) >= 4:
+                first_row = normalized[0]
+                if all(row == first_row for row in normalized[1:]):
+                    return {
+                        "enc": "repeat",
+                        "count": len(normalized),
+                        "value": list(first_row),
+                    }
+
             def _is_int_like(value: Any) -> bool:
                 return isinstance(value, int) and not isinstance(value, bool)
 
@@ -2232,7 +2323,7 @@ class Brain:
                 if not all_ints:
                     break
             if all_ints:
-                lengths_array = _build_int_array(len(entry) for entry in normalized)
+                lengths_array = _encode_int_sequence(len(entry) for entry in normalized)
                 flat_values = _build_int_array(
                     int(value) if not isinstance(value, bool) else int(bool(value))
                     for entry in normalized
@@ -2260,7 +2351,7 @@ class Brain:
                 if not float_candidates:
                     break
             if float_candidates:
-                lengths_array = _build_int_array(len(entry) for entry in normalized)
+                lengths_array = _encode_int_sequence(len(entry) for entry in normalized)
                 flat = array("d")
                 for entry in normalized:
                     if entry:
@@ -2273,7 +2364,7 @@ class Brain:
             return tuple(normalized)
 
         if "size" in data:
-            size_encoded = _build_int_array(size_list)
+            size_encoded = _encode_int_sequence(size_list)
             data["size"] = size_encoded
         if "bounds" in data:
             bounds_encoded = _pack_numeric_matrix(bounds_list)
@@ -2536,7 +2627,7 @@ class Brain:
                 encoded_segments = [entry.encode("utf-8") for entry in normalized]
             except Exception:
                 return normalized
-            lengths_array = _build_int_array(len(segment) for segment in encoded_segments)
+            lengths_array = _encode_int_sequence(len(segment) for segment in encoded_segments)
             blob = b"".join(encoded_segments)
             if not blob:
                 return normalized
@@ -2585,12 +2676,12 @@ class Brain:
             packed: Dict[str, Any] = {
                 "enc": "sparse",
                 "count": total,
-                "indices": _build_int_array(indices),
+                "indices": _encode_int_sequence(indices),
             }
             if kind == "float":
-                packed["values"] = array("f", encoded_values)
+                packed["values"] = _encode_float_sequence(encoded_values)
             else:
-                packed["values"] = _build_int_array(encoded_values_int)
+                packed["values"] = _encode_int_sequence(encoded_values_int)
             return packed
 
         def _pack_ragged_float_vectors(vectors: Sequence[Iterable[float]]) -> Optional[Dict[str, Any]]:
@@ -2612,7 +2703,7 @@ class Brain:
             if not lengths_list or not any(lengths_list):
                 return None
             return {
-                "lengths": _build_int_array(lengths_list),
+                "lengths": _encode_int_sequence(lengths_list),
                 "values": flat,
             }
 
@@ -2628,7 +2719,7 @@ class Brain:
             if sparse_refs is not None:
                 neurons_block["tensor_refs"] = sparse_refs
             else:
-                neurons_block["tensor_refs"] = _build_int_array(tensor_refs_list)
+                neurons_block["tensor_refs"] = _encode_int_sequence(tensor_refs_list)
         if tensor_assignment_requests:
             neurons_block["tensor_ref_mode"] = "segmented"
         if any(idx >= 0 for idx in tensor_fill_refs_list):
@@ -2640,19 +2731,19 @@ class Brain:
             if sparse_fill_refs is not None:
                 neurons_block["tensor_fill_refs"] = sparse_fill_refs
             else:
-                neurons_block["tensor_fill_refs"] = _build_int_array(
+                neurons_block["tensor_fill_refs"] = _encode_int_sequence(
                     tensor_fill_refs_list
                 )
         if linear_indices_array is not None:
             neurons_block["position_encoding"] = "linear"
-            neurons_block["linear_indices"] = linear_indices_array
+            neurons_block["linear_indices"] = _encode_int_sequence(linear_indices_array)
             neurons_block["position_dims"] = self.n
             neurons_block["position_dtype"] = "int"
         else:
             neurons_block["position_dims"] = self.n
             neurons_block["position_dtype"] = position_dtype
             if position_dtype == "int":
-                neurons_block["positions"] = _build_int_array(int_positions or [])
+                neurons_block["positions"] = _encode_int_sequence(int_positions or [])
             else:
                 neurons_block["positions"] = positions_array if positions_array is not None else array("f")
         if len(weights_array) and not _all_close(weights_array, 1.0):
@@ -2680,7 +2771,7 @@ class Brain:
                 kind="int",
             )
             neurons_block["ages"] = (
-                sparse_ages if sparse_ages is not None else _build_int_array(ages_list)
+                sparse_ages if sparse_ages is not None else _encode_int_sequence(ages_list)
             )
         if len(type_ids_list) and not _all_int(type_ids_list, -1):
             sparse_types = _pack_sparse_numeric(
@@ -2691,7 +2782,7 @@ class Brain:
             neurons_block["type_ids"] = (
                 sparse_types
                 if sparse_types is not None
-                else _build_int_array(type_ids_list)
+                else _encode_int_sequence(type_ids_list)
             )
         tensor_values_block = _pack_ragged_float_vectors(tensor_values)
         if tensor_values_block is not None:
@@ -2709,8 +2800,8 @@ class Brain:
 
         synapses_block: Dict[str, Any] = {
             "count": synapse_count,
-            "source_indices": _build_int_array(syn_source_list),
-            "target_indices": _build_int_array(syn_target_list),
+            "source_indices": _encode_int_sequence(syn_source_list),
+            "target_indices": _encode_int_sequence(syn_target_list),
         }
         if len(syn_weights_array) and not _all_close(syn_weights_array, 1.0):
             sparse_syn_weights = _pack_sparse_numeric(
@@ -2732,7 +2823,7 @@ class Brain:
             synapses_block["ages"] = (
                 sparse_syn_ages
                 if sparse_syn_ages is not None
-                else _build_int_array(syn_ages_list)
+                else _encode_int_sequence(syn_ages_list)
             )
         if len(syn_type_ids_list) and not _all_int(syn_type_ids_list, -1):
             sparse_syn_types = _pack_sparse_numeric(
@@ -2743,7 +2834,7 @@ class Brain:
             synapses_block["type_ids"] = (
                 sparse_syn_types
                 if sparse_syn_types is not None
-                else _build_int_array(syn_type_ids_list)
+                else _encode_int_sequence(syn_type_ids_list)
             )
         if syn_direction_ids_list:
             store_direction_ids = False
@@ -2765,7 +2856,7 @@ class Brain:
                 synapses_block["direction_ids"] = (
                     sparse_directions
                     if sparse_directions is not None
-                    else _build_int_array(syn_direction_ids_list)
+                    else _encode_int_sequence(syn_direction_ids_list)
                 )
         if synapses_block.get("count", 0) == len(syn_source_list):
             synapses_block.pop("count", None)
@@ -2779,7 +2870,7 @@ class Brain:
             data["tensor_pool"] = tensor_pool_block
         if tensor_pool_fills:
             fill_values = array("f", [float(value) for value, _ in tensor_pool_fills])
-            fill_lengths = _build_int_array(length for _, length in tensor_pool_fills)
+            fill_lengths = _encode_int_sequence(length for _, length in tensor_pool_fills)
             data["tensor_pool_fills"] = {
                 "values": fill_values,
                 "lengths": fill_lengths,
@@ -2847,6 +2938,110 @@ class Brain:
         n_value = int(data.get("n", 1))
 
         def _coerce_sequence(value: Any) -> List[Any]:
+            if isinstance(value, dict):
+                encoding = value.get("enc") or value.get("encoding") or value.get("mode")
+                if isinstance(encoding, str):
+                    enc_lower = encoding.lower()
+                    if enc_lower in {"range", "arange"}:
+                        try:
+                            count_val = int(value.get("count", 0))
+                        except Exception:
+                            count_val = 0
+                        count_val = max(0, count_val)
+                        try:
+                            start_raw = value.get("start", 0)
+                            start_val = float(start_raw)
+                        except Exception:
+                            start_val = 0.0
+                        try:
+                            step_raw = value.get("step", 1)
+                            step_val = float(step_raw)
+                        except Exception:
+                            step_val = 1.0
+                        generated = [start_val + step_val * idx for idx in range(count_val)]
+                        if all(abs(val - round(val)) < 1e-9 for val in generated):
+                            return [int(round(val)) for val in generated]
+                        return generated
+                    if enc_lower in {"const", "constant"}:
+                        try:
+                            count_val = int(value.get("count", 0))
+                        except Exception:
+                            count_val = 0
+                        count_val = max(0, count_val)
+                        fill_raw = value.get("value", value.get("default", 0))
+                        try:
+                            fill_val = float(fill_raw)
+                        except Exception:
+                            fill_val = 0.0
+                        if abs(fill_val - round(fill_val)) < 1e-9:
+                            fill_val = int(round(fill_val))
+                        return [fill_val] * count_val
+                    if enc_lower.startswith("delta"):
+                        try:
+                            count_val = int(value.get("count", 0))
+                        except Exception:
+                            count_val = 0
+                        deltas_source = _coerce_list(value.get("deltas", []))
+                        try:
+                            start_raw = value.get("start", 0)
+                            start_val = float(start_raw)
+                        except Exception:
+                            start_val = 0.0
+                        generated: List[float] = [start_val]
+                        current = start_val
+                        for delta_entry in deltas_source:
+                            try:
+                                delta_val = float(delta_entry)
+                            except Exception:
+                                delta_val = 0.0
+                            current += delta_val
+                            generated.append(current)
+                        if count_val <= 0:
+                            count_val = len(generated)
+                        if len(generated) < count_val:
+                            fill_val = generated[-1] if generated else start_val
+                            generated.extend([fill_val] * (count_val - len(generated)))
+                        if len(generated) > count_val:
+                            generated = generated[:count_val]
+                        if all(abs(val - round(val)) < 1e-9 for val in generated):
+                            return [int(round(val)) for val in generated]
+                        return generated
+                    if enc_lower == "bits":
+                        try:
+                            count_val = int(value.get("count", 0))
+                        except Exception:
+                            count_val = 0
+                        payload = (
+                            value.get("data")
+                            if "data" in value
+                            else value.get("payload", value.get("bits", b""))
+                        )
+                        if isinstance(payload, memoryview):
+                            payload_bytes = payload.tobytes()
+                        elif isinstance(payload, (bytes, bytearray)):
+                            payload_bytes = bytes(payload)
+                        else:
+                            try:
+                                payload_bytes = bytes(payload) if payload is not None else b""
+                            except Exception:
+                                payload_bytes = b""
+                        if count_val <= 0:
+                            count_val = len(payload_bytes) * 8
+                        result_bits: List[int] = []
+                        for idx in range(max(0, count_val)):
+                            byte_index = idx // 8
+                            bit_index = idx % 8
+                            bit_value = 0
+                            if byte_index < len(payload_bytes):
+                                bit_value = (payload_bytes[byte_index] >> bit_index) & 1
+                            result_bits.append(int(bit_value))
+                        return result_bits
+                # Fall back to iterating over dictionary values if not a known encoding.
+                items = value.items() if hasattr(value, "items") else value
+                try:
+                    return list(items)
+                except TypeError:
+                    return []
             if isinstance(value, list):
                 return value
             if isinstance(value, array):
@@ -2868,6 +3063,16 @@ class Brain:
         def _decode_numeric_matrix(raw: Any) -> Optional[List[List[Any]]]:
             if raw is None:
                 return None
+            if isinstance(raw, dict):
+                encoding = raw.get("enc") or raw.get("encoding") or raw.get("mode")
+                if isinstance(encoding, str) and encoding.lower() == "repeat":
+                    try:
+                        count_val = int(raw.get("count", 0))
+                    except Exception:
+                        count_val = 0
+                    base = raw.get("value", [])
+                    base_sequence = _coerce_sequence(base)
+                    return [list(base_sequence) for _ in range(max(0, count_val))]
             if isinstance(raw, dict) and "lengths" in raw and "values" in raw:
                 lengths_source = raw.get("lengths", [])
                 values_source = raw.get("values")
@@ -2900,20 +3105,7 @@ class Brain:
             return [seq]
 
         size_raw = data.get("size") if "size" in data else None
-        if isinstance(size_raw, array):
-            try:
-                size_items = size_raw.tolist()
-            except Exception:
-                size_items = list(size_raw)
-        elif isinstance(size_raw, (list, tuple)):
-            size_items = list(size_raw)
-        elif size_raw is None:
-            size_items = None
-        else:
-            try:
-                size_items = list(size_raw)
-            except TypeError:
-                size_items = [size_raw]
+        size_items = _coerce_sequence(size_raw) if size_raw is not None else []
         if size_items:
             size_param = tuple(int(s) for s in size_items)
         else:
@@ -3001,6 +3193,11 @@ class Brain:
             return value
 
         def _coerce_list(value: Any) -> List[Any]:
+            if isinstance(value, dict):
+                encoding = value.get("enc") or value.get("encoding") or value.get("mode")
+                if isinstance(encoding, str) and encoding.lower().startswith("sparse"):
+                    return []
+                return _coerce_sequence(value)
             if isinstance(value, list):
                 return value
             if isinstance(value, array):
@@ -3021,11 +3218,41 @@ class Brain:
         def _sequence_length(raw: Any) -> int:
             if isinstance(raw, dict):
                 encoding = raw.get("enc") or raw.get("encoding") or raw.get("mode")
-                if isinstance(encoding, str) and encoding.lower().startswith("sparse"):
-                    try:
-                        return max(0, int(raw.get("count", 0)))
-                    except Exception:
-                        return 0
+                if isinstance(encoding, str):
+                    enc_lower = encoding.lower()
+                    if enc_lower.startswith("sparse"):
+                        try:
+                            return max(0, int(raw.get("count", 0)))
+                        except Exception:
+                            return 0
+                    if enc_lower in {"range", "arange", "const", "constant"}:
+                        try:
+                            return max(0, int(raw.get("count", 0)))
+                        except Exception:
+                            return 0
+                    if enc_lower.startswith("delta"):
+                        try:
+                            count_val = int(raw.get("count", 0))
+                        except Exception:
+                            count_val = 0
+                        if count_val > 0:
+                            return count_val
+                        deltas = _coerce_list(raw.get("deltas", []))
+                        base = 1 if raw.get("start") is not None else 0
+                        return max(0, len(deltas) + base)
+                    if enc_lower == "bits":
+                        try:
+                            count_val = int(raw.get("count", 0))
+                        except Exception:
+                            count_val = 0
+                        if count_val > 0:
+                            return count_val
+                        payload = raw.get("data", raw.get("payload", raw.get("bits", b"")))
+                        try:
+                            payload_len = len(bytes(payload))
+                        except Exception:
+                            payload_len = 0
+                        return payload_len * 8
                 return 0
             return len(_coerce_list(raw))
 
@@ -3038,46 +3265,149 @@ class Brain:
         ) -> List[Union[int, float]]:
             if isinstance(raw, dict):
                 encoding = raw.get("enc") or raw.get("encoding") or raw.get("mode")
-                if isinstance(encoding, str) and encoding.lower().startswith("sparse"):
-                    try:
-                        count_value = int(raw.get("count", count))
-                    except Exception:
-                        count_value = count
-                    if count_value <= 0:
-                        count_value = count
-                    indices = [int(v) for v in _coerce_list(raw.get("indices", []))]
-                    values_source = _coerce_list(raw.get("values", []))
-                    if indices:
-                        max_index = max(indices) + 1
-                    else:
-                        max_index = 0
-                    target_len = max(count_value, count, max_index)
-                    if expect_float:
-                        default_value = float(default)
-                        decoded: List[Union[int, float]] = [default_value] * target_len
-                        for pos, idx in enumerate(indices):
-                            if 0 <= idx < len(decoded):
-                                value = (
-                                    values_source[pos]
-                                    if pos < len(values_source)
-                                    else default_value
-                                )
-                                decoded[idx] = float(value)
-                    else:
+                if isinstance(encoding, str):
+                    enc_lower = encoding.lower()
+                    if enc_lower in {"range", "arange"}:
+                        try:
+                            count_value = int(raw.get("count", count))
+                        except Exception:
+                            count_value = count
+                        count_value = max(count_value, 0)
+                        if expect_float:
+                            start_val = float(raw.get("start", default))
+                            step_val = float(raw.get("step", 1.0))
+                            values = [start_val + step_val * idx for idx in range(count_value)]
+                        else:
+                            start_val = int(raw.get("start", default))
+                            step_val = int(raw.get("step", 1))
+                            values = [start_val + step_val * idx for idx in range(count_value)]
+                        if count > len(values):
+                            fill_val = values[0] if values else default
+                            values.extend([fill_val] * (count - len(values)))
+                        return values
+                    if enc_lower in {"const", "constant"}:
+                        try:
+                            count_value = int(raw.get("count", count))
+                        except Exception:
+                            count_value = count
+                        count_value = max(count_value, 0)
+                        if expect_float:
+                            fill_value = float(raw.get("value", raw.get("default", default)))
+                        else:
+                            fill_value = int(raw.get("value", raw.get("default", default)))
+                        values = [fill_value] * count_value
+                        if count > len(values):
+                            values.extend([fill_value] * (count - len(values)))
+                        return values
+                    if enc_lower.startswith("delta"):
+                        try:
+                            count_value = int(raw.get("count", count))
+                        except Exception:
+                            count_value = count
+                        deltas_source = _coerce_list(raw.get("deltas", []))
+                        if expect_float:
+                            start_val = float(raw.get("start", default))
+                            default_value = float(default)
+                            deltas_values = [float(v) for v in deltas_source]
+                        else:
+                            start_val = int(raw.get("start", default))
+                            default_value = int(default)
+                            deltas_values = [int(v) for v in deltas_source]
+                        generated: List[Union[int, float]] = [start_val]
+                        current = start_val
+                        for delta_entry in deltas_values:
+                            current = current + delta_entry
+                            generated.append(current)
+                        if count_value <= 0:
+                            count_value = len(generated)
+                        if len(generated) < count_value:
+                            fill_val = generated[-1] if generated else default_value
+                            generated.extend([fill_val] * (count_value - len(generated)))
+                        if len(generated) > count_value:
+                            generated = generated[:count_value]
+                        target_len = max(count_value, count)
+                        if target_len > len(generated):
+                            fill_val = generated[-1] if generated else default_value
+                            generated.extend([fill_val] * (target_len - len(generated)))
+                        result_values = generated[:target_len] if target_len > 0 else []
+                        if expect_float:
+                            return [float(v) for v in result_values]
+                        return [int(v) for v in result_values]
+                    if enc_lower == "bits":
+                        try:
+                            count_value = int(raw.get("count", count))
+                        except Exception:
+                            count_value = count
+                        payload = raw.get("data", raw.get("payload", raw.get("bits", b"")))
+                        if isinstance(payload, memoryview):
+                            payload_bytes = payload.tobytes()
+                        elif isinstance(payload, (bytes, bytearray)):
+                            payload_bytes = bytes(payload)
+                        else:
+                            try:
+                                payload_bytes = bytes(payload)
+                            except Exception:
+                                payload_bytes = b""
+                        if count_value <= 0:
+                            count_value = len(payload_bytes) * 8
+                        target_len = max(count_value, count, 0)
+                        bits_list: List[int] = []
+                        for idx in range(target_len):
+                            byte_index = idx // 8
+                            bit_index = idx % 8
+                            bit_value = 0
+                            if byte_index < len(payload_bytes):
+                                bit_value = (payload_bytes[byte_index] >> bit_index) & 1
+                            bits_list.append(int(bit_value))
+                        if expect_float:
+                            default_value = float(default)
+                            if len(bits_list) < target_len:
+                                bits_list.extend([int(default_value)] * (target_len - len(bits_list)))
+                            return [float(v) for v in bits_list[:target_len]]
                         default_value_int = int(default)
-                        decoded = [default_value_int] * target_len
-                        for pos, idx in enumerate(indices):
-                            if 0 <= idx < len(decoded):
-                                value = (
-                                    values_source[pos]
-                                    if pos < len(values_source)
-                                    else default_value_int
-                                )
-                                decoded[idx] = int(value)
-                    if count > len(decoded):
-                        fill_value = decoded[0] if decoded else default
-                        decoded.extend([fill_value] * (count - len(decoded)))
-                    return decoded
+                        if len(bits_list) < target_len:
+                            bits_list.extend([default_value_int] * (target_len - len(bits_list)))
+                        return bits_list[:target_len]
+                    if enc_lower.startswith("sparse"):
+                        try:
+                            count_value = int(raw.get("count", count))
+                        except Exception:
+                            count_value = count
+                        if count_value <= 0:
+                            count_value = count
+                        indices = [int(v) for v in _coerce_list(raw.get("indices", []))]
+                        values_source = _coerce_list(raw.get("values", []))
+                        if indices:
+                            max_index = max(indices) + 1
+                        else:
+                            max_index = 0
+                        target_len = max(count_value, count, max_index)
+                        if expect_float:
+                            default_value = float(default)
+                            decoded: List[Union[int, float]] = [default_value] * target_len
+                            for pos, idx in enumerate(indices):
+                                if 0 <= idx < len(decoded):
+                                    value = (
+                                        values_source[pos]
+                                        if pos < len(values_source)
+                                        else default_value
+                                    )
+                                    decoded[idx] = float(value)
+                        else:
+                            default_value_int = int(default)
+                            decoded = [default_value_int] * target_len
+                            for pos, idx in enumerate(indices):
+                                if 0 <= idx < len(decoded):
+                                    value = (
+                                        values_source[pos]
+                                        if pos < len(values_source)
+                                        else default_value_int
+                                    )
+                                    decoded[idx] = int(value)
+                        if count > len(decoded):
+                            fill_value = decoded[0] if decoded else default
+                            decoded.extend([fill_value] * (count - len(decoded)))
+                        return decoded
             seq = _coerce_list(raw)
             if expect_float:
                 values: List[Union[int, float]] = [float(v) for v in seq]

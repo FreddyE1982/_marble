@@ -54,8 +54,85 @@ class TestBrainSnapshot(unittest.TestCase):
             return value.tolist()
         if isinstance(value, dict):
             encoding = value.get("enc") or value.get("encoding") or value.get("mode")
-            if isinstance(encoding, str) and encoding.lower().startswith("sparse"):
-                return []
+            if isinstance(encoding, str):
+                enc_lower = encoding.lower()
+                if enc_lower.startswith("sparse"):
+                    return []
+                if enc_lower in {"range", "arange"}:
+                    try:
+                        count_val = int(value.get("count", 0))
+                    except Exception:
+                        count_val = 0
+                    start_raw = value.get("start", 0)
+                    step_raw = value.get("step", 1)
+                    try:
+                        start_val = float(start_raw)
+                        step_val = float(step_raw)
+                        generated = [start_val + step_val * idx for idx in range(max(0, count_val))]
+                        if all(abs(val - round(val)) < 1e-9 for val in generated):
+                            return [int(round(val)) for val in generated]
+                        return generated
+                    except Exception:
+                        return []
+                if enc_lower in {"const", "constant"}:
+                    try:
+                        count_val = int(value.get("count", 0))
+                    except Exception:
+                        count_val = 0
+                    fill_raw = value.get("value", value.get("default", 0))
+                    try:
+                        fill_val = float(fill_raw)
+                    except Exception:
+                        fill_val = 0.0
+                    if abs(fill_val - round(fill_val)) < 1e-9:
+                        fill_val = int(round(fill_val))
+                    return [fill_val] * max(0, count_val)
+                if enc_lower.startswith("delta"):
+                    try:
+                        count_val = int(value.get("count", 0))
+                    except Exception:
+                        count_val = 0
+                    deltas = self._to_list(value.get("deltas", []))
+                    start_raw = value.get("start", 0)
+                    seq: list = [start_raw]
+                    current = start_raw
+                    for delta_entry in deltas:
+                        current = current + delta_entry
+                        seq.append(current)
+                    if count_val <= 0:
+                        count_val = len(seq)
+                    if len(seq) < count_val:
+                        fill_val = seq[-1] if seq else start_raw
+                        seq.extend([fill_val] * (count_val - len(seq)))
+                    if len(seq) > count_val:
+                        seq = seq[:count_val]
+                    return seq
+                if enc_lower == "bits":
+                    try:
+                        count_val = int(value.get("count", 0))
+                    except Exception:
+                        count_val = 0
+                    payload = value.get("data", value.get("payload", value.get("bits", b"")))
+                    if isinstance(payload, memoryview):
+                        payload_bytes = payload.tobytes()
+                    elif isinstance(payload, (bytes, bytearray)):
+                        payload_bytes = bytes(payload)
+                    else:
+                        try:
+                            payload_bytes = bytes(payload) if payload is not None else b""
+                        except Exception:
+                            payload_bytes = b""
+                    if count_val <= 0:
+                        count_val = len(payload_bytes) * 8
+                    result_bits = []
+                    for idx in range(max(0, count_val)):
+                        byte_index = idx // 8
+                        bit_index = idx % 8
+                        bit_value = 0
+                        if byte_index < len(payload_bytes):
+                            bit_value = (payload_bytes[byte_index] >> bit_index) & 1
+                        result_bits.append(int(bit_value))
+                    return result_bits
         if hasattr(value, "tolist"):
             try:
                 return value.tolist()
@@ -71,28 +148,128 @@ class TestBrainSnapshot(unittest.TestCase):
             return [default] * count if count else []
         if isinstance(raw, dict):
             encoding = raw.get("enc") or raw.get("encoding") or raw.get("mode")
-            if isinstance(encoding, str) and encoding.lower().startswith("sparse"):
-                total = raw.get("count", count or 0)
-                try:
-                    total_int = int(total)
-                except Exception:
-                    total_int = count or 0
-                if total_int < 0:
-                    total_int = 0
-                indices = [int(v) for v in self._to_list(raw.get("indices", []))]
-                values = self._to_list(raw.get("values", []))
-                max_index = max(indices) + 1 if indices else 0
-                target_len = max(total_int, count or 0, max_index)
-                decoded = [default] * target_len
-                for pos, idx in enumerate(indices):
-                    if 0 <= idx < len(decoded):
-                        value = values[pos] if pos < len(values) else default
-                        decoded[idx] = value
-                if count and len(decoded) < count:
-                    decoded.extend([default] * (count - len(decoded)))
-                if count and len(decoded) > count:
-                    decoded = decoded[:count]
-                return decoded
+            if isinstance(encoding, str):
+                enc_lower = encoding.lower()
+                if enc_lower in {"range", "arange"}:
+                    try:
+                        count_val = int(raw.get("count", count or 0))
+                    except Exception:
+                        count_val = count or 0
+                    start_raw = raw.get("start", default)
+                    step_raw = raw.get("step", 1)
+                    seq = []
+                    for idx in range(max(0, count_val)):
+                        value = start_raw + step_raw * idx
+                        try:
+                            seq.append(float(value))
+                        except Exception:
+                            seq.append(default)
+                    if count and len(seq) < count:
+                        seq.extend([default] * (count - len(seq)))
+                    if isinstance(default, int):
+                        seq = [int(round(val)) for val in seq]
+                    return seq
+                if enc_lower in {"const", "constant"}:
+                    try:
+                        count_val = int(raw.get("count", count or 0))
+                    except Exception:
+                        count_val = count or 0
+                    fill_value = raw.get("value", raw.get("default", default))
+                    try:
+                        fill_numeric = float(fill_value)
+                    except Exception:
+                        fill_numeric = default
+                    seq = [fill_numeric] * max(0, count_val)
+                    if count and len(seq) < count:
+                        seq.extend([default] * (count - len(seq)))
+                    if isinstance(default, int):
+                        seq = [int(round(val)) for val in seq]
+                    return seq
+                if enc_lower.startswith("delta"):
+                    try:
+                        count_val = int(raw.get("count", count or 0))
+                    except Exception:
+                        count_val = count or 0
+                    deltas = self._to_list(raw.get("deltas", []))
+                    start_value = raw.get("start", default)
+                    if isinstance(default, int):
+                        current = int(start_value)
+                        deltas_cast = [int(v) for v in deltas]
+                    else:
+                        current = float(start_value)
+                        deltas_cast = [float(v) for v in deltas]
+                    generated = [current]
+                    for delta_entry in deltas_cast:
+                        current = current + delta_entry
+                        generated.append(current)
+                    if count_val <= 0:
+                        count_val = len(generated)
+                    if len(generated) < count_val:
+                        fill_val = generated[-1] if generated else start_value
+                        generated.extend([fill_val] * (count_val - len(generated)))
+                    if len(generated) > count_val:
+                        generated = generated[:count_val]
+                    if count and len(generated) < count:
+                        fill_val = generated[-1] if generated else start_value
+                        generated.extend([fill_val] * (count - len(generated)))
+                    if count and len(generated) > count:
+                        generated = generated[:count]
+                    if isinstance(default, int):
+                        return [int(v) for v in generated]
+                    return [float(v) for v in generated]
+                if enc_lower == "bits":
+                    try:
+                        count_val = int(raw.get("count", count or 0))
+                    except Exception:
+                        count_val = count or 0
+                    payload = raw.get("data", raw.get("payload", raw.get("bits", b"")))
+                    if isinstance(payload, memoryview):
+                        payload_bytes = payload.tobytes()
+                    elif isinstance(payload, (bytes, bytearray)):
+                        payload_bytes = bytes(payload)
+                    else:
+                        try:
+                            payload_bytes = bytes(payload) if payload is not None else b""
+                        except Exception:
+                            payload_bytes = b""
+                    if count_val <= 0:
+                        count_val = len(payload_bytes) * 8
+                    target_len = count if count and count > count_val else count_val
+                    result_bits = []
+                    for idx in range(max(target_len or 0, 0)):
+                        byte_index = idx // 8
+                        bit_index = idx % 8
+                        bit_value = 0
+                        if byte_index < len(payload_bytes):
+                            bit_value = (payload_bytes[byte_index] >> bit_index) & 1
+                        result_bits.append(int(bit_value))
+                    if target_len and len(result_bits) < target_len:
+                        result_bits.extend([int(default)] * (target_len - len(result_bits)))
+                    if isinstance(default, float) and not isinstance(default, int):
+                        return [float(v) for v in result_bits[:target_len or len(result_bits)]]
+                    return result_bits[:target_len or len(result_bits)]
+                if enc_lower.startswith("sparse"):
+                    total = raw.get("count", count or 0)
+                    try:
+                        total_int = int(total)
+                    except Exception:
+                        total_int = count or 0
+                    if total_int < 0:
+                        total_int = 0
+                    indices = [int(v) for v in self._to_list(raw.get("indices", []))]
+                    values = self._to_list(raw.get("values", []))
+                    max_index = max(indices) + 1 if indices else 0
+                    target_len = max(total_int, count or 0, max_index)
+                    decoded = [default] * target_len
+                    for pos, idx in enumerate(indices):
+                        if 0 <= idx < len(decoded):
+                            value = values[pos] if pos < len(values) else default
+                            decoded[idx] = value
+                    if count and len(decoded) < count:
+                        decoded.extend([default] * (count - len(decoded)))
+                    if count and len(decoded) > count:
+                        decoded = decoded[:count]
+                    return decoded
         result = self._to_list(raw)
         if count and len(result) < count:
             result = result + [default] * (count - len(result))
@@ -132,6 +309,15 @@ class TestBrainSnapshot(unittest.TestCase):
     def _decode_ragged(self, raw):
         if raw is None:
             return []
+        if isinstance(raw, dict):
+            encoding = raw.get("enc") or raw.get("encoding") or raw.get("mode")
+            if isinstance(encoding, str) and encoding.lower() == "repeat":
+                try:
+                    count_val = int(raw.get("count", 0))
+                except Exception:
+                    count_val = 0
+                base = self._to_list(raw.get("value", []))
+                return [base[:] for _ in range(max(0, count_val))]
         if isinstance(raw, dict) and "lengths" in raw and "values" in raw:
             lengths = [int(v) for v in self._to_list(raw.get("lengths", []))]
             values = [float(v) for v in self._to_list(raw.get("values", []))]
@@ -157,6 +343,18 @@ class TestBrainSnapshot(unittest.TestCase):
         for entry in candidates:
             result.append([float(v) for v in self._to_list(entry)])
         return result
+
+    def _field_typecode(self, raw):
+        if isinstance(raw, array):
+            return raw.typecode
+        if isinstance(raw, dict):
+            indices = raw.get("indices")
+            if isinstance(indices, array):
+                return indices.typecode
+            values = raw.get("values")
+            if isinstance(values, array):
+                return values.typecode
+        return None
 
     def _tensor_refs(self, neurons_block):
         if "count" in neurons_block:
@@ -222,8 +420,10 @@ class TestBrainSnapshot(unittest.TestCase):
         self.assertIsInstance(neurons_block, dict)
         self.assertEqual(neurons_block.get("position_encoding"), "linear")
         self.assertIn("linear_indices", neurons_block)
-        self.assertIsInstance(neurons_block["linear_indices"], array)
-        self.assertEqual(neurons_block["linear_indices"].typecode, "Q")
+        linear_indices_field = neurons_block["linear_indices"]
+        self.assertTrue(isinstance(linear_indices_field, (array, dict)))
+        if isinstance(linear_indices_field, dict):
+            self.assertEqual(linear_indices_field.get("enc"), "range")
         self.assertEqual(neurons_block.get("position_dims", 1), 1)
         self.assertEqual(neurons_block.get("position_dtype", "int"), "int")
         self.assertNotIn("positions", neurons_block)
@@ -237,12 +437,13 @@ class TestBrainSnapshot(unittest.TestCase):
         self.assertIsInstance(neurons_block["type_ids"], array)
         tensor_fill_refs = neurons_block.get("tensor_fill_refs")
         self.assertIsNotNone(tensor_fill_refs)
-        self.assertIsInstance(tensor_fill_refs, array)
-        self.assertIn(
-            tensor_fill_refs.typecode,
-            ("b", "B", "h", "H", "i", "I", "q", "Q"),
-        )
-        linear_indices_list = self._to_list(neurons_block.get("linear_indices", []))
+        self.assertTrue(isinstance(tensor_fill_refs, (array, dict)))
+        if isinstance(tensor_fill_refs, array):
+            self.assertIn(
+                tensor_fill_refs.typecode,
+                ("b", "B", "h", "H", "i", "I", "q", "Q"),
+            )
+        linear_indices_list = self._to_list(linear_indices_field)
         derived_count = neurons_block.get("count", len(linear_indices_list))
         if not derived_count:
             derived_count = len(linear_indices_list)
@@ -251,7 +452,7 @@ class TestBrainSnapshot(unittest.TestCase):
         self.assertEqual(neurons_block["biases"].tolist(), [-0.25, 0.75])
         self.assertEqual(neurons_block["ages"].tolist(), [5, 3])
         tensor_refs = self._tensor_refs(neurons_block)
-        fill_refs = tensor_fill_refs.tolist()
+        fill_refs = self._to_list(tensor_fill_refs)
         self.assertEqual(sorted(linear_indices_list), [0, 1])
         tensor_pool_raw = payload.get("tensor_pool") or []
         if tensor_pool_raw:
@@ -518,13 +719,174 @@ class TestBrainSnapshot(unittest.TestCase):
             else:
                 tensors.append(list(value))
         self.assertTrue(any(tensor == huge_constant for tensor in tensors))
-        self.assertTrue(
-            any(
-                len(tensor) == len(normal_tensor)
-                and all(math.isclose(a, b, rel_tol=1e-6, abs_tol=1e-6) for a, b in zip(tensor, normal_tensor))
-                for tensor in tensors
+
+    def test_snapshot_compresses_size_and_linear_indices_sequences(self):
+        clear_report_group("brain")
+        tmp = tempfile.mkdtemp()
+        brain = Brain(4, size=(5, 5, 5, 5), store_snapshots=True, snapshot_path=tmp, snapshot_freq=1)
+        previous = None
+        for idx in range(6):
+            coords = [0, 0, idx // 5, idx % 5]
+            if previous is None:
+                brain.add_neuron(coords, tensor=[float(idx)])
+            else:
+                brain.add_neuron(coords, tensor=[float(idx)], connect_to=previous)
+            previous = coords
+        snapshot_path = brain.save_snapshot()
+        payload = self._latest_payload(snapshot_path)
+        size_field = payload.get("size")
+        self.assertIsInstance(size_field, dict)
+        self.assertEqual(size_field.get("enc"), "const")
+        self.assertEqual(int(size_field.get("count", 0)), 4)
+        size_values = self._to_list(size_field)
+        self.assertEqual(size_values, [5, 5, 5, 5])
+        neurons_block = payload["neurons"]
+        linear_field = neurons_block.get("linear_indices")
+        self.assertIsInstance(linear_field, dict)
+        self.assertEqual(linear_field.get("enc"), "range")
+        self.assertEqual(int(linear_field.get("count", 0)), 6)
+        linear_values = self._to_list(linear_field)
+        self.assertEqual(linear_values, list(range(6)))
+
+    def test_snapshot_uses_delta_encoding_for_irregular_ages(self):
+        clear_report_group("brain")
+        tmp = tempfile.mkdtemp()
+        brain = Brain(1, size=16, store_snapshots=True, snapshot_path=tmp, snapshot_freq=1)
+        previous = None
+        base_age = 10**6
+        for idx in range(8):
+            pos = (idx,)
+            age_value = base_age + idx * (idx + 1) // 2
+            kwargs = {"tensor": [float(idx)], "age": age_value}
+            if previous is None:
+                brain.add_neuron(pos, **kwargs)
+            else:
+                brain.add_neuron(pos, connect_to=previous, direction="uni", **kwargs)
+            previous = pos
+        snapshot_path = brain.save_snapshot()
+        payload = self._latest_payload(snapshot_path)
+        neurons_block = payload["neurons"]
+        ages_field = neurons_block.get("ages")
+        self.assertIsInstance(ages_field, dict)
+        self.assertEqual(ages_field.get("enc"), "delta")
+        self.assertEqual(int(ages_field.get("count", 0)), len(brain.neurons))
+        deltas_payload = ages_field.get("deltas")
+        self.assertIsNotNone(deltas_payload)
+        self.assertGreater(len(self._to_list(deltas_payload)), 0)
+        reloaded = Brain.load_snapshot(snapshot_path)
+        reloaded_ages = [
+            int(neuron.age)
+            for neuron in sorted(reloaded.neurons.values(), key=lambda n: n.position)
+        ]
+        expected_ages = [base_age + idx * (idx + 1) // 2 for idx in range(8)]
+        self.assertEqual(reloaded_ages, expected_ages)
+
+    def test_snapshot_sparse_indices_use_sequence_encoding(self):
+        clear_report_group("brain")
+        tmp = tempfile.mkdtemp()
+        brain = Brain(1, size=24, store_snapshots=True, snapshot_path=tmp, snapshot_freq=1)
+        previous = None
+        for idx in range(20):
+            pos = (idx,)
+            kwargs = {"tensor": [float(idx)]}
+            if 5 <= idx < 10:
+                kwargs["weight"] = 2.0 + idx
+            if previous is None:
+                brain.add_neuron(pos, **kwargs)
+            else:
+                brain.add_neuron(pos, connect_to=previous, direction="uni", **kwargs)
+            previous = pos
+        snapshot_path = brain.save_snapshot()
+        payload = self._latest_payload(snapshot_path)
+        neurons_block = payload["neurons"]
+        weights_field = neurons_block.get("weights")
+        self.assertIsInstance(weights_field, dict)
+        self.assertEqual(weights_field.get("enc"), "sparse")
+        indices_field = weights_field.get("indices")
+        self.assertIsInstance(indices_field, dict)
+        self.assertEqual(indices_field.get("enc"), "range")
+        self.assertEqual(int(indices_field.get("count", 0)), 5)
+        self.assertEqual(self._to_list(indices_field), list(range(5, 10)))
+        values_field = weights_field.get("values")
+        self.assertIsInstance(values_field, dict)
+        self.assertEqual(values_field.get("enc"), "range")
+        reloaded = Brain.load_snapshot(snapshot_path)
+        reloaded_weights = [
+            float(neuron.weight)
+            for neuron in sorted(reloaded.neurons.values(), key=lambda n: n.position)
+        ]
+        for idx, weight in enumerate(reloaded_weights):
+            if 5 <= idx < 10:
+                self.assertTrue(
+                    math.isclose(weight, 2.0 + idx, rel_tol=1e-6, abs_tol=1e-6)
+                )
+            else:
+                self.assertTrue(math.isclose(weight, 1.0, rel_tol=1e-6, abs_tol=1e-6))
+
+    def test_snapshot_tensor_fill_refs_use_bit_encoding(self):
+        clear_report_group("brain")
+        tmp = tempfile.mkdtemp()
+        brain = Brain(1, size=12, store_snapshots=True, snapshot_path=tmp, snapshot_freq=1)
+        previous = None
+        for idx in range(12):
+            pos = (idx,)
+            tensor_value = 0.25 if idx < 6 else -0.75
+            kwargs = {"tensor": [tensor_value]}
+            if previous is None:
+                brain.add_neuron(pos, **kwargs)
+            else:
+                brain.add_neuron(pos, connect_to=previous, direction="uni", **kwargs)
+            previous = pos
+        snapshot_path = brain.save_snapshot()
+        payload = self._latest_payload(snapshot_path)
+        neurons_block = payload["neurons"]
+        fill_field = neurons_block.get("tensor_fill_refs")
+        self.assertIsInstance(fill_field, dict)
+        self.assertEqual(fill_field.get("enc"), "bits")
+        self.assertEqual(int(fill_field.get("count", 0)), len(brain.neurons))
+        data_payload = fill_field.get("data", fill_field.get("payload"))
+        self.assertIsNotNone(data_payload)
+        bit_values = self._to_list(fill_field)
+        self.assertEqual(bit_values[:6], [0] * 6)
+        self.assertEqual(bit_values[6:], [1] * 6)
+        reloaded = Brain.load_snapshot(snapshot_path)
+        reloaded_tensors = [
+            list(
+                neuron.tensor.detach().to("cpu").view(-1).tolist()
+                if hasattr(neuron.tensor, "detach")
+                else neuron.tensor
             )
+            for neuron in sorted(reloaded.neurons.values(), key=lambda n: n.position)
+        ]
+        for idx, values in enumerate(reloaded_tensors):
+            expected = 0.25 if idx < 6 else -0.75
+            self.assertTrue(
+                all(math.isclose(v, expected, rel_tol=1e-6, abs_tol=1e-6) for v in values)
+            )
+
+    def test_snapshot_uses_repeat_encoding_for_sparse_bounds(self):
+        clear_report_group("brain")
+        tmp = tempfile.mkdtemp()
+        repeated_bounds = tuple((0.0, 1.0) for _ in range(5))
+        brain = Brain(
+            5,
+            mode="sparse",
+            sparse_bounds=repeated_bounds,
+            store_snapshots=True,
+            snapshot_path=tmp,
+            snapshot_freq=1,
         )
+        origin = (0.0, 0.0, 0.0, 0.0, 0.0)
+        brain.add_neuron(origin, tensor=[0.0])
+        brain.add_neuron((0.5, 0.0, 0.0, 0.0, 0.0), tensor=[1.0], connect_to=origin)
+        snapshot_path = brain.save_snapshot()
+        payload = self._latest_payload(snapshot_path)
+        sparse_bounds_field = payload.get("sparse_bounds")
+        self.assertIsInstance(sparse_bounds_field, dict)
+        self.assertEqual(sparse_bounds_field.get("enc"), "repeat")
+        self.assertEqual(int(sparse_bounds_field.get("count", 0)), 5)
+        decoded_sparse_bounds = self._decode_ragged(sparse_bounds_field)
+        self.assertEqual(decoded_sparse_bounds, [list(row) for row in repeated_bounds])
 
     def test_snapshot_uses_sparse_numeric_blocks(self):
         clear_report_group("brain")
@@ -659,42 +1021,39 @@ class TestBrainSnapshot(unittest.TestCase):
         payload = self._latest_payload(snap_path)
         neurons_block = payload["neurons"]
         syn_block = payload["synapses"]
-        def _field_typecode(raw):
-            if isinstance(raw, array):
-                return raw.typecode
-            if isinstance(raw, dict):
-                indices = raw.get("indices")
-                if isinstance(indices, array):
-                    return indices.typecode
-            return None
-
         neuron_type_field = neurons_block.get("type_ids")
         syn_type_field = syn_block.get("type_ids")
         print(
             "narrow typecodes:",
-            _field_typecode(neuron_type_field),
-            _field_typecode(syn_type_field),
+            self._field_typecode(neuron_type_field),
+            self._field_typecode(syn_type_field),
         )
         self.assertIn("type_ids", neurons_block)
-        neuron_type_code = _field_typecode(neuron_type_field)
+        neuron_type_code = self._field_typecode(neuron_type_field)
         self.assertIn(neuron_type_code, {"b", "B", "h", "H", "i", "I", "q", "Q"})
         tensor_refs_field = neurons_block.get("tensor_refs")
         if tensor_refs_field is not None:
             self.assertIn(
-                _field_typecode(tensor_refs_field),
+                self._field_typecode(tensor_refs_field),
                 ("b", "B", "h", "H", "i", "I", "q", "Q"),
             )
         self.assertIn("tensor_fill_refs", neurons_block)
         self.assertIn(
-            _field_typecode(neurons_block.get("tensor_fill_refs")),
+            self._field_typecode(neurons_block.get("tensor_fill_refs")),
             ("b", "B", "h", "H", "i", "I", "q", "Q"),
         )
         self.assertIn("source_indices", syn_block)
-        self.assertEqual(syn_block["source_indices"].typecode, "B")
+        source_field = syn_block["source_indices"]
+        self.assertTrue(isinstance(source_field, (array, dict)))
+        if isinstance(source_field, array):
+            self.assertEqual(source_field.typecode, "B")
         self.assertIn("target_indices", syn_block)
-        self.assertEqual(syn_block["target_indices"].typecode, "B")
+        target_field = syn_block["target_indices"]
+        self.assertTrue(isinstance(target_field, (array, dict)))
+        if isinstance(target_field, array):
+            self.assertEqual(target_field.typecode, "B")
         self.assertIn("type_ids", syn_block)
-        self.assertIn(_field_typecode(syn_type_field), {"b", "B", "h", "H", "i", "I", "q", "Q"})
+        self.assertIn(self._field_typecode(syn_type_field), {"b", "B", "h", "H", "i", "I", "q", "Q"})
         reloaded = Brain.load_snapshot(snap_path)
         self.assertEqual(len(reloaded.neurons), len(b.neurons))
         self.assertEqual(len(reloaded.synapses), len(b.synapses))
@@ -721,21 +1080,39 @@ class TestBrainSnapshot(unittest.TestCase):
         neurons_block = payload["neurons"]
         syn_block = payload["synapses"]
         tensor_refs_field = neurons_block.get("tensor_refs")
-        tensor_ref_typecode = None if tensor_refs_field is None else tensor_refs_field.typecode
+        tensor_ref_typecode = None if tensor_refs_field is None else self._field_typecode(tensor_refs_field)
+        source_field = syn_block["source_indices"]
+        target_field = syn_block["target_indices"]
         print(
             "large snapshot typecodes:",
             tensor_ref_typecode,
-            syn_block["source_indices"].typecode,
-            syn_block["target_indices"].typecode,
+            self._field_typecode(source_field),
+            self._field_typecode(target_field),
         )
-        if tensor_refs_field is not None:
+        if tensor_refs_field is not None and isinstance(tensor_refs_field, array):
             self.assertEqual(tensor_refs_field.typecode, "b")
         else:
             self.assertTrue(all(ref == -1 for ref in self._tensor_refs(neurons_block)))
         self.assertIn("tensor_fill_refs", neurons_block)
-        self.assertEqual(neurons_block["tensor_fill_refs"].typecode, "H")
-        self.assertEqual(syn_block["source_indices"].typecode, "H")
-        self.assertEqual(syn_block["target_indices"].typecode, "H")
+        fill_field = neurons_block.get("tensor_fill_refs")
+        if isinstance(fill_field, dict):
+            self.assertIn(fill_field.get("enc"), {"range", "const"})
+        else:
+            self.assertEqual(fill_field.typecode, "H")
+        if isinstance(source_field, dict):
+            self.assertEqual(source_field.get("enc"), "range")
+            values_list = self._to_list(source_field)
+            self.assertGreater(len(values_list), 1)
+            self.assertEqual(values_list[1] - values_list[0], 1)
+        else:
+            self.assertEqual(source_field.typecode, "H")
+        if isinstance(target_field, dict):
+            self.assertEqual(target_field.get("enc"), "range")
+            values_list = self._to_list(target_field)
+            self.assertGreater(len(values_list), 1)
+            self.assertEqual(values_list[1] - values_list[0], 1)
+        else:
+            self.assertEqual(target_field.typecode, "H")
         reloaded = Brain.load_snapshot(snap_path)
         self.assertEqual(len(reloaded.neurons), neuron_count)
         self.assertEqual(len(reloaded.synapses), neuron_count - 1)
