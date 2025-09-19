@@ -2106,6 +2106,30 @@ class Brain:
                 return (True, first_value)
             return (False, first_value)
 
+        def _estimate_payload_size(payload: Any) -> int:
+            if isinstance(payload, array):
+                return payload.itemsize * len(payload)
+            if isinstance(payload, (bytes, bytearray, memoryview)):
+                return len(payload)
+            if isinstance(payload, dict):
+                size = 16
+                for key, value in payload.items():
+                    size += 8 + _estimate_payload_size(value)
+                return size
+            if isinstance(payload, (list, tuple)):
+                size = 8
+                for item in payload:
+                    size += _estimate_payload_size(item)
+                return size
+            if isinstance(payload, int):
+                bits = int(payload).bit_length()
+                return max(1, (bits + 7) // 8)
+            if isinstance(payload, float):
+                return 8
+            if payload is None:
+                return 0
+            return 8
+
         def _build_int_array(values: Iterable[int]) -> array:
             values_list = [int(v) for v in values]
             if not values_list:
@@ -2143,6 +2167,7 @@ class Brain:
             values_list = [int(v) for v in values]
             if not values_list:
                 return array("B")
+            unique_count = len(set(values_list))
             first_value = values_list[0]
             if len(values_list) >= 4 and all(v == first_value for v in values_list):
                 return {
@@ -2173,19 +2198,92 @@ class Brain:
                 }
             base_array = _build_int_array(values_list)
             base_bytes = base_array.itemsize * len(values_list)
+            bitpack_direct: Optional[Tuple[Any, int]] = None
+            sparse_fill_candidate: Optional[Tuple[Any, int]] = None
+            if len(values_list) >= 8:
+                frequency: Dict[int, int] = {}
+                for value in values_list:
+                    frequency[value] = frequency.get(value, 0) + 1
+                if frequency:
+                    fill_value, fill_count = max(
+                        frequency.items(), key=lambda item: item[1]
+                    )
+                    if 0 < fill_count < len(values_list) and fill_count * 2 >= len(values_list):
+                        indices: List[int] = []
+                        overrides: List[int] = []
+                        for idx, value in enumerate(values_list):
+                            if value != fill_value:
+                                indices.append(idx)
+                                overrides.append(value)
+                        if indices:
+                            indices_array = _build_int_array(indices)
+                            overrides_array = _build_int_array(overrides)
+                            payload = {
+                                "enc": "sparse-fill",
+                                "count": len(values_list),
+                                "fill": int(fill_value),
+                                "indices": indices_array,
+                                "values": overrides_array,
+                            }
+                            payload_size = _estimate_payload_size(payload)
+                            if payload_size < base_bytes:
+                                sparse_fill_candidate = (payload, payload_size)
+            if len(values_list) >= 8 and unique_count > 32:
+                min_value = min(values_list)
+                max_value = max(values_list)
+                if max_value != min_value:
+                    offset = int(min_value)
+                    normalized = [int(v) - offset for v in values_list]
+                    max_norm = int(max_value) - offset
+                    if max_norm >= 0:
+                        bits_per = max(1, max_norm.bit_length())
+                        target_bits = base_array.itemsize * 8
+                        if bits_per < target_bits:
+                            total_bits = bits_per * len(values_list)
+                            packed = bytearray((total_bits + 7) // 8)
+                            mask = (1 << bits_per) - 1
+                            for idx, value in enumerate(normalized):
+                                normalized_val = int(value) & mask
+                                bit_pos = idx * bits_per
+                                byte_pos = bit_pos // 8
+                                bit_offset = bit_pos % 8
+                                packed[byte_pos] |= (normalized_val << bit_offset) & 0xFF
+                                spill = bit_offset + bits_per - 8
+                                if spill > 0 and byte_pos + 1 < len(packed):
+                                    packed[byte_pos + 1] |= normalized_val >> (bits_per - spill)
+                            bitpack_payload: Dict[str, Any] = {
+                                "enc": "bitpack-direct",
+                                "bits_per": bits_per,
+                                "count": len(values_list),
+                                "data": bytes(packed),
+                            }
+                            if offset != 0:
+                                bitpack_payload["offset"] = offset
+                            bitpack_bytes = len(packed)
+                            bitpack_overhead = 16
+                            if offset != 0:
+                                bitpack_overhead += 8
+                            total_bitpack = bitpack_bytes + bitpack_overhead
+                            if total_bitpack < base_bytes:
+                                bitpack_direct = (bitpack_payload, total_bitpack)
+            delta_candidate: Optional[Tuple[Any, int]] = None
             if len(values_list) >= 4:
                 deltas = [values_list[idx] - values_list[idx - 1] for idx in range(1, len(values_list))]
                 if any(delta != 0 for delta in deltas):
                     delta_array = _build_int_array(deltas)
                     delta_bytes = delta_array.itemsize * len(deltas)
                     first_bytes = _build_int_array([first_value]).itemsize
-                    if delta_bytes + first_bytes < base_bytes:
-                        return {
-                            "enc": "delta",
-                            "start": first_value,
-                            "deltas": delta_array,
-                            "count": len(values_list),
-                        }
+                    delta_total = delta_bytes + first_bytes + 12
+                    if delta_total < base_bytes:
+                        delta_candidate = (
+                            {
+                                "enc": "delta",
+                                "start": first_value,
+                                "deltas": delta_array,
+                                "count": len(values_list),
+                            },
+                            delta_total,
+                        )
             palette_candidate: Optional[Tuple[Any, int]] = None
             if len(values_list) >= 8:
                 palette_values: List[int] = []
@@ -2323,6 +2421,12 @@ class Brain:
                 candidates.append(rle_candidate)
             if pattern_candidate:
                 candidates.append(pattern_candidate)
+            if delta_candidate:
+                candidates.append(delta_candidate)
+            if bitpack_direct:
+                candidates.append(bitpack_direct)
+            if sparse_fill_candidate:
+                candidates.append(sparse_fill_candidate)
             if candidates:
                 best_payload, _ = min(candidates, key=lambda item: item[1])
                 return best_payload
@@ -2333,6 +2437,7 @@ class Brain:
             if not values_list:
                 return array("f")
             first_value = values_list[0]
+            base_bytes_float = len(values_list) * 4
             if len(values_list) >= 4 and all(
                 math.isclose(float(v), first_value, rel_tol=1e-9, abs_tol=1e-9)
                 for v in values_list
@@ -2359,7 +2464,59 @@ class Brain:
                         "step": step,
                         "count": len(values_list),
                     }
+            if len(values_list) >= 4:
+                int_values: List[int] = []
+                all_int_like = True
+                for entry in values_list:
+                    rounded = round(entry)
+                    if abs(entry - float(rounded)) > 1e-9:
+                        all_int_like = False
+                        break
+                    int_values.append(int(rounded))
+                if all_int_like:
+                    int_payload = _encode_int_sequence(int_values)
+                    estimated_size = _estimate_payload_size(int_payload) + 12
+                    return {
+                        "enc": "intcast",
+                        "values": int_payload,
+                        "count": len(values_list),
+                    }
             base_array = array("f", values_list)
+            sparse_fill_candidate_float: Optional[Tuple[Any, int]] = None
+            if len(values_list) >= 8:
+                frequency_float: Dict[float, int] = {}
+                for value in values_list:
+                    frequency_float[value] = frequency_float.get(value, 0) + 1
+                if frequency_float:
+                    fill_value_float, fill_count_float = max(
+                        frequency_float.items(), key=lambda item: item[1]
+                    )
+                    if (
+                        0 < fill_count_float < len(values_list)
+                        and fill_count_float * 2 >= len(values_list)
+                    ):
+                        indices_float: List[int] = []
+                        overrides_float: List[float] = []
+                        for idx, value in enumerate(values_list):
+                            if value != fill_value_float:
+                                indices_float.append(idx)
+                                overrides_float.append(value)
+                        if indices_float:
+                            indices_array_float = _build_int_array(indices_float)
+                            overrides_array_float = array("f", overrides_float)
+                            payload_float = {
+                                "enc": "sparse-fill",
+                                "count": len(values_list),
+                                "fill": float(fill_value_float),
+                                "indices": indices_array_float,
+                                "values": overrides_array_float,
+                            }
+                            payload_size_float = _estimate_payload_size(payload_float)
+                            if payload_size_float < base_bytes_float:
+                                sparse_fill_candidate_float = (
+                                    payload_float,
+                                    payload_size_float,
+                                )
             palette_candidate_float: Optional[Tuple[Any, int]] = None
             if len(values_list) >= 8:
                 palette_values: List[float] = []
@@ -2505,6 +2662,8 @@ class Brain:
                 candidates_float.append(rle_candidate_float)
             if pattern_candidate_float:
                 candidates_float.append(pattern_candidate_float)
+            if sparse_fill_candidate_float:
+                candidates_float.append(sparse_fill_candidate_float)
             if candidates_float:
                 best_payload_float, _ = min(
                     candidates_float, key=lambda item: item[1]
@@ -2922,11 +3081,48 @@ class Brain:
             blob = b"".join(encoded_segments)
             if not blob:
                 return normalized
-            return {
+            utf_payload = {
                 "enc": "utf-8",
                 "lengths": lengths_array,
                 "data": blob,
             }
+            best_payload = utf_payload
+            best_size = _estimate_payload_size(lengths_array) + len(blob) + 16
+            if len(encoded_segments) >= 2:
+                prefix_lengths: List[int] = []
+                suffix_lengths: List[int] = []
+                suffix_blob = bytearray()
+                previous = encoded_segments[0]
+                for segment in encoded_segments[1:]:
+                    max_prefix = min(len(previous), len(segment))
+                    prefix_len = 0
+                    while prefix_len < max_prefix and previous[prefix_len] == segment[prefix_len]:
+                        prefix_len += 1
+                    prefix_lengths.append(prefix_len)
+                    suffix = segment[prefix_len:]
+                    suffix_lengths.append(len(suffix))
+                    if suffix:
+                        suffix_blob.extend(suffix)
+                    previous = segment
+                prefix_payload = {
+                    "enc": "prefix",
+                    "encoding": "utf-8",
+                    "base": encoded_segments[0],
+                    "prefix_lengths": _encode_int_sequence(prefix_lengths),
+                    "suffix_lengths": _encode_int_sequence(suffix_lengths),
+                    "suffix_data": bytes(suffix_blob),
+                }
+                prefix_size = (
+                    len(encoded_segments[0])
+                    + len(suffix_blob)
+                    + _estimate_payload_size(prefix_payload["prefix_lengths"])
+                    + _estimate_payload_size(prefix_payload["suffix_lengths"])
+                    + 24
+                )
+                if prefix_size < best_size:
+                    best_payload = prefix_payload
+                    best_size = prefix_size
+            return best_payload
 
         def _pack_sparse_numeric(
             values: Sequence[Any],
@@ -3411,6 +3607,46 @@ class Brain:
                                 value_chunk |= payload_bytes[byte_pos + 1] << bits_used
                             decoded_indices.append(int(value_chunk & mask))
                         return decoded_indices
+                    if enc_lower == "bitpack-direct":
+                        try:
+                            count_val = int(value.get("count", 0))
+                        except Exception:
+                            count_val = 0
+                        bits_per = value.get("bits_per", value.get("bits", 0))
+                        try:
+                            bits_per_int = int(bits_per)
+                        except Exception:
+                            bits_per_int = 0
+                        payload = value.get("data", value.get("payload", b""))
+                        if isinstance(payload, memoryview):
+                            payload_bytes = payload.tobytes()
+                        elif isinstance(payload, (bytes, bytearray)):
+                            payload_bytes = bytes(payload)
+                        else:
+                            try:
+                                payload_bytes = bytes(payload) if payload is not None else b""
+                            except Exception:
+                                payload_bytes = b""
+                        if bits_per_int <= 0:
+                            return [int(value.get("offset", 0))] * max(0, count_val)
+                        mask = (1 << bits_per_int) - 1
+                        total_bits = len(payload_bytes) * 8
+                        offset_val = int(value.get("offset", 0))
+                        target = max(0, count_val)
+                        decoded_direct: List[int] = []
+                        for idx in range(target):
+                            bit_pos = idx * bits_per_int
+                            if bit_pos + bits_per_int > total_bits:
+                                decoded_direct.append(offset_val)
+                                continue
+                            byte_pos = bit_pos // 8
+                            bit_offset = bit_pos % 8
+                            value_chunk = payload_bytes[byte_pos] >> bit_offset
+                            bits_used = 8 - bit_offset
+                            if bits_used < bits_per_int and byte_pos + 1 < len(payload_bytes):
+                                value_chunk |= payload_bytes[byte_pos + 1] << bits_used
+                            decoded_direct.append(int(value_chunk & mask) + offset_val)
+                        return decoded_direct
                     if enc_lower == "pattern":
                         pattern_seq = _to_simple_list(value.get("pattern", []))
                         try:
@@ -3476,6 +3712,30 @@ class Brain:
                         ):
                             return [int(round(float(val))) for val in resolved]
                         return resolved
+                    if enc_lower == "intcast":
+                        return _coerce_list(value.get("values", []))
+                    if enc_lower == "sparse-fill":
+                        try:
+                            count_val = int(value.get("count", 0))
+                        except Exception:
+                            count_val = 0
+                        count_val = max(0, count_val)
+                        fill_value = value.get("fill", 0)
+                        base_sequence: List[Any] = [fill_value] * count_val
+                        indices_list = [int(v) for v in _coerce_list(value.get("indices", []))]
+                        override_values = _coerce_list(value.get("values", []))
+                        target_len = max(count_val, (max(indices_list) + 1) if indices_list else 0)
+                        if target_len > len(base_sequence):
+                            base_sequence.extend([fill_value] * (target_len - len(base_sequence)))
+                        for pos, idx in enumerate(indices_list):
+                            if 0 <= idx < len(base_sequence):
+                                replacement = (
+                                    override_values[pos]
+                                    if pos < len(override_values)
+                                    else fill_value
+                                )
+                                base_sequence[idx] = replacement
+                        return base_sequence
                 # Fall back to iterating over dictionary values if not a known encoding.
                 items = value.items() if hasattr(value, "items") else value
                 try:
@@ -3588,34 +3848,90 @@ class Brain:
                 store_snapshots=False,
             )
         table_raw = data.get("string_table")
-        if isinstance(table_raw, dict) and "lengths" in table_raw:
-            lengths_seq = _coerce_sequence(table_raw.get("lengths", []))
-            try:
-                lengths = [int(v) for v in lengths_seq]
-            except Exception:
-                lengths = []
-            payload = table_raw.get("data", table_raw.get("payload", b""))
-            if isinstance(payload, memoryview):
-                payload_bytes = payload.tobytes()
-            elif isinstance(payload, (bytes, bytearray)):
-                payload_bytes = bytes(payload)
-            else:
+        if isinstance(table_raw, dict):
+            enc_field = table_raw.get("enc", table_raw.get("encoding"))
+            enc_lower = str(enc_field).lower() if isinstance(enc_field, str) else ""
+            if enc_lower == "prefix":
+                base_raw = table_raw.get("base", b"")
+                if isinstance(base_raw, str):
+                    try:
+                        base_bytes = base_raw.encode(table_raw.get("encoding", "utf-8"))
+                    except Exception:
+                        base_bytes = base_raw.encode("utf-8")
+                else:
+                    try:
+                        base_bytes = bytes(base_raw)
+                    except Exception:
+                        base_bytes = b""
+                charset = str(table_raw.get("encoding", table_raw.get("charset", "utf-8")))
+                prefix_lengths = [
+                    int(v)
+                    for v in _coerce_sequence(table_raw.get("prefix_lengths", []))
+                ]
+                suffix_lengths = [
+                    int(v)
+                    for v in _coerce_sequence(table_raw.get("suffix_lengths", []))
+                ]
+                suffix_payload = table_raw.get("suffix_data", table_raw.get("data", b""))
+                if isinstance(suffix_payload, memoryview):
+                    suffix_bytes = suffix_payload.tobytes()
+                elif isinstance(suffix_payload, (bytes, bytearray)):
+                    suffix_bytes = bytes(suffix_payload)
+                else:
+                    try:
+                        suffix_bytes = bytes(suffix_payload)
+                    except Exception:
+                        suffix_bytes = b""
+                decoded_entries = []
                 try:
+                    decoded_entries.append(base_bytes.decode(charset))
+                except Exception:
+                    decoded_entries.append(base_bytes.decode("utf-8", errors="replace"))
+                offset = 0
+                previous = base_bytes
+                for idx, prefix_len in enumerate(prefix_lengths):
+                    safe_prefix = max(0, min(prefix_len, len(previous)))
+                    suffix_len = suffix_lengths[idx] if idx < len(suffix_lengths) else 0
+                    safe_suffix = max(0, suffix_len)
+                    chunk = suffix_bytes[offset : offset + safe_suffix]
+                    offset += safe_suffix
+                    combined = previous[:safe_prefix] + chunk
+                    try:
+                        decoded_entries.append(combined.decode(charset))
+                    except Exception:
+                        decoded_entries.append(combined.decode("utf-8", errors="replace"))
+                    previous = combined
+                string_table = decoded_entries
+            elif "lengths" in table_raw:
+                lengths_seq = _coerce_sequence(table_raw.get("lengths", []))
+                try:
+                    lengths = [int(v) for v in lengths_seq]
+                except Exception:
+                    lengths = []
+                payload = table_raw.get("data", table_raw.get("payload", b""))
+                if isinstance(payload, memoryview):
+                    payload_bytes = payload.tobytes()
+                elif isinstance(payload, (bytes, bytearray)):
                     payload_bytes = bytes(payload)
-                except Exception:
-                    payload_bytes = b""
-            encoding = str(table_raw.get("enc", table_raw.get("encoding", "utf-8")))
-            offset = 0
-            decoded_entries: List[str] = []
-            for length in lengths:
-                safe_length = max(0, int(length))
-                chunk = payload_bytes[offset : offset + safe_length]
-                offset += safe_length
-                try:
-                    decoded_entries.append(chunk.decode(encoding))
-                except Exception:
-                    decoded_entries.append(chunk.decode("utf-8", errors="replace"))
-            string_table = decoded_entries
+                else:
+                    try:
+                        payload_bytes = bytes(payload)
+                    except Exception:
+                        payload_bytes = b""
+                charset = str(table_raw.get("encoding", table_raw.get("enc", "utf-8")))
+                offset = 0
+                decoded_entries: List[str] = []
+                for length in lengths:
+                    safe_length = max(0, int(length))
+                    chunk = payload_bytes[offset : offset + safe_length]
+                    offset += safe_length
+                    try:
+                        decoded_entries.append(chunk.decode(charset))
+                    except Exception:
+                        decoded_entries.append(chunk.decode("utf-8", errors="replace"))
+                string_table = decoded_entries
+            else:
+                string_table = None
         elif isinstance(table_raw, (list, tuple)):
             string_table = [str(entry) for entry in table_raw]
         else:
@@ -3703,6 +4019,26 @@ class Brain:
                         if bits_per_int <= 0:
                             return 0
                         return (payload_len * 8) // bits_per_int
+                    if enc_lower == "bitpack-direct":
+                        try:
+                            count_val = int(raw.get("count", 0))
+                        except Exception:
+                            count_val = 0
+                        if count_val > 0:
+                            return count_val
+                        payload = raw.get("data", raw.get("payload", b""))
+                        try:
+                            payload_len = len(bytes(payload))
+                        except Exception:
+                            payload_len = 0
+                        bits_per = raw.get("bits_per", raw.get("bits"))
+                        try:
+                            bits_per_int = int(bits_per)
+                        except Exception:
+                            bits_per_int = 0
+                        if bits_per_int <= 0:
+                            return 0
+                        return (payload_len * 8) // bits_per_int
                     if enc_lower == "palette":
                         indices = _coerce_list(raw.get("indices", []))
                         try:
@@ -3712,6 +4048,8 @@ class Brain:
                         if count_val > 0:
                             return max(len(indices), count_val)
                         return len(indices)
+                    if enc_lower == "intcast":
+                        return _sequence_length(raw.get("values"))
                 return 0
             return len(_coerce_list(raw))
 
@@ -3899,6 +4237,50 @@ class Brain:
                         if expect_float:
                             return [float(v) for v in decoded_indices]
                         return [int(v) for v in decoded_indices]
+                    if enc_lower == "bitpack-direct":
+                        try:
+                            count_value = int(raw.get("count", count))
+                        except Exception:
+                            count_value = count
+                        bits_per = raw.get("bits_per", raw.get("bits", 0))
+                        try:
+                            bits_per_int = int(bits_per)
+                        except Exception:
+                            bits_per_int = 0
+                        payload = raw.get("data", raw.get("payload", b""))
+                        if isinstance(payload, memoryview):
+                            payload_bytes = payload.tobytes()
+                        elif isinstance(payload, (bytes, bytearray)):
+                            payload_bytes = bytes(payload)
+                        else:
+                            try:
+                                payload_bytes = bytes(payload) if payload is not None else b""
+                            except Exception:
+                                payload_bytes = b""
+                        offset_val = int(raw.get("offset", 0))
+                        target_len = max(count_value, count, 0)
+                        if bits_per_int <= 0:
+                            if expect_float:
+                                return [float(offset_val)] * target_len
+                            return [int(offset_val)] * target_len
+                        mask = (1 << bits_per_int) - 1
+                        total_bits = len(payload_bytes) * 8
+                        decoded_values: List[int] = []
+                        for idx in range(target_len):
+                            bit_pos = idx * bits_per_int
+                            if bit_pos + bits_per_int > total_bits:
+                                decoded_values.append(offset_val)
+                                continue
+                            byte_pos = bit_pos // 8
+                            bit_offset = bit_pos % 8
+                            value_chunk = payload_bytes[byte_pos] >> bit_offset
+                            bits_used = 8 - bit_offset
+                            if bits_used < bits_per_int and byte_pos + 1 < len(payload_bytes):
+                                value_chunk |= payload_bytes[byte_pos + 1] << bits_used
+                            decoded_values.append(int(value_chunk & mask) + offset_val)
+                        if expect_float:
+                            return [float(v) for v in decoded_values]
+                        return decoded_values
                     if enc_lower == "palette":
                         try:
                             count_value = int(raw.get("count", count))
@@ -3929,6 +4311,17 @@ class Brain:
                         if expect_float:
                             return [float(v) for v in decoded]
                         return [int(v) for v in decoded]
+                    if enc_lower == "intcast":
+                        inner_default = float(default) if expect_float else int(default)
+                        inner_values = _decode_numeric_sequence(
+                            raw.get("values", []),
+                            count=count,
+                            default=inner_default,
+                            expect_float=expect_float,
+                        )
+                        if expect_float:
+                            return [float(v) for v in inner_values]
+                        return [int(v) for v in inner_values]
                     if enc_lower.startswith("sparse"):
                         try:
                             count_value = int(raw.get("count", count))
@@ -3944,7 +4337,13 @@ class Brain:
                             max_index = 0
                         target_len = max(count_value, count, max_index)
                         if expect_float:
-                            default_value = float(default)
+                            if "fill" in raw:
+                                try:
+                                    default_value = float(raw.get("fill", default))
+                                except Exception:
+                                    default_value = float(default)
+                            else:
+                                default_value = float(default)
                             decoded: List[Union[int, float]] = [default_value] * target_len
                             for pos, idx in enumerate(indices):
                                 if 0 <= idx < len(decoded):
@@ -3955,7 +4354,13 @@ class Brain:
                                     )
                                     decoded[idx] = float(value)
                         else:
-                            default_value_int = int(default)
+                            if "fill" in raw:
+                                try:
+                                    default_value_int = int(raw.get("fill", default))
+                                except Exception:
+                                    default_value_int = int(default)
+                            else:
+                                default_value_int = int(default)
                             decoded = [default_value_int] * target_len
                             for pos, idx in enumerate(indices):
                                 if 0 <= idx < len(decoded):
