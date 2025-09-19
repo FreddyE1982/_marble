@@ -151,6 +151,47 @@ class TestBrainSnapshot(unittest.TestCase):
         decoded = loaded.codec.decode(tokens)
         self.assertEqual(decoded, "foo bar foo bar")
 
+    def test_snapshot_tensor_pool_and_inline(self):
+        clear_report_group("brain")
+        tmp = tempfile.mkdtemp()
+        brain = Brain(1, size=4, store_snapshots=True, snapshot_path=tmp, snapshot_freq=1)
+        repeated_tensor = [0.125, -0.5]
+        inline_tensor = [0.75, -0.125, 0.5]
+        brain.add_neuron((0,), tensor=repeated_tensor, type_name="dup")
+        brain.add_neuron((1,), tensor=repeated_tensor, connect_to=(0,), direction="uni", type_name="dup")
+        brain.add_neuron((2,), tensor=inline_tensor, connect_to=(1,), direction="uni", type_name="unique")
+        snap_path = brain.save_snapshot()
+        with gzip.open(snap_path, "rb") as payload_file:
+            payload = pickle.load(payload_file)
+        neurons_block = payload["neurons"]
+        tensor_refs = neurons_block["tensor_refs"].tolist()
+        tensor_fill_refs = neurons_block.get("tensor_fill_refs", array("b"))
+        tensor_fill_vals = tensor_fill_refs.tolist() if hasattr(tensor_fill_refs, "tolist") else list(tensor_fill_refs)
+        self.assertTrue(all(ref == -1 for ref in tensor_fill_vals))
+        self.assertEqual(neurons_block.get("tensor_ref_mode"), "segmented")
+        tensor_pool = payload.get("tensor_pool")
+        self.assertEqual(tensor_pool, [repeated_tensor])
+        tensor_values = neurons_block.get("tensor_values")
+        self.assertEqual(len(tensor_values), 1)
+        for actual, expected in zip(tensor_values[0], inline_tensor):
+            self.assertTrue(math.isclose(actual, expected, rel_tol=1e-6, abs_tol=1e-6))
+        self.assertEqual(tensor_refs[0], tensor_refs[1])
+        self.assertEqual(tensor_refs[0], 0)
+        self.assertEqual(tensor_refs[2], 1)
+        reloaded = Brain.load_snapshot(snap_path)
+        reloaded_tensors = [
+            list(neuron.tensor.detach().to("cpu").view(-1).tolist())
+            if hasattr(neuron.tensor, "detach")
+            else list(neuron.tensor)
+            for neuron in sorted(reloaded.neurons.values(), key=lambda n: n.position)
+        ]
+        for actual, expected in zip(reloaded_tensors[0], repeated_tensor):
+            self.assertTrue(math.isclose(actual, expected, rel_tol=1e-6, abs_tol=1e-6))
+        for actual, expected in zip(reloaded_tensors[1], repeated_tensor):
+            self.assertTrue(math.isclose(actual, expected, rel_tol=1e-6, abs_tol=1e-6))
+        for actual, expected in zip(reloaded_tensors[2], inline_tensor):
+            self.assertTrue(math.isclose(actual, expected, rel_tol=1e-6, abs_tol=1e-6))
+
     def test_snapshot_omits_default_fields(self):
         clear_report_group("brain")
         tmp = tempfile.mkdtemp()
@@ -246,23 +287,22 @@ class TestBrainSnapshot(unittest.TestCase):
             payload = pickle.load(payload_file)
         tensor_pool = payload.get("tensor_pool")
         tensor_pool_fills = payload.get("tensor_pool_fills")
-        self.assertIsInstance(tensor_pool, list)
+        neurons_block = payload["neurons"]
+        tensor_values = neurons_block.get("tensor_values")
+        self.assertTrue(tensor_pool is None or tensor_pool == [])
         self.assertIsInstance(tensor_pool_fills, list)
-        self.assertEqual(len(tensor_pool), 1)
-        self.assertTrue(
-            any(
-                len(entry) == len(normal_tensor)
-                and all(math.isclose(a, b, rel_tol=1e-6, abs_tol=1e-6) for a, b in zip(entry, normal_tensor))
-                for entry in tensor_pool
-            )
-        )
+        self.assertIsInstance(tensor_values, list)
+        self.assertEqual(len(tensor_values), 1)
+        self.assertEqual(len(tensor_values[0]), len(normal_tensor))
+        for actual, expected in zip(tensor_values[0], normal_tensor):
+            self.assertTrue(math.isclose(actual, expected, rel_tol=1e-6, abs_tol=1e-6))
         fills_as_dicts = [entry for entry in tensor_pool_fills if isinstance(entry, dict)]
         self.assertTrue(any(entry.get("length") == 4096 for entry in fills_as_dicts))
         fill_entry = next(entry for entry in fills_as_dicts if entry.get("length") == 4096)
         self.assertAlmostEqual(fill_entry.get("value"), 3.75)
-        neurons_block = payload["neurons"]
         tensor_refs = neurons_block["tensor_refs"].tolist()
         fill_refs = neurons_block["tensor_fill_refs"].tolist()
+        self.assertEqual(neurons_block.get("tensor_ref_mode"), "segmented")
         self.assertEqual(tensor_refs[0], -1)
         self.assertEqual(fill_refs[0], 0)
         self.assertEqual(fill_refs[1], -1)

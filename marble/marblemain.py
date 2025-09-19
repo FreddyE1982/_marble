@@ -2140,8 +2140,10 @@ class Brain:
         tensor_fill_refs_list: List[int] = []
         tensor_pool: List[Tuple[float, ...]] = []
         tensor_pool_fills: List[Tuple[float, int]] = []
-        tensor_index: Dict[Tuple[float, ...], int] = {}
         tensor_fill_index: Dict[Tuple[float, int], int] = {}
+        tensor_usage: Dict[Tuple[float, ...], int] = {}
+        tensor_payloads: Dict[Tuple[float, ...], Tuple[float, ...]] = {}
+        tensor_assignment_requests: List[Tuple[int, Tuple[float, ...]]] = []
 
         for idx, (pos, neuron) in enumerate(self.neurons.items()):  # type: ignore[union-attr]
             if isinstance(pos, tuple):
@@ -2160,6 +2162,7 @@ class Brain:
             tensor_list = tensor_to_list(neuron.tensor)
             tensor_idx = -1
             tensor_fill_idx = -1
+            pending_tensor_key: Optional[Tuple[float, ...]] = None
             if tensor_list:
                 is_uniform, uniform_value = _is_uniform_sequence(tensor_list)
                 if is_uniform:
@@ -2171,13 +2174,34 @@ class Brain:
                         tensor_fill_index[fill_key] = tensor_fill_idx
                 else:
                     tensor_key = tuple(float(x) for x in tensor_list)
-                    tensor_idx = tensor_index.get(tensor_key, -1)
-                    if tensor_idx < 0:
-                        tensor_idx = len(tensor_pool)
-                        tensor_pool.append(tensor_key)
-                        tensor_index[tensor_key] = tensor_idx
+                    pending_tensor_key = tensor_key
+                    tensor_usage[tensor_key] = tensor_usage.get(tensor_key, 0) + 1
+                    tensor_payloads[tensor_key] = tensor_key
             tensor_refs_list.append(tensor_idx)
             tensor_fill_refs_list.append(tensor_fill_idx)
+            if pending_tensor_key is not None:
+                tensor_assignment_requests.append((idx, pending_tensor_key))
+
+        tensor_values: List[List[float]] = []
+        if tensor_assignment_requests:
+            tensor_pool_map: Dict[Tuple[float, ...], int] = {}
+            tensor_values_map: Dict[Tuple[float, ...], int] = {}
+            for neuron_idx, tensor_key in tensor_assignment_requests:
+                usage_count = tensor_usage.get(tensor_key, 0)
+                if usage_count > 1:
+                    pool_idx = tensor_pool_map.get(tensor_key)
+                    if pool_idx is None:
+                        pool_idx = len(tensor_pool)
+                        tensor_pool_map[tensor_key] = pool_idx
+                        tensor_pool.append(tensor_payloads[tensor_key])
+                    tensor_refs_list[neuron_idx] = pool_idx
+                else:
+                    inline_idx = tensor_values_map.get(tensor_key)
+                    if inline_idx is None:
+                        inline_idx = len(tensor_values)
+                        tensor_values_map[tensor_key] = inline_idx
+                        tensor_values.append([float(v) for v in tensor_payloads[tensor_key]])
+                    tensor_refs_list[neuron_idx] = len(tensor_pool) + inline_idx
 
         if linear_indices_array is not None and linear_index_strides is not None:
             computed_linear: Optional[array] = None
@@ -2323,6 +2347,8 @@ class Brain:
             "count": len(neuron_positions),
             "tensor_refs": _build_int_array(tensor_refs_list),
         }
+        if tensor_assignment_requests:
+            neurons_block["tensor_ref_mode"] = "segmented"
         if any(idx >= 0 for idx in tensor_fill_refs_list):
             neurons_block["tensor_fill_refs"] = _build_int_array(tensor_fill_refs_list)
         if linear_indices_array is not None:
@@ -2345,6 +2371,8 @@ class Brain:
             neurons_block["ages"] = _build_int_array(ages_list)
         if len(type_ids_list) and not _all_int(type_ids_list, -1):
             neurons_block["type_ids"] = _build_int_array(type_ids_list)
+        if tensor_values:
+            neurons_block["tensor_values"] = [list(entry) for entry in tensor_values]
         data["neurons"] = neurons_block
 
         synapses_block: Dict[str, Any] = {
@@ -2550,6 +2578,9 @@ class Brain:
                 tensor_values_list = [list(tv) for tv in tensor_values_raw]
             else:
                 tensor_values_list = [list(tv) for tv in _coerce_list(tensor_values_raw)]
+            tensor_ref_mode = neurons_block.get("tensor_ref_mode")
+            segmented_tensor_refs = tensor_ref_mode == "segmented"
+            tensor_pool_length = len(tensor_pool_list)
             neuron_count = int(neurons_block.get("count", len(weights_list)))
             if neuron_count <= 0 and position_dims > 0 and positions_list:
                 neuron_count = len(positions_list) // position_dims
@@ -2603,7 +2634,16 @@ class Brain:
                 if 0 <= tensor_fill_idx < len(tensor_pool_fills):
                     fill_value, fill_length = tensor_pool_fills[tensor_fill_idx]
                     tensor_payload = [float(fill_value)] * int(max(0, fill_length))
-                elif tensor_pool_list and 0 <= tensor_idx < len(tensor_pool_list):
+                elif segmented_tensor_refs:
+                    if tensor_pool_list and 0 <= tensor_idx < tensor_pool_length:
+                        tensor_payload = list(tensor_pool_list[tensor_idx])
+                    else:
+                        inline_idx = tensor_idx - tensor_pool_length
+                        if 0 <= inline_idx < len(tensor_values_list):
+                            tensor_payload = list(tensor_values_list[inline_idx])
+                        else:
+                            tensor_payload = []
+                elif tensor_pool_list and 0 <= tensor_idx < tensor_pool_length:
                     tensor_payload = list(tensor_pool_list[tensor_idx])
                 elif 0 <= tensor_idx < len(tensor_values_list):
                     tensor_payload = list(tensor_values_list[tensor_idx])
