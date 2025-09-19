@@ -3627,8 +3627,10 @@ def run_training_with_datapairs(
 
     batch: List[DataPair] = []
     batch_index = 0
+    _gc_interval_batches = max(16, max(1, batch_sz) * 4)
+    _last_gc_batch = 0
     def _process_batch(items: List[DataPair], idx: int, max_steps_cur: int) -> None:
-        nonlocal count
+        nonlocal count, _last_gc_batch
         enc_left_list: List[Any] = []
         enc_right_list: List[Any] = []
         torch = w._torch  # type: ignore[attr-defined]
@@ -3735,7 +3737,9 @@ def run_training_with_datapairs(
             except Exception:
                 pass
         del items, enc_left, enc_right
-        gc.collect()
+        if idx - _last_gc_batch >= _gc_interval_batches:
+            gc.collect()
+            _last_gc_batch = idx
 
     for i, item in enumerate(data_iter):
         dp = _normalize_pair(item)
