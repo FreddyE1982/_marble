@@ -2206,7 +2206,7 @@ class Brain:
                     values_array = _build_int_array(palette_values)
                     bits_per = max(1, (len(palette_values) - 1).bit_length())
                     indices_payload: Any
-                    if bits_per <= 4:
+                    if bits_per <= 8:
                         total_bits = len(palette_indices) * bits_per
                         packed = bytearray((total_bits + 7) // 8)
                         mask = (1 << bits_per) - 1
@@ -2262,33 +2262,70 @@ class Brain:
                         current_count = 1
                 runs_values.append(current_value)
                 runs_counts.append(current_count)
-                if len(runs_values) * 2 < len(values_list):
-                    values_array = _build_int_array(runs_values)
-                    counts_array = _build_int_array(runs_counts)
-                    rle_bytes = (
-                        values_array.itemsize * len(runs_values)
-                        + counts_array.itemsize * len(runs_counts)
+                values_array = _build_int_array(runs_values)
+                counts_array = _build_int_array(runs_counts)
+                rle_bytes = (
+                    values_array.itemsize * len(runs_values)
+                    + counts_array.itemsize * len(runs_counts)
+                )
+                rle_overhead = 12 + 4 * len(runs_values)
+                total_rle = rle_bytes + rle_overhead
+                if total_rle < base_bytes:
+                    rle_candidate = (
+                        {
+                            "enc": "rle",
+                            "values": values_array,
+                            "counts": counts_array,
+                            "count": len(values_list),
+                        },
+                        total_rle,
                     )
-                    rle_overhead = 12 + 4 * len(runs_values)
-                    total_rle = rle_bytes + rle_overhead
-                    if total_rle < base_bytes:
-                        rle_candidate = (
+            pattern_candidate: Optional[Tuple[Any, int]] = None
+            if len(values_list) >= 8:
+                max_pattern = min(32, len(values_list) // 2)
+                for pattern_len in range(1, max_pattern + 1):
+                    if len(values_list) % pattern_len != 0:
+                        continue
+                    repeats = len(values_list) // pattern_len
+                    if repeats < 2:
+                        continue
+                    pattern_values = values_list[:pattern_len]
+                    matches = True
+                    for repeat_idx in range(1, repeats):
+                        start = repeat_idx * pattern_len
+                        end = start + pattern_len
+                        if values_list[start:end] != pattern_values:
+                            matches = False
+                            break
+                    if not matches:
+                        continue
+                    pattern_array = _build_int_array(pattern_values)
+                    pattern_bytes = pattern_array.itemsize * len(pattern_values)
+                    repeats_array = _build_int_array([repeats])
+                    repeats_bytes = repeats_array.itemsize
+                    pattern_overhead = 12 + 4 * len(pattern_values)
+                    total_pattern = pattern_bytes + repeats_bytes + pattern_overhead
+                    if total_pattern < base_bytes:
+                        pattern_candidate = (
                             {
-                                "enc": "rle",
-                                "values": values_array,
-                                "counts": counts_array,
+                                "enc": "pattern",
+                                "pattern": pattern_array,
+                                "repeats": repeats,
                                 "count": len(values_list),
                             },
-                            total_rle,
+                            total_pattern,
                         )
-            if palette_candidate and rle_candidate:
-                if palette_candidate[1] <= rle_candidate[1]:
-                    return palette_candidate[0]
-                return rle_candidate[0]
+                        break
+            candidates: List[Tuple[Any, int]] = []
             if palette_candidate:
-                return palette_candidate[0]
+                candidates.append(palette_candidate)
             if rle_candidate:
-                return rle_candidate[0]
+                candidates.append(rle_candidate)
+            if pattern_candidate:
+                candidates.append(pattern_candidate)
+            if candidates:
+                best_payload, _ = min(candidates, key=lambda item: item[1])
+                return best_payload
             return base_array
 
         def _encode_float_sequence(values: Iterable[float]) -> Any:
@@ -2342,7 +2379,7 @@ class Brain:
                 if not palette_failed and len(palette_values) >= 2:
                     values_array = array("f", palette_values)
                     bits_per = max(1, (len(palette_values) - 1).bit_length())
-                    if bits_per <= 4:
+                    if bits_per <= 8:
                         total_bits = len(palette_indices) * bits_per
                         packed = bytearray((total_bits + 7) // 8)
                         mask = (1 << bits_per) - 1
@@ -2399,33 +2436,80 @@ class Brain:
                         current_count = 1
                 runs_values.append(float(current_value))
                 runs_counts.append(current_count)
-                if len(runs_values) * 2 < len(values_list):
-                    values_array = array("f", runs_values)
-                    counts_array = _build_int_array(runs_counts)
-                    rle_bytes = (
-                        values_array.itemsize * len(runs_values)
-                        + counts_array.itemsize * len(runs_counts)
+                values_array = array("f", runs_values)
+                counts_array = _build_int_array(runs_counts)
+                rle_bytes = (
+                    values_array.itemsize * len(runs_values)
+                    + counts_array.itemsize * len(runs_counts)
+                )
+                rle_overhead = 12 + 4 * len(runs_values)
+                total_rle = rle_bytes + rle_overhead
+                if total_rle < base_bytes:
+                    rle_candidate_float = (
+                        {
+                            "enc": "rle",
+                            "values": values_array,
+                            "counts": counts_array,
+                            "count": len(values_list),
+                        },
+                        total_rle,
                     )
-                    rle_overhead = 12 + 4 * len(runs_values)
-                    total_rle = rle_bytes + rle_overhead
-                    if total_rle < base_bytes:
-                        rle_candidate_float = (
+            pattern_candidate_float: Optional[Tuple[Any, int]] = None
+            if len(values_list) >= 8:
+                max_pattern = min(32, len(values_list) // 2)
+                for pattern_len in range(1, max_pattern + 1):
+                    if len(values_list) % pattern_len != 0:
+                        continue
+                    repeats = len(values_list) // pattern_len
+                    if repeats < 2:
+                        continue
+                    pattern_values = values_list[:pattern_len]
+                    matches = True
+                    for repeat_idx in range(1, repeats):
+                        start = repeat_idx * pattern_len
+                        end = start + pattern_len
+                        if not all(
+                            math.isclose(
+                                float(values_list[pos]),
+                                float(pattern_values[pos - start]),
+                                rel_tol=1e-12,
+                                abs_tol=1e-12,
+                            )
+                            for pos in range(start, end)
+                        ):
+                            matches = False
+                            break
+                    if not matches:
+                        continue
+                    pattern_array = array("f", pattern_values)
+                    pattern_bytes = pattern_array.itemsize * len(pattern_values)
+                    repeats_array = _build_int_array([repeats])
+                    repeats_bytes = repeats_array.itemsize
+                    pattern_overhead = 12 + 4 * len(pattern_values)
+                    total_pattern = pattern_bytes + repeats_bytes + pattern_overhead
+                    if total_pattern < base_bytes:
+                        pattern_candidate_float = (
                             {
-                                "enc": "rle",
-                                "values": values_array,
-                                "counts": counts_array,
+                                "enc": "pattern",
+                                "pattern": pattern_array,
+                                "repeats": repeats,
                                 "count": len(values_list),
                             },
-                            total_rle,
+                            total_pattern,
                         )
-            if palette_candidate_float and rle_candidate_float:
-                if palette_candidate_float[1] <= rle_candidate_float[1]:
-                    return palette_candidate_float[0]
-                return rle_candidate_float[0]
+                        break
+            candidates_float: List[Tuple[Any, int]] = []
             if palette_candidate_float:
-                return palette_candidate_float[0]
+                candidates_float.append(palette_candidate_float)
             if rle_candidate_float:
-                return rle_candidate_float[0]
+                candidates_float.append(rle_candidate_float)
+            if pattern_candidate_float:
+                candidates_float.append(pattern_candidate_float)
+            if candidates_float:
+                best_payload_float, _ = min(
+                    candidates_float, key=lambda item: item[1]
+                )
+                return best_payload_float
             return base_array
 
         size_attr = getattr(self, "size", None)
@@ -2909,9 +2993,11 @@ class Brain:
                     flat.extend(seq)
             if not lengths_list or not any(lengths_list):
                 return None
+            values_payload = _encode_float_sequence(flat)
             return {
                 "lengths": _encode_int_sequence(lengths_list),
-                "values": flat,
+                "values": values_payload,
+                "count": len(vectors),
             }
 
         neurons_block: Dict[str, Any] = {
@@ -3144,7 +3230,50 @@ class Brain:
         mode = data.get("mode", "grid")
         n_value = int(data.get("n", 1))
 
+        def _coerce_list(value: Any) -> List[Any]:
+            if isinstance(value, dict):
+                encoding = value.get("enc") or value.get("encoding") or value.get("mode")
+                if isinstance(encoding, str) and encoding.lower().startswith("sparse"):
+                    return []
+                return _coerce_sequence(value)
+            if isinstance(value, list):
+                return value
+            if isinstance(value, array):
+                try:
+                    return value.tolist()
+                except Exception:
+                    pass
+            if hasattr(value, "tolist"):
+                try:
+                    return value.tolist()  # type: ignore[call-arg]
+                except TypeError:
+                    pass
+            try:
+                return list(value)
+            except TypeError:
+                return []
+
         def _coerce_sequence(value: Any) -> List[Any]:
+            def _to_simple_list(raw: Any) -> List[Any]:
+                if isinstance(raw, dict):
+                    return _coerce_sequence(raw)
+                if isinstance(raw, list):
+                    return list(raw)
+                if isinstance(raw, array):
+                    try:
+                        return raw.tolist()
+                    except Exception:
+                        pass
+                if hasattr(raw, "tolist"):
+                    try:
+                        return raw.tolist()  # type: ignore[call-arg]
+                    except Exception:
+                        pass
+                try:
+                    return list(raw)
+                except TypeError:
+                    return [raw]
+
             if isinstance(value, dict):
                 encoding = value.get("enc") or value.get("encoding") or value.get("mode")
                 if isinstance(encoding, str):
@@ -3282,6 +3411,37 @@ class Brain:
                                 value_chunk |= payload_bytes[byte_pos + 1] << bits_used
                             decoded_indices.append(int(value_chunk & mask))
                         return decoded_indices
+                    if enc_lower == "pattern":
+                        pattern_seq = _to_simple_list(value.get("pattern", []))
+                        try:
+                            repeats_val = int(value.get("repeats", value.get("repeat", 0)))
+                        except Exception:
+                            repeats_val = 0
+                        repeats_val = max(0, repeats_val)
+                        generated: List[Any] = []
+                        for _ in range(repeats_val):
+                            generated.extend(pattern_seq)
+                        if "tail" in value:
+                            tail_seq = _to_simple_list(value.get("tail", []))
+                            generated.extend(tail_seq)
+                        try:
+                            count_val = int(value.get("count", len(generated)))
+                        except Exception:
+                            count_val = len(generated)
+                        desired = max(0, count_val)
+                        if desired and len(generated) < desired and pattern_seq:
+                            pattern_len = len(pattern_seq)
+                            if pattern_len > 0:
+                                while len(generated) < desired:
+                                    remaining = desired - len(generated)
+                                    if remaining >= pattern_len:
+                                        generated.extend(pattern_seq)
+                                    else:
+                                        generated.extend(pattern_seq[:remaining])
+                                        break
+                        if desired and len(generated) > desired:
+                            generated = generated[:desired]
+                        return generated
                     if enc_lower == "palette":
                         palette_values = _coerce_list(value.get("values", []))
                         indices_list = _coerce_list(value.get("indices", []))
@@ -3471,29 +3631,6 @@ class Brain:
                     return string_table[value]
                 return None
             return value
-
-        def _coerce_list(value: Any) -> List[Any]:
-            if isinstance(value, dict):
-                encoding = value.get("enc") or value.get("encoding") or value.get("mode")
-                if isinstance(encoding, str) and encoding.lower().startswith("sparse"):
-                    return []
-                return _coerce_sequence(value)
-            if isinstance(value, list):
-                return value
-            if isinstance(value, array):
-                try:
-                    return value.tolist()
-                except Exception:
-                    pass
-            if hasattr(value, "tolist"):
-                try:
-                    return value.tolist()  # type: ignore[call-arg]
-                except TypeError:
-                    pass
-            try:
-                return list(value)
-            except TypeError:
-                return []
 
         def _sequence_length(raw: Any) -> int:
             if isinstance(raw, dict):
@@ -3848,7 +3985,7 @@ class Brain:
                 return []
             if isinstance(raw, dict) and "lengths" in raw and "values" in raw:
                 lengths = [int(v) for v in _coerce_list(raw.get("lengths", []))]
-                values_seq = _coerce_list(raw.get("values", []))
+                values_seq = _coerce_sequence(raw.get("values", []))
                 count_hint = int(raw.get("count", len(lengths))) if hasattr(raw, "get") else len(lengths)
                 result: List[List[float]] = []
                 cursor = 0
