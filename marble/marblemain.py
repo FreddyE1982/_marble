@@ -2186,6 +2186,7 @@ class Brain:
                             "deltas": delta_array,
                             "count": len(values_list),
                         }
+            palette_candidate: Optional[Tuple[Any, int]] = None
             if len(values_list) >= 8:
                 palette_values: List[int] = []
                 palette_map: Dict[int, int] = {}
@@ -2195,7 +2196,7 @@ class Brain:
                     mapped = palette_map.get(value)
                     if mapped is None:
                         mapped = len(palette_values)
-                        if mapped >= 16:
+                        if mapped >= 256:
                             palette_failed = True
                             break
                         palette_map[value] = mapped
@@ -2234,13 +2235,60 @@ class Brain:
                         + indices_bytes
                     )
                     palette_overhead = 8 + 4 * len(palette_values)
-                    if palette_bytes + palette_overhead < base_bytes:
-                        return {
-                            "enc": "palette",
-                            "values": values_array,
-                            "indices": indices_payload,
-                            "count": len(values_list),
-                        }
+                    total_palette = palette_bytes + palette_overhead
+                    if total_palette < base_bytes:
+                        palette_candidate = (
+                            {
+                                "enc": "palette",
+                                "values": values_array,
+                                "indices": indices_payload,
+                                "count": len(values_list),
+                            },
+                            total_palette,
+                        )
+            rle_candidate: Optional[Tuple[Any, int]] = None
+            if len(values_list) >= 8:
+                runs_values: List[int] = []
+                runs_counts: List[int] = []
+                current_value = values_list[0]
+                current_count = 1
+                for entry in values_list[1:]:
+                    if entry == current_value:
+                        current_count += 1
+                    else:
+                        runs_values.append(current_value)
+                        runs_counts.append(current_count)
+                        current_value = entry
+                        current_count = 1
+                runs_values.append(current_value)
+                runs_counts.append(current_count)
+                if len(runs_values) * 2 < len(values_list):
+                    values_array = _build_int_array(runs_values)
+                    counts_array = _build_int_array(runs_counts)
+                    rle_bytes = (
+                        values_array.itemsize * len(runs_values)
+                        + counts_array.itemsize * len(runs_counts)
+                    )
+                    rle_overhead = 12 + 4 * len(runs_values)
+                    total_rle = rle_bytes + rle_overhead
+                    if total_rle < base_bytes:
+                        rle_candidate = (
+                            {
+                                "enc": "rle",
+                                "values": values_array,
+                                "counts": counts_array,
+                                "count": len(values_list),
+                            },
+                            total_rle,
+                        )
+            if palette_candidate and rle_candidate:
+                if palette_candidate[1] <= rle_candidate[1]:
+                    return palette_candidate[0]
+                return rle_candidate[0]
+            if palette_candidate:
+                return palette_candidate[0]
+            if rle_candidate:
+                return rle_candidate[0]
             return base_array
 
         def _encode_float_sequence(values: Iterable[float]) -> Any:
@@ -2275,6 +2323,7 @@ class Brain:
                         "count": len(values_list),
                     }
             base_array = array("f", values_list)
+            palette_candidate_float: Optional[Tuple[Any, int]] = None
             if len(values_list) >= 8:
                 palette_values: List[float] = []
                 palette_map: Dict[float, int] = {}
@@ -2284,7 +2333,7 @@ class Brain:
                     mapped = palette_map.get(value)
                     if mapped is None:
                         mapped = len(palette_values)
-                        if mapped >= 16:
+                        if mapped >= 256:
                             palette_failed = True
                             break
                         palette_map[value] = mapped
@@ -2323,13 +2372,60 @@ class Brain:
                     )
                     base_bytes = base_array.itemsize * len(values_list)
                     palette_overhead = 8 + 4 * len(palette_values)
-                    if palette_bytes + palette_overhead < base_bytes:
-                        return {
-                            "enc": "palette",
-                            "values": values_array,
-                            "indices": indices_payload,
-                            "count": len(values_list),
-                        }
+                    total_palette = palette_bytes + palette_overhead
+                    if total_palette < base_bytes:
+                        palette_candidate_float = (
+                            {
+                                "enc": "palette",
+                                "values": values_array,
+                                "indices": indices_payload,
+                                "count": len(values_list),
+                            },
+                            total_palette,
+                        )
+            rle_candidate_float: Optional[Tuple[Any, int]] = None
+            if len(values_list) >= 8:
+                runs_values: List[float] = []
+                runs_counts: List[int] = []
+                current_value = values_list[0]
+                current_count = 1
+                for entry in values_list[1:]:
+                    if math.isclose(entry, current_value, rel_tol=1e-12, abs_tol=1e-12):
+                        current_count += 1
+                    else:
+                        runs_values.append(float(current_value))
+                        runs_counts.append(current_count)
+                        current_value = entry
+                        current_count = 1
+                runs_values.append(float(current_value))
+                runs_counts.append(current_count)
+                if len(runs_values) * 2 < len(values_list):
+                    values_array = array("f", runs_values)
+                    counts_array = _build_int_array(runs_counts)
+                    rle_bytes = (
+                        values_array.itemsize * len(runs_values)
+                        + counts_array.itemsize * len(runs_counts)
+                    )
+                    rle_overhead = 12 + 4 * len(runs_values)
+                    total_rle = rle_bytes + rle_overhead
+                    if total_rle < base_bytes:
+                        rle_candidate_float = (
+                            {
+                                "enc": "rle",
+                                "values": values_array,
+                                "counts": counts_array,
+                                "count": len(values_list),
+                            },
+                            total_rle,
+                        )
+            if palette_candidate_float and rle_candidate_float:
+                if palette_candidate_float[1] <= rle_candidate_float[1]:
+                    return palette_candidate_float[0]
+                return rle_candidate_float[0]
+            if palette_candidate_float:
+                return palette_candidate_float[0]
+            if rle_candidate_float:
+                return rle_candidate_float[0]
             return base_array
 
         size_attr = getattr(self, "size", None)
@@ -3424,6 +3520,19 @@ class Brain:
                         deltas = _coerce_list(raw.get("deltas", []))
                         base = 1 if raw.get("start") is not None else 0
                         return max(0, len(deltas) + base)
+                    if enc_lower == "rle":
+                        try:
+                            count_val = int(raw.get("count", 0))
+                        except Exception:
+                            count_val = 0
+                        counts_seq = _coerce_list(raw.get("counts", []))
+                        total = 0
+                        for entry in counts_seq:
+                            try:
+                                total += max(0, int(entry))
+                            except Exception:
+                                continue
+                        return max(count_val, total)
                     if enc_lower == "bits":
                         try:
                             count_val = int(raw.get("count", 0))
@@ -3546,6 +3655,37 @@ class Brain:
                         if expect_float:
                             return [float(v) for v in result_values]
                         return [int(v) for v in result_values]
+                    if enc_lower == "rle":
+                        try:
+                            count_value = int(raw.get("count", count))
+                        except Exception:
+                            count_value = count
+                        values_source = _coerce_list(raw.get("values", []))
+                        counts_source = _coerce_list(raw.get("counts", []))
+                        run_total = min(len(values_source), len(counts_source))
+                        generated: List[Union[int, float]] = []
+                        for idx in range(run_total):
+                            try:
+                                repeat = max(0, int(counts_source[idx]))
+                            except Exception:
+                                repeat = 0
+                            if repeat <= 0:
+                                continue
+                            if expect_float:
+                                value = float(values_source[idx]) if idx < len(values_source) else float(default)
+                            else:
+                                value = int(values_source[idx]) if idx < len(values_source) else int(default)
+                            generated.extend([value] * repeat)
+                        total_generated = len(generated)
+                        target_len = max(count_value, count, total_generated)
+                        if total_generated < target_len:
+                            fill_value = float(default) if expect_float else int(default)
+                            generated.extend([fill_value] * (target_len - total_generated))
+                        if len(generated) > target_len:
+                            generated = generated[:target_len]
+                        if expect_float:
+                            return [float(v) for v in generated]
+                        return [int(v) for v in generated]
                     if enc_lower == "bits":
                         try:
                             count_value = int(raw.get("count", count))
