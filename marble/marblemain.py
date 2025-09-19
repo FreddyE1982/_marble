@@ -2498,10 +2498,13 @@ class Brain:
         data["synapses"] = synapses_block
         data["string_table"] = string_table
         if tensor_pool:
-            data["tensor_pool"] = [list(entry) for entry in tensor_pool]
+            data["tensor_pool"] = [
+                array("f", [float(v) for v in entry])
+                for entry in tensor_pool
+            ]
         if tensor_pool_fills:
             data["tensor_pool_fills"] = [
-                {"value": float(value), "length": int(length)}
+                (float(value), int(length))
                 for value, length in tensor_pool_fills
             ]
         codec_obj = getattr(self, "codec", None)
