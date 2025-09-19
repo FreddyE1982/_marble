@@ -3633,9 +3633,11 @@ def run_training_with_datapairs(
         nonlocal count, _last_gc_batch
         enc_left_list: List[Any] = []
         enc_right_list: List[Any] = []
+        raw_left_values: List[Any] = []
         torch = w._torch  # type: ignore[attr-defined]
         for dp in items:
             l_raw, r_raw = dp.left, dp.right
+            raw_left_values.append(l_raw)
             l_simple = (isinstance(l_raw, (int, float)) or (isinstance(l_raw, (list, tuple)) and len(l_raw) == 1 and isinstance(l_raw[0], (int, float))))
             r_simple = (isinstance(r_raw, (int, float)) or (isinstance(r_raw, (list, tuple)) and len(r_raw) == 1 and isinstance(r_raw[0], (int, float))))
             if l_simple and r_simple:
@@ -3678,11 +3680,16 @@ def run_training_with_datapairs(
             enc_left = [list(x if isinstance(x, (list, tuple)) else [x]) for x in enc_left_list]
             enc_right = [list(x if isinstance(x, (list, tuple)) else [x]) for x in enc_right_list]
 
-        start: Optional[Neuron]
-        first_left = enc_left_list[0]
+        start: Optional[Neuron] = None
         if left_to_start is not None:
-            start = left_to_start(first_left, brain)  # type: ignore[arg-type]
-        else:
+            for raw_left in raw_left_values:
+                try:
+                    candidate = left_to_start(raw_left, brain)  # type: ignore[arg-type]
+                except Exception:
+                    candidate = None
+                if start is None and candidate is not None:
+                    start = candidate
+        if start is None:
             try:
                 start = next(iter(brain.neurons.values())) if getattr(brain, "neurons", None) else None  # type: ignore[attr-defined]
             except Exception:
