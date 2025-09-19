@@ -47,6 +47,16 @@
   Maximum allowed disk usage ratio before tensors are offloaded. Prevents disk
   exhaustion; value must be between 0 and 1.
 
+## Snapshot Settings
+
+- snapshot.compress_level (int, default: 2)
+  Gzip compression level used by :meth:`Brain.save_snapshot`. Lower values (1-3)
+  speed up snapshot creation at the cost of larger files, while higher values
+  (up to 9) maximise compression but take longer to write. The runtime requires
+  the multi-threaded ``pigz`` compressor (auto-installing it on demand); build
+  failures raise an error so snapshots never silently downgrade to single-threaded gzip. The value must be an
+  integer between 1 and 9; out-of-range values are clamped automatically.
+
 ## Reporter Settings
 
 - reporter.tensorboard.enabled (bool, default: true)
