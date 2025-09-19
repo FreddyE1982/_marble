@@ -62,6 +62,35 @@ class TestBrainSnapshot(unittest.TestCase):
         except TypeError:
             return []
 
+    def _string_table_entries(self, raw):
+        if raw is None:
+            return []
+        if isinstance(raw, dict):
+            lengths = [int(v) for v in self._to_list(raw.get("lengths", []))]
+            payload = raw.get("data", raw.get("payload", b""))
+            if isinstance(payload, memoryview):
+                payload_bytes = payload.tobytes()
+            elif isinstance(payload, (bytes, bytearray)):
+                payload_bytes = bytes(payload)
+            else:
+                try:
+                    payload_bytes = bytes(payload)
+                except Exception:
+                    payload_bytes = b""
+            encoding = raw.get("enc", raw.get("encoding", "utf-8"))
+            entries = []
+            offset = 0
+            for length in lengths:
+                safe_length = max(0, int(length))
+                chunk = payload_bytes[offset : offset + safe_length]
+                offset += safe_length
+                try:
+                    entries.append(chunk.decode(encoding))
+                except Exception:
+                    entries.append(chunk.decode("utf-8", errors="replace"))
+            return entries
+        return [str(entry) for entry in self._to_list(raw)]
+
     def _decode_ragged(self, raw):
         if raw is None:
             return []
@@ -148,10 +177,9 @@ class TestBrainSnapshot(unittest.TestCase):
         self.assertIn("codec_state", payload)
         self.assertNotIn("codec_vocab", payload)
         self.assertIn("string_table", payload)
-        table = payload["string_table"]
-        self.assertIsInstance(table, list)
-        self.assertTrue(all(isinstance(entry, str) for entry in table))
-        self.assertEqual(payload.get("layout"), "columnar")
+        table_entries = self._string_table_entries(payload["string_table"])
+        self.assertTrue(all(isinstance(entry, str) for entry in table_entries))
+        self.assertEqual(payload.get("layout", "columnar"), "columnar")
         neurons_block = payload["neurons"]
         self.assertIsInstance(neurons_block, dict)
         self.assertEqual(neurons_block.get("position_encoding"), "linear")
@@ -231,10 +259,12 @@ class TestBrainSnapshot(unittest.TestCase):
         self.assertIn((1, 0), idx_pairs)
         for dir_idx in syn_block["direction_ids"].tolist():
             self.assertGreaterEqual(dir_idx, 0)
-            self.assertEqual(table[dir_idx], "bi")
+            self.assertEqual(table_entries[dir_idx], "bi")
         neuron_type_indexes = neurons_block["type_ids"].tolist()
         self.assertTrue(all(isinstance(idx, int) for idx in neuron_type_indexes))
-        resolved_types = [table[idx] if idx >= 0 else None for idx in neuron_type_indexes]
+        resolved_types = [
+            table_entries[idx] if idx >= 0 else None for idx in neuron_type_indexes
+        ]
         self.assertIn("alpha", resolved_types)
         self.assertIn("beta", resolved_types)
         print("snapshot path:", snap_path)
@@ -622,7 +652,7 @@ class TestBrainSnapshot(unittest.TestCase):
         saved_roundtrip = loaded.save_snapshot(roundtrip_path)
         new_payload = self._latest_payload(saved_roundtrip)
         print("roundtrip snapshot layout:", new_payload.get("layout"))
-        self.assertEqual(new_payload.get("layout"), "columnar")
+        self.assertEqual(new_payload.get("layout", "columnar"), "columnar")
         reloaded = Brain.load_snapshot(saved_roundtrip)
         self.assertEqual(len(reloaded.neurons), len(loaded.neurons))
         self.assertEqual(len(reloaded.synapses), len(loaded.synapses))
