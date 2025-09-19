@@ -107,6 +107,25 @@ class TestBrainSnapshot(unittest.TestCase):
                     if len(seq) > count_val:
                         seq = seq[:count_val]
                     return seq
+                if enc_lower == "rle":
+                    try:
+                        count_val = int(value.get("count", 0))
+                    except Exception:
+                        count_val = 0
+                    values_list = self._to_list(value.get("values", []))
+                    counts_list = [int(v) for v in self._to_list(value.get("counts", []))]
+                    run_total = min(len(values_list), len(counts_list))
+                    fallback = values_list[0] if values_list else 0
+                    seq: list = []
+                    for idx in range(run_total):
+                        repeat = max(0, counts_list[idx])
+                        if repeat <= 0:
+                            continue
+                        run_value = values_list[idx] if idx < len(values_list) else fallback
+                        seq.extend([run_value] * repeat)
+                    if count_val > 0 and len(seq) < count_val:
+                        seq.extend([fallback] * (count_val - len(seq)))
+                    return seq
                 if enc_lower == "bits":
                     try:
                         count_val = int(value.get("count", 0))
@@ -284,6 +303,50 @@ class TestBrainSnapshot(unittest.TestCase):
                     if isinstance(default, int):
                         return [int(v) for v in generated]
                     return [float(v) for v in generated]
+                if enc_lower == "rle":
+                    try:
+                        count_val = int(raw.get("count", count or 0))
+                    except Exception:
+                        count_val = count or 0
+                    values_list = self._to_list(raw.get("values", []))
+                    counts_list = [int(v) for v in self._to_list(raw.get("counts", []))]
+                    run_total = min(len(values_list), len(counts_list))
+                    target_len = count or count_val
+                    if isinstance(default, int):
+                        fallback = int(default)
+                        seq: list[int] = []
+                        for idx in range(run_total):
+                            repeat = max(0, counts_list[idx])
+                            if repeat <= 0:
+                                continue
+                            value = values_list[idx] if idx < len(values_list) else fallback
+                            try:
+                                numeric = int(value)
+                            except Exception:
+                                numeric = fallback
+                            seq.extend([numeric] * repeat)
+                        if target_len and len(seq) < target_len:
+                            seq.extend([fallback] * (target_len - len(seq)))
+                        if target_len and len(seq) > target_len:
+                            seq = seq[:target_len]
+                        return seq
+                    fallback_float = float(default)
+                    seq_f: list[float] = []
+                    for idx in range(run_total):
+                        repeat = max(0, counts_list[idx])
+                        if repeat <= 0:
+                            continue
+                        value = values_list[idx] if idx < len(values_list) else fallback_float
+                        try:
+                            numeric = float(value)
+                        except Exception:
+                            numeric = fallback_float
+                        seq_f.extend([numeric] * repeat)
+                    if target_len and len(seq_f) < target_len:
+                        seq_f.extend([fallback_float] * (target_len - len(seq_f)))
+                    if target_len and len(seq_f) > target_len:
+                        seq_f = seq_f[:target_len]
+                    return seq_f
                 if enc_lower == "bits":
                     try:
                         count_val = int(raw.get("count", count or 0))
@@ -1146,6 +1209,53 @@ class TestBrainSnapshot(unittest.TestCase):
         self.assertEqual(reloaded.synapses[0].age, 9)
         self.assertEqual(reloaded.synapses[0].type_name, "syn_special")
 
+    def test_snapshot_uses_rle_for_tensor_refs(self):
+        clear_report_group("brain")
+        tmp = tempfile.mkdtemp()
+        run_lengths = [32, 16, 16]
+        total = sum(run_lengths)
+        brain = Brain(
+            1,
+            size=total + 1,
+            store_snapshots=True,
+            snapshot_path=tmp,
+            snapshot_freq=1,
+        )
+        prev = None
+        tensor_payloads = [
+            [0.25, -0.25],
+            [1.5, -1.5],
+            [3.5, -3.5],
+        ]
+        idx_counter = 0
+        for run_idx, run_length in enumerate(run_lengths):
+            payload = tensor_payloads[run_idx]
+            for _ in range(run_length):
+                pos = (idx_counter,)
+                if prev is None:
+                    brain.add_neuron(pos, tensor=payload)
+                else:
+                    brain.add_neuron(pos, tensor=payload, connect_to=prev)
+                prev = pos
+                idx_counter += 1
+        snap_path = brain.save_snapshot()
+        payload = self._latest_payload(snap_path)
+        neurons_block = payload["neurons"]
+        tensor_refs_field = neurons_block.get("tensor_refs")
+        self.assertIsInstance(tensor_refs_field, dict)
+        self.assertEqual(tensor_refs_field.get("enc"), "rle")
+        decoded_refs = [
+            int(v)
+            for v in self._decode_numeric_field(tensor_refs_field, len(brain.neurons), -1)
+        ]
+        start = 0
+        for expected_index, run_length in enumerate(run_lengths):
+            segment = decoded_refs[start : start + run_length]
+            self.assertEqual(segment, [expected_index] * run_length)
+            start += run_length
+        reloaded = Brain.load_snapshot(snap_path)
+        self.assertEqual(len(reloaded.neurons), total)
+
     def test_snapshot_uses_signed_byte_arrays_when_needed(self):
         clear_report_group("brain")
         tmp = tempfile.mkdtemp()
@@ -1293,6 +1403,49 @@ class TestBrainSnapshot(unittest.TestCase):
                     self.assertAlmostEqual(bias_value, expected)
                 else:
                     self.assertAlmostEqual(bias_value, 0.0)
+
+    def test_sparse_float_values_use_rle_encoding(self):
+        clear_report_group("brain")
+        with tempfile.TemporaryDirectory() as tmp:
+            run_a = 160
+            run_b = 40
+            total = 512
+            brain = Brain(1, size=total, store_snapshots=True, snapshot_path=tmp, snapshot_freq=1)
+            previous = None
+            for idx in range(total):
+                pos = (idx,)
+                if idx < run_a:
+                    bias_value = 0.625
+                elif idx < run_a + run_b:
+                    bias_value = -0.5
+                else:
+                    bias_value = 0.0
+                kwargs = {"tensor": [float(idx % 5)], "bias": bias_value}
+                if previous is None:
+                    brain.add_neuron(pos, **kwargs)
+                else:
+                    brain.add_neuron(pos, connect_to=previous, direction="uni", **kwargs)
+                previous = pos
+            snap_path = brain.save_snapshot()
+            payload = self._latest_payload(snap_path)
+            neurons_block = payload["neurons"]
+            biases_field = neurons_block.get("biases")
+            self.assertIsInstance(biases_field, dict)
+            self.assertEqual(biases_field.get("enc"), "sparse")
+            values_field = biases_field.get("values")
+            self.assertIsInstance(values_field, dict)
+            self.assertEqual(values_field.get("enc"), "rle")
+            decoded_biases = [
+                float(v)
+                for v in self._decode_numeric_field(biases_field, len(brain.neurons), 0.0)
+            ]
+            for idx, value in enumerate(decoded_biases):
+                if idx < run_a:
+                    self.assertAlmostEqual(value, 0.625)
+                elif idx < run_a + run_b:
+                    self.assertAlmostEqual(value, -0.5)
+                else:
+                    self.assertAlmostEqual(value, 0.0)
 
     def test_snapshot_promotes_integer_arrays_to_uint16(self):
         clear_report_group("brain")
