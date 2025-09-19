@@ -133,6 +133,73 @@ class TestBrainSnapshot(unittest.TestCase):
                             bit_value = (payload_bytes[byte_index] >> bit_index) & 1
                         result_bits.append(int(bit_value))
                     return result_bits
+                if enc_lower == "bitpack":
+                    try:
+                        count_val = int(value.get("count", 0))
+                    except Exception:
+                        count_val = 0
+                    bits_per = value.get("bits_per", value.get("bits", 0))
+                    try:
+                        bits_per_int = int(bits_per)
+                    except Exception:
+                        bits_per_int = 0
+                    payload = value.get("data", value.get("payload", b""))
+                    if isinstance(payload, memoryview):
+                        payload_bytes = payload.tobytes()
+                    elif isinstance(payload, (bytes, bytearray)):
+                        payload_bytes = bytes(payload)
+                    else:
+                        try:
+                            payload_bytes = bytes(payload) if payload is not None else b""
+                        except Exception:
+                            payload_bytes = b""
+                    if bits_per_int <= 0:
+                        return [0] * max(0, count_val)
+                    mask = (1 << bits_per_int) - 1
+                    total_bits = len(payload_bytes) * 8
+                    target = max(0, count_val)
+                    decoded = []
+                    for idx in range(target):
+                        bit_pos = idx * bits_per_int
+                        if bit_pos + bits_per_int > total_bits:
+                            decoded.append(0)
+                            continue
+                        byte_pos = bit_pos // 8
+                        bit_offset = bit_pos % 8
+                        value_chunk = payload_bytes[byte_pos] >> bit_offset
+                        bits_used = 8 - bit_offset
+                        if bits_used < bits_per_int and byte_pos + 1 < len(payload_bytes):
+                            value_chunk |= payload_bytes[byte_pos + 1] << bits_used
+                        decoded.append(int(value_chunk & mask))
+                    return decoded
+                if enc_lower == "palette":
+                    palette_values = self._to_list(value.get("values", []))
+                    indices_list = self._to_list(value.get("indices", []))
+                    if not palette_values:
+                        return []
+                    try:
+                        count_val = int(value.get("count", 0))
+                    except Exception:
+                        count_val = 0
+                    target = max(len(indices_list), max(0, count_val))
+                    if target <= 0:
+                        return []
+                    resolved = []
+                    fallback = palette_values[0]
+                    for idx in range(target):
+                        if idx < len(indices_list):
+                            source = indices_list[idx]
+                        else:
+                            source = 0
+                        try:
+                            palette_idx = int(source)
+                        except Exception:
+                            palette_idx = 0
+                        if 0 <= palette_idx < len(palette_values):
+                            resolved.append(palette_values[palette_idx])
+                        else:
+                            resolved.append(fallback)
+                    return resolved
         if hasattr(value, "tolist"):
             try:
                 return value.tolist()
@@ -248,6 +315,80 @@ class TestBrainSnapshot(unittest.TestCase):
                     if isinstance(default, float) and not isinstance(default, int):
                         return [float(v) for v in result_bits[:target_len or len(result_bits)]]
                     return result_bits[:target_len or len(result_bits)]
+                if enc_lower == "bitpack":
+                    try:
+                        count_val = int(raw.get("count", count or 0))
+                    except Exception:
+                        count_val = count or 0
+                    bits_per = raw.get("bits_per", raw.get("bits", 0))
+                    try:
+                        bits_per_int = int(bits_per)
+                    except Exception:
+                        bits_per_int = 0
+                    payload = raw.get("data", raw.get("payload", b""))
+                    if isinstance(payload, memoryview):
+                        payload_bytes = payload.tobytes()
+                    elif isinstance(payload, (bytes, bytearray)):
+                        payload_bytes = bytes(payload)
+                    else:
+                        try:
+                            payload_bytes = bytes(payload) if payload is not None else b""
+                        except Exception:
+                            payload_bytes = b""
+                    if bits_per_int <= 0:
+                        target_len = max(count or 0, max(0, count_val))
+                        return [default] * target_len
+                    mask = (1 << bits_per_int) - 1
+                    total_bits = len(payload_bytes) * 8
+                    target_len = max(count or 0, max(0, count_val))
+                    decoded = []
+                    for idx in range(target_len):
+                        bit_pos = idx * bits_per_int
+                        if bit_pos + bits_per_int > total_bits:
+                            decoded.append(default)
+                            continue
+                        byte_pos = bit_pos // 8
+                        bit_offset = bit_pos % 8
+                        value_chunk = payload_bytes[byte_pos] >> bit_offset
+                        bits_used = 8 - bit_offset
+                        if bits_used < bits_per_int and byte_pos + 1 < len(payload_bytes):
+                            value_chunk |= payload_bytes[byte_pos + 1] << bits_used
+                        decoded.append(int(value_chunk & mask))
+                    if isinstance(default, float) and not isinstance(default, int):
+                        return [float(v) for v in decoded]
+                    return [int(v) for v in decoded]
+                if enc_lower == "palette":
+                    try:
+                        count_val = int(raw.get("count", count or 0))
+                    except Exception:
+                        count_val = count or 0
+                    palette_values = self._to_list(raw.get("values", []))
+                    indices_list = self._to_list(raw.get("indices", []))
+                    if not palette_values:
+                        target_len = max(count or 0, max(0, count_val))
+                        fallback = default
+                        return [fallback] * target_len
+                    target_len = max(count or 0, max(0, count_val), len(indices_list))
+                    if target_len <= 0:
+                        return []
+                    fallback = palette_values[0]
+                    decoded = []
+                    for idx in range(target_len):
+                        if idx < len(indices_list):
+                            source = indices_list[idx]
+                        else:
+                            source = 0
+                        try:
+                            palette_idx = int(source)
+                        except Exception:
+                            palette_idx = 0
+                        if 0 <= palette_idx < len(palette_values):
+                            decoded.append(palette_values[palette_idx])
+                        else:
+                            decoded.append(fallback)
+                    if isinstance(default, int):
+                        return [int(round(float(v))) if isinstance(v, (int, float)) else int(default) for v in decoded]
+                    return [float(v) for v in decoded]
                 if enc_lower.startswith("sparse"):
                     total = raw.get("count", count or 0)
                     try:
@@ -1060,6 +1201,98 @@ class TestBrainSnapshot(unittest.TestCase):
         reloaded_types = [n.type_name for n in reloaded.neurons.values()]
         self.assertIn("kind_a", reloaded_types)
         self.assertIn("kind_c", reloaded_types)
+
+    def test_snapshot_uses_palette_for_type_ids(self):
+        clear_report_group("brain")
+        with tempfile.TemporaryDirectory() as tmp:
+            brain = Brain(1, size=60, store_snapshots=True, snapshot_path=tmp, snapshot_freq=1)
+            previous = None
+            type_cycle = [None, "alpha", "beta"]
+            for idx in range(60):
+                pos = (idx,)
+                type_name = type_cycle[idx % len(type_cycle)]
+                kwargs = {"tensor": [float(idx)]}
+                if type_name is not None:
+                    kwargs["type_name"] = type_name
+                if previous is None:
+                    brain.add_neuron(pos, **kwargs)
+                else:
+                    brain.add_neuron(pos, connect_to=previous, direction="uni", **kwargs)
+                previous = pos
+            snap_path = brain.save_snapshot()
+            payload = self._latest_payload(snap_path)
+            neurons_block = payload["neurons"]
+            type_field = neurons_block.get("type_ids")
+            self.assertIsInstance(type_field, dict)
+            self.assertEqual(type_field.get("enc"), "palette")
+            palette_values = self._to_list(type_field.get("values", []))
+            indices_list = self._to_list(type_field.get("indices", []))
+            self.assertGreaterEqual(len(palette_values), 2)
+            self.assertEqual(len(indices_list), len(brain.neurons))
+            decoded = []
+            fallback = palette_values[0]
+            for idx in range(len(indices_list)):
+                try:
+                    palette_idx = int(indices_list[idx])
+                except Exception:
+                    palette_idx = 0
+                if 0 <= palette_idx < len(palette_values):
+                    decoded.append(palette_values[palette_idx])
+                else:
+                    decoded.append(fallback)
+            self.assertIn(-1, decoded)
+            self.assertIn(0, decoded)
+            self.assertIn(1, decoded)
+            reloaded = Brain.load_snapshot(snap_path)
+            self.assertEqual(len(reloaded.neurons), len(brain.neurons))
+            decoded_types = [
+                getattr(neuron, "type_name", None) for neuron in reloaded.neurons.values()
+            ]
+            self.assertIn(None, decoded_types)
+            self.assertIn("alpha", decoded_types)
+            self.assertIn("beta", decoded_types)
+
+    def test_sparse_float_values_use_palette_encoding(self):
+        clear_report_group("brain")
+        with tempfile.TemporaryDirectory() as tmp:
+            brain = Brain(1, size=64, store_snapshots=True, snapshot_path=tmp, snapshot_freq=1)
+            previous = None
+            bias_cycle = [0.25, -0.5, 0.75]
+            for idx in range(64):
+                pos = (idx,)
+                if idx % 4 == 0:
+                    bias_value = bias_cycle[(idx // 4) % len(bias_cycle)]
+                else:
+                    bias_value = 0.0
+                kwargs = {"tensor": [0.0], "bias": bias_value}
+                if previous is None:
+                    brain.add_neuron(pos, **kwargs)
+                else:
+                    brain.add_neuron(pos, connect_to=previous, direction="uni", **kwargs)
+                previous = pos
+            snap_path = brain.save_snapshot()
+            payload = self._latest_payload(snap_path)
+            neurons_block = payload["neurons"]
+            biases_field = neurons_block.get("biases")
+            self.assertIsInstance(biases_field, dict)
+            self.assertEqual(biases_field.get("enc"), "sparse")
+            values_field = biases_field.get("values")
+            self.assertIsInstance(values_field, dict)
+            self.assertEqual(values_field.get("enc"), "palette")
+            palette_values = self._to_list(values_field.get("values", []))
+            self.assertGreaterEqual(len(palette_values), 2)
+            indices_list = self._to_list(values_field.get("indices", []))
+            self.assertEqual(len(indices_list), len(self._to_list(biases_field.get("indices", []))))
+            reloaded = Brain.load_snapshot(snap_path)
+            reloaded_biases = [
+                getattr(neuron, "bias", 0.0) for neuron in reloaded.neurons.values()
+            ]
+            for idx, bias_value in enumerate(reloaded_biases):
+                if idx % 4 == 0:
+                    expected = bias_cycle[(idx // 4) % len(bias_cycle)]
+                    self.assertAlmostEqual(bias_value, expected)
+                else:
+                    self.assertAlmostEqual(bias_value, 0.0)
 
     def test_snapshot_promotes_integer_arrays_to_uint16(self):
         clear_report_group("brain")

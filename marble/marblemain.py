@@ -2172,11 +2172,11 @@ class Brain:
                     "data": bytes(packed_bits),
                 }
             base_array = _build_int_array(values_list)
+            base_bytes = base_array.itemsize * len(values_list)
             if len(values_list) >= 4:
                 deltas = [values_list[idx] - values_list[idx - 1] for idx in range(1, len(values_list))]
                 if any(delta != 0 for delta in deltas):
                     delta_array = _build_int_array(deltas)
-                    base_bytes = base_array.itemsize * len(values_list)
                     delta_bytes = delta_array.itemsize * len(deltas)
                     first_bytes = _build_int_array([first_value]).itemsize
                     if delta_bytes + first_bytes < base_bytes:
@@ -2184,6 +2184,61 @@ class Brain:
                             "enc": "delta",
                             "start": first_value,
                             "deltas": delta_array,
+                            "count": len(values_list),
+                        }
+            if len(values_list) >= 8:
+                palette_values: List[int] = []
+                palette_map: Dict[int, int] = {}
+                palette_indices: List[int] = []
+                palette_failed = False
+                for value in values_list:
+                    mapped = palette_map.get(value)
+                    if mapped is None:
+                        mapped = len(palette_values)
+                        if mapped >= 16:
+                            palette_failed = True
+                            break
+                        palette_map[value] = mapped
+                        palette_values.append(value)
+                    palette_indices.append(mapped)
+                if not palette_failed and len(palette_values) >= 2:
+                    values_array = _build_int_array(palette_values)
+                    bits_per = max(1, (len(palette_values) - 1).bit_length())
+                    indices_payload: Any
+                    if bits_per <= 4:
+                        total_bits = len(palette_indices) * bits_per
+                        packed = bytearray((total_bits + 7) // 8)
+                        mask = (1 << bits_per) - 1
+                        for idx, mapped in enumerate(palette_indices):
+                            normalized = int(mapped) & mask
+                            bit_pos = idx * bits_per
+                            byte_pos = bit_pos // 8
+                            bit_offset = bit_pos % 8
+                            packed[byte_pos] |= (normalized << bit_offset) & 0xFF
+                            spill_bits = bit_offset + bits_per - 8
+                            if spill_bits > 0 and byte_pos + 1 < len(packed):
+                                packed[byte_pos + 1] |= normalized >> (8 - bit_offset)
+                        indices_payload = {
+                            "enc": "bitpack",
+                            "bits_per": bits_per,
+                            "count": len(palette_indices),
+                            "data": bytes(packed),
+                        }
+                        indices_bytes = len(packed)
+                    else:
+                        indices_array = _build_int_array(palette_indices)
+                        indices_payload = indices_array
+                        indices_bytes = indices_array.itemsize * len(palette_indices)
+                    palette_bytes = (
+                        values_array.itemsize * len(palette_values)
+                        + indices_bytes
+                    )
+                    palette_overhead = 8 + 4 * len(palette_values)
+                    if palette_bytes + palette_overhead < base_bytes:
+                        return {
+                            "enc": "palette",
+                            "values": values_array,
+                            "indices": indices_payload,
                             "count": len(values_list),
                         }
             return base_array
@@ -2219,7 +2274,63 @@ class Brain:
                         "step": step,
                         "count": len(values_list),
                     }
-            return array("f", values_list)
+            base_array = array("f", values_list)
+            if len(values_list) >= 8:
+                palette_values: List[float] = []
+                palette_map: Dict[float, int] = {}
+                palette_indices: List[int] = []
+                palette_failed = False
+                for value in values_list:
+                    mapped = palette_map.get(value)
+                    if mapped is None:
+                        mapped = len(palette_values)
+                        if mapped >= 16:
+                            palette_failed = True
+                            break
+                        palette_map[value] = mapped
+                        palette_values.append(value)
+                    palette_indices.append(mapped)
+                if not palette_failed and len(palette_values) >= 2:
+                    values_array = array("f", palette_values)
+                    bits_per = max(1, (len(palette_values) - 1).bit_length())
+                    if bits_per <= 4:
+                        total_bits = len(palette_indices) * bits_per
+                        packed = bytearray((total_bits + 7) // 8)
+                        mask = (1 << bits_per) - 1
+                        for idx, mapped in enumerate(palette_indices):
+                            normalized = int(mapped) & mask
+                            bit_pos = idx * bits_per
+                            byte_pos = bit_pos // 8
+                            bit_offset = bit_pos % 8
+                            packed[byte_pos] |= (normalized << bit_offset) & 0xFF
+                            spill_bits = bit_offset + bits_per - 8
+                            if spill_bits > 0 and byte_pos + 1 < len(packed):
+                                packed[byte_pos + 1] |= normalized >> (8 - bit_offset)
+                        indices_payload: Any = {
+                            "enc": "bitpack",
+                            "bits_per": bits_per,
+                            "count": len(palette_indices),
+                            "data": bytes(packed),
+                        }
+                        indices_bytes = len(packed)
+                    else:
+                        indices_array = _build_int_array(palette_indices)
+                        indices_payload = indices_array
+                        indices_bytes = indices_array.itemsize * len(palette_indices)
+                    palette_bytes = (
+                        values_array.itemsize * len(palette_values)
+                        + indices_bytes
+                    )
+                    base_bytes = base_array.itemsize * len(values_list)
+                    palette_overhead = 8 + 4 * len(palette_values)
+                    if palette_bytes + palette_overhead < base_bytes:
+                        return {
+                            "enc": "palette",
+                            "values": values_array,
+                            "indices": indices_payload,
+                            "count": len(values_list),
+                        }
+            return base_array
 
         size_attr = getattr(self, "size", None)
         if size_attr is None:
@@ -3036,6 +3147,79 @@ class Brain:
                                 bit_value = (payload_bytes[byte_index] >> bit_index) & 1
                             result_bits.append(int(bit_value))
                         return result_bits
+                    if enc_lower == "bitpack":
+                        try:
+                            count_val = int(value.get("count", 0))
+                        except Exception:
+                            count_val = 0
+                        bits_per = value.get("bits_per", value.get("bits"))
+                        try:
+                            bits_per_int = int(bits_per)
+                        except Exception:
+                            bits_per_int = 0
+                        payload = value.get("data", value.get("payload", b""))
+                        if isinstance(payload, memoryview):
+                            payload_bytes = payload.tobytes()
+                        elif isinstance(payload, (bytes, bytearray)):
+                            payload_bytes = bytes(payload)
+                        else:
+                            try:
+                                payload_bytes = bytes(payload) if payload is not None else b""
+                            except Exception:
+                                payload_bytes = b""
+                        if bits_per_int <= 0:
+                            return [0] * max(0, count_val)
+                        total_bits = len(payload_bytes) * 8
+                        mask = (1 << bits_per_int) - 1
+                        target = max(0, count_val)
+                        decoded_indices: List[int] = []
+                        for idx in range(target):
+                            bit_pos = idx * bits_per_int
+                            if bit_pos + bits_per_int > total_bits:
+                                decoded_indices.append(0)
+                                continue
+                            byte_pos = bit_pos // 8
+                            bit_offset = bit_pos % 8
+                            value_chunk = payload_bytes[byte_pos] >> bit_offset
+                            bits_used = 8 - bit_offset
+                            if bits_used < bits_per_int and byte_pos + 1 < len(payload_bytes):
+                                value_chunk |= payload_bytes[byte_pos + 1] << bits_used
+                            decoded_indices.append(int(value_chunk & mask))
+                        return decoded_indices
+                    if enc_lower == "palette":
+                        palette_values = _coerce_list(value.get("values", []))
+                        indices_list = _coerce_list(value.get("indices", []))
+                        if not palette_values:
+                            return []
+                        try:
+                            count_val = int(value.get("count", 0))
+                        except Exception:
+                            count_val = 0
+                        target = max(len(indices_list), max(0, count_val))
+                        if target <= 0:
+                            return []
+                        resolved: List[Any] = []
+                        fallback = palette_values[0]
+                        for idx in range(target):
+                            if idx < len(indices_list):
+                                source = indices_list[idx]
+                            else:
+                                source = 0
+                            try:
+                                palette_idx = int(source)
+                            except Exception:
+                                palette_idx = 0
+                            if 0 <= palette_idx < len(palette_values):
+                                resolved.append(palette_values[palette_idx])
+                            else:
+                                resolved.append(fallback)
+                        if all(
+                            isinstance(val, (int, float))
+                            and abs(float(val) - round(float(val))) < 1e-9
+                            for val in resolved
+                        ):
+                            return [int(round(float(val))) for val in resolved]
+                        return resolved
                 # Fall back to iterating over dictionary values if not a known encoding.
                 items = value.items() if hasattr(value, "items") else value
                 try:
@@ -3253,6 +3437,35 @@ class Brain:
                         except Exception:
                             payload_len = 0
                         return payload_len * 8
+                    if enc_lower == "bitpack":
+                        try:
+                            count_val = int(raw.get("count", 0))
+                        except Exception:
+                            count_val = 0
+                        if count_val > 0:
+                            return count_val
+                        payload = raw.get("data", raw.get("payload", b""))
+                        try:
+                            payload_len = len(bytes(payload))
+                        except Exception:
+                            payload_len = 0
+                        bits_per = raw.get("bits_per", raw.get("bits"))
+                        try:
+                            bits_per_int = int(bits_per)
+                        except Exception:
+                            bits_per_int = 0
+                        if bits_per_int <= 0:
+                            return 0
+                        return (payload_len * 8) // bits_per_int
+                    if enc_lower == "palette":
+                        indices = _coerce_list(raw.get("indices", []))
+                        try:
+                            count_val = int(raw.get("count", 0))
+                        except Exception:
+                            count_val = 0
+                        if count_val > 0:
+                            return max(len(indices), count_val)
+                        return len(indices)
                 return 0
             return len(_coerce_list(raw))
 
@@ -3368,6 +3581,77 @@ class Brain:
                         if len(bits_list) < target_len:
                             bits_list.extend([default_value_int] * (target_len - len(bits_list)))
                         return bits_list[:target_len]
+                    if enc_lower == "bitpack":
+                        try:
+                            count_value = int(raw.get("count", count))
+                        except Exception:
+                            count_value = count
+                        bits_per = raw.get("bits_per", raw.get("bits"))
+                        try:
+                            bits_per_int = int(bits_per)
+                        except Exception:
+                            bits_per_int = 0
+                        payload = raw.get("data", raw.get("payload", b""))
+                        if isinstance(payload, memoryview):
+                            payload_bytes = payload.tobytes()
+                        elif isinstance(payload, (bytes, bytearray)):
+                            payload_bytes = bytes(payload)
+                        else:
+                            try:
+                                payload_bytes = bytes(payload) if payload is not None else b""
+                            except Exception:
+                                payload_bytes = b""
+                        if bits_per_int <= 0:
+                            return [default] * max(count_value, count, 0)
+                        target_len = max(count_value, count, 0)
+                        mask = (1 << bits_per_int) - 1
+                        total_bits = len(payload_bytes) * 8
+                        decoded_indices: List[int] = []
+                        for idx in range(target_len):
+                            bit_pos = idx * bits_per_int
+                            if bit_pos + bits_per_int > total_bits:
+                                decoded_indices.append(0)
+                                continue
+                            byte_pos = bit_pos // 8
+                            bit_offset = bit_pos % 8
+                            value_chunk = payload_bytes[byte_pos] >> bit_offset
+                            bits_used = 8 - bit_offset
+                            if bits_used < bits_per_int and byte_pos + 1 < len(payload_bytes):
+                                value_chunk |= payload_bytes[byte_pos + 1] << bits_used
+                            decoded_indices.append(int(value_chunk & mask))
+                        if expect_float:
+                            return [float(v) for v in decoded_indices]
+                        return [int(v) for v in decoded_indices]
+                    if enc_lower == "palette":
+                        try:
+                            count_value = int(raw.get("count", count))
+                        except Exception:
+                            count_value = count
+                        indices_list = _coerce_list(raw.get("indices", []))
+                        palette_values = _coerce_list(raw.get("values", []))
+                        if not palette_values:
+                            if expect_float:
+                                return [float(default)] * max(count_value, count, 0)
+                            return [int(default)] * max(count_value, count, 0)
+                        target_len = max(count_value, count, len(indices_list))
+                        decoded: List[Any] = []
+                        fallback = palette_values[0]
+                        for idx in range(target_len):
+                            if idx < len(indices_list):
+                                source = indices_list[idx]
+                            else:
+                                source = 0
+                            try:
+                                palette_idx = int(source)
+                            except Exception:
+                                palette_idx = 0
+                            if 0 <= palette_idx < len(palette_values):
+                                decoded.append(palette_values[palette_idx])
+                            else:
+                                decoded.append(fallback)
+                        if expect_float:
+                            return [float(v) for v in decoded]
+                        return [int(v) for v in decoded]
                     if enc_lower.startswith("sparse"):
                         try:
                             count_value = int(raw.get("count", count))
