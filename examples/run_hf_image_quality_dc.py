@@ -523,17 +523,10 @@ def main(
     cumulative_walks = 0
     if getattr(brain, "store_snapshots", False):
         freq_raw = getattr(brain, "snapshot_freq", None)
-        try:
-            snapshot_freq_val = int(freq_raw) if freq_raw is not None else None
-        except Exception:
-            snapshot_freq_val = None
+        snapshot_freq_val = int(freq_raw) if freq_raw is not None else None
         snap_path = getattr(brain, "snapshot_path", None) or "."
         snapshot_dir = Path(snap_path)
-        try:
-            snapshot_dir.mkdir(parents=True, exist_ok=True)
-        except Exception as err:
-            print(f"warning: could not create snapshot directory {snapshot_dir}: {err}")
-            snapshot_dir = None
+        snapshot_dir.mkdir(parents=True, exist_ok=True)
         if snapshot_dir is not None:
             baseline_snapshot_count = len(list(snapshot_dir.glob("*.marble")))
     for _ in range(int(epochs)):
@@ -597,22 +590,14 @@ def main(
             current_total = len(list(snapshot_dir.glob("*.marble")))
             produced_snapshots = max(0, current_total - baseline_snapshot_count)
             while produced_snapshots < expected_snapshots:
-                try:
-                    path = brain.save_snapshot()
-                except Exception as err:
-                    print(f"failed to save scheduled snapshot: {err}")
-                    break
-                else:
-                    print(f"saved scheduled snapshot to {path}")
+                path = brain.save_snapshot()
+                print(f"saved scheduled snapshot to {path}")
                 current_total = len(list(snapshot_dir.glob("*.marble")))
                 produced_snapshots = max(0, current_total - baseline_snapshot_count)
         clear_resources()
     if getattr(brain, "store_snapshots", False):
-        try:
-            snapshot_file = brain.save_snapshot()
-            print(f"saved final brain snapshot to {snapshot_file}")
-        except Exception as err:
-            print(f"failed to save final snapshot: {err}")
+        snapshot_file = brain.save_snapshot()
+        print(f"saved final brain snapshot to {snapshot_file}")
     print("streamed quality training complete")
     clear_resources()
 

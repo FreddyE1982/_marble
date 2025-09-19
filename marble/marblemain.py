@@ -1939,18 +1939,19 @@ class Brain:
 
         snapshot_torch: Any
         allow_cpu_override = bool(getattr(self, "_allow_cpu_snapshot_when_cuda", False))
+        snapshot_torch = None  # type: ignore
         try:
             import torch as snapshot_torch  # type: ignore
-        except Exception:
+        except ModuleNotFoundError:
             snapshot_torch = None  # type: ignore
+        except Exception as exc:
+            raise RuntimeError("Failed to import torch for snapshot creation") from exc
         cuda_available = False
         if snapshot_torch is not None:
             try:
                 cuda_available = bool(snapshot_torch.cuda.is_available())
             except Exception as exc:
-                if not allow_cpu_override:
-                    raise RuntimeError("Unable to determine CUDA availability for snapshots") from exc
-                cuda_available = False
+                raise RuntimeError("Unable to determine CUDA availability for snapshots") from exc
         use_cuda_for_snapshot = cuda_available
         device_override = getattr(self, "_force_snapshot_device", None)
         if isinstance(device_override, str):
@@ -1992,50 +1993,35 @@ class Brain:
                 return last_path
 
         def tensor_to_list(t: Any) -> List[float]:
-            try:
-                if snapshot_torch is not None and snapshot_torch.is_tensor(t):
-                    tensor = t.detach()
-                    try:
-                        tensor = tensor.to(device=snapshot_device, dtype=snapshot_torch.float32)
-                    except Exception:
-                        tensor = tensor.to(dtype=snapshot_torch.float32)
-                    tensor = tensor.reshape(-1)
-                    tensor = tensor.to("cpu")
+            if snapshot_torch is not None and snapshot_torch.is_tensor(t):
+                tensor = t.detach()
+                dtype = snapshot_torch.float32
+                tensor = tensor.to(device=snapshot_device, dtype=dtype) if use_cuda_for_snapshot else tensor.to(dtype=dtype)
+                tensor = tensor.reshape(-1).to("cpu")
+                return [float(x) for x in tensor.tolist()]
+            if snapshot_torch is not None and use_cuda_for_snapshot:
+                if isinstance(t, (list, tuple)):
+                    tensor = snapshot_torch.as_tensor(t, dtype=snapshot_torch.float32)
+                    tensor = tensor.reshape(-1).to(device=snapshot_device).to("cpu")
                     return [float(x) for x in tensor.tolist()]
-                if snapshot_torch is not None and use_cuda_for_snapshot and isinstance(t, (list, tuple)):
-                    try:
-                        tensor = snapshot_torch.as_tensor(t, dtype=snapshot_torch.float32)
-                        tensor = tensor.reshape(-1)
-                        tensor = tensor.to(device=snapshot_device)
-                        tensor = tensor.to("cpu")
-                        return [float(x) for x in tensor.tolist()]
-                    except Exception:
-                        pass
-                if snapshot_torch is not None and use_cuda_for_snapshot and hasattr(t, "__array__"):
-                    try:
-                        tensor = snapshot_torch.as_tensor(t, dtype=snapshot_torch.float32)
-                        tensor = tensor.reshape(-1)
-                        tensor = tensor.to(device=snapshot_device)
-                        tensor = tensor.to("cpu")
-                        return [float(x) for x in tensor.tolist()]
-                    except Exception:
-                        pass
-                if hasattr(t, "detach") and hasattr(t, "tolist"):
-                    return [float(x) for x in t.detach().to("cpu").view(-1).tolist()]
-            except Exception:
-                pass
-            return [float(x) for x in (t if isinstance(t, (list, tuple)) else [t])]
+                if hasattr(t, "__array__"):
+                    tensor = snapshot_torch.as_tensor(t, dtype=snapshot_torch.float32)
+                    tensor = tensor.reshape(-1).to(device=snapshot_device).to("cpu")
+                    return [float(x) for x in tensor.tolist()]
+            if hasattr(t, "detach") and hasattr(t, "tolist"):
+                tensor_like = t.detach().to("cpu").view(-1)
+                return [float(x) for x in tensor_like.tolist()]
+            if isinstance(t, (list, tuple)):
+                return [float(x) for x in t]
+            return [float(t)]
 
         def _values_to_tensor(values: Iterable[Any], *, dtype: Any) -> Optional[Any]:
             if snapshot_torch is None:
                 return None
-            try:
-                tensor = snapshot_torch.as_tensor(values, dtype=dtype)
-                if use_cuda_for_snapshot:
-                    tensor = tensor.to(device=snapshot_device)
-                return tensor
-            except Exception:
-                return None
+            tensor = snapshot_torch.as_tensor(values, dtype=dtype)
+            if use_cuda_for_snapshot:
+                tensor = tensor.to(device=snapshot_device)
+            return tensor
 
         def _is_uniform_sequence(values: Sequence[float], *, tol: float = 1e-12) -> Tuple[bool, float]:
             if not values:
@@ -2045,11 +2031,8 @@ class Brain:
                 tensor = _values_to_tensor(values, dtype=snapshot_torch.float32)
                 if tensor is not None:
                     ref = snapshot_torch.full_like(tensor, first_value)
-                    try:
-                        if bool(snapshot_torch.allclose(tensor, ref, rtol=tol, atol=tol)):
-                            return (True, first_value)
-                    except Exception:
-                        pass
+                    if bool(snapshot_torch.allclose(tensor, ref, rtol=tol, atol=tol)):
+                        return (True, first_value)
             if all(math.isclose(float(v), first_value, rel_tol=tol, abs_tol=tol) for v in values):
                 return (True, first_value)
             return (False, first_value)
@@ -2061,13 +2044,10 @@ class Brain:
             min_value = min(values_list)
             max_value = max(values_list)
             if snapshot_torch is not None and use_cuda_for_snapshot:
-                try:
-                    tensor = snapshot_torch.as_tensor(values_list, dtype=snapshot_torch.int64)
-                    tensor = tensor.to(device=snapshot_device)
-                    min_value = int(tensor.min().detach().to("cpu").item())
-                    max_value = int(tensor.max().detach().to("cpu").item())
-                except Exception:
-                    pass
+                tensor = snapshot_torch.as_tensor(values_list, dtype=snapshot_torch.int64)
+                tensor = tensor.to(device=snapshot_device)
+                min_value = int(tensor.min().detach().to("cpu").item())
+                max_value = int(tensor.max().detach().to("cpu").item())
             if min_value < 0:
                 signed_ranges = (
                     ("b", -128, 127),
@@ -2099,10 +2079,9 @@ class Brain:
         def _listify_bounds(value: Any) -> List[List[Any]]:
             if value is None:
                 return []
-            try:
-                return [list(b) for b in value]
-            except TypeError:
-                return []
+            if not isinstance(value, Iterable):
+                raise TypeError("Bounds must be iterable during snapshot creation")
+            return [list(b) for b in value]
 
         string_table: List[str] = []
         string_index: Dict[str, int] = {}
@@ -2165,10 +2144,11 @@ class Brain:
         tensor_fill_index: Dict[Tuple[float, int], int] = {}
 
         for idx, (pos, neuron) in enumerate(self.neurons.items()):  # type: ignore[union-attr]
-            pos_tuple: Tuple[Any, ...]
-            try:
+            if isinstance(pos, tuple):
+                pos_tuple = pos
+            elif isinstance(pos, list):
                 pos_tuple = tuple(pos)
-            except TypeError:
+            else:
                 pos_tuple = tuple(list(pos))  # type: ignore[list-item]
             neuron_positions.append(pos_tuple)
             neuron_index[pos_tuple] = idx
@@ -2206,26 +2186,23 @@ class Brain:
                 and use_cuda_for_snapshot
                 and neuron_positions
             ):
-                try:
-                    coords_tensor = snapshot_torch.as_tensor(
-                        neuron_positions, dtype=snapshot_torch.int64
-                    )
-                    coords_tensor = coords_tensor.to(device=snapshot_device)
-                    stride_tensor = snapshot_torch.as_tensor(
-                        linear_index_strides, dtype=snapshot_torch.int64
-                    )
-                    stride_tensor = stride_tensor.to(device=snapshot_device)
-                    linear_tensor = coords_tensor * stride_tensor
-                    linear_tensor = linear_tensor.sum(dim=1)
-                    computed_linear = array(
-                        "Q",
-                        [
-                            int(val)
-                            for val in linear_tensor.detach().to("cpu").tolist()
-                        ],
-                    )
-                except Exception:
-                    computed_linear = None
+                coords_tensor = snapshot_torch.as_tensor(
+                    neuron_positions, dtype=snapshot_torch.int64
+                )
+                coords_tensor = coords_tensor.to(device=snapshot_device)
+                stride_tensor = snapshot_torch.as_tensor(
+                    linear_index_strides, dtype=snapshot_torch.int64
+                )
+                stride_tensor = stride_tensor.to(device=snapshot_device)
+                linear_tensor = coords_tensor * stride_tensor
+                linear_tensor = linear_tensor.sum(dim=1)
+                computed_linear = array(
+                    "Q",
+                    [
+                        int(val)
+                        for val in linear_tensor.detach().to("cpu").tolist()
+                    ],
+                )
             if computed_linear is None:
                 fallback_linear = array("Q")
                 for pos_tuple in neuron_positions:
@@ -2247,18 +2224,15 @@ class Brain:
                 and use_cuda_for_snapshot
                 and neuron_positions
             ):
-                try:
-                    coords_tensor = snapshot_torch.as_tensor(
-                        neuron_positions, dtype=snapshot_torch.int64
-                    )
-                    coords_tensor = coords_tensor.to(device=snapshot_device)
-                    flat_tensor = coords_tensor.reshape(-1)
-                    computed_int_positions = [
-                        int(val)
-                        for val in flat_tensor.detach().to("cpu").tolist()
-                    ]
-                except Exception:
-                    computed_int_positions = None
+                coords_tensor = snapshot_torch.as_tensor(
+                    neuron_positions, dtype=snapshot_torch.int64
+                )
+                coords_tensor = coords_tensor.to(device=snapshot_device)
+                flat_tensor = coords_tensor.reshape(-1)
+                computed_int_positions = [
+                    int(val)
+                    for val in flat_tensor.detach().to("cpu").tolist()
+                ]
             if computed_int_positions is None:
                 computed_int_positions = []
                 for pos_tuple in neuron_positions:
@@ -2272,21 +2246,18 @@ class Brain:
                 and use_cuda_for_snapshot
                 and neuron_positions
             ):
-                try:
-                    coords_tensor = snapshot_torch.as_tensor(
-                        neuron_positions, dtype=snapshot_torch.float32
-                    )
-                    coords_tensor = coords_tensor.to(device=snapshot_device)
-                    flat_tensor = coords_tensor.reshape(-1)
-                    computed_positions_array = array(
-                        "f",
-                        [
-                            float(val)
-                            for val in flat_tensor.detach().to("cpu").tolist()
-                        ],
-                    )
-                except Exception:
-                    computed_positions_array = None
+                coords_tensor = snapshot_torch.as_tensor(
+                    neuron_positions, dtype=snapshot_torch.float32
+                )
+                coords_tensor = coords_tensor.to(device=snapshot_device)
+                flat_tensor = coords_tensor.reshape(-1)
+                computed_positions_array = array(
+                    "f",
+                    [
+                        float(val)
+                        for val in flat_tensor.detach().to("cpu").tolist()
+                    ],
+                )
             if computed_positions_array is None:
                 fallback_positions = array("f")
                 for pos_tuple in neuron_positions:
@@ -2309,11 +2280,10 @@ class Brain:
                 # Skip partially constructed synapses so snapshotting continues
                 # instead of failing with ``TypeError: 'NoneType' object is not iterable``.
                 continue
-            try:
-                src_tuple = tuple(src)
-                dst_tuple = tuple(dst)
-            except TypeError:
-                continue
+            if not isinstance(src, Iterable) or not isinstance(dst, Iterable):
+                raise TypeError("Synapse endpoints must be iterable during snapshot creation")
+            src_tuple = tuple(src)
+            dst_tuple = tuple(dst)
             src_idx = neuron_index.get(src_tuple)
             dst_idx = neuron_index.get(dst_tuple)
             if src_idx is None or dst_idx is None:
@@ -2336,22 +2306,16 @@ class Brain:
                 tensor = _values_to_tensor(values, dtype=snapshot_torch.float32)
                 if tensor is not None and getattr(tensor, "numel", lambda: 0)() > 0:
                     ref = snapshot_torch.full_like(tensor, float(target))
-                    try:
-                        if bool(snapshot_torch.allclose(tensor, ref, rtol=1e-9, atol=1e-9)):
-                            return True
-                    except Exception:
-                        pass
+                    if bool(snapshot_torch.allclose(tensor, ref, rtol=1e-9, atol=1e-9)):
+                        return True
             return all(math.isclose(float(v), target, rel_tol=1e-9, abs_tol=1e-9) for v in values)
 
         def _all_int(values: Iterable[int], target: int) -> bool:
             if snapshot_torch is not None and use_cuda_for_snapshot:
                 tensor = _values_to_tensor(values, dtype=snapshot_torch.int64)
                 if tensor is not None and getattr(tensor, "numel", lambda: 0)() > 0:
-                    try:
-                        if bool(snapshot_torch.all(tensor == int(target))):
-                            return True
-                    except Exception:
-                        pass
+                    if bool(snapshot_torch.all(tensor == int(target))):
+                        return True
             return all(int(v) == target for v in values)
 
         data["layout"] = "columnar"
@@ -2416,13 +2380,10 @@ class Brain:
             ]
         codec_obj = getattr(self, "codec", None)
         if codec_obj is not None:
-            try:
+            if hasattr(codec_obj, "export_state"):
                 data["codec_state"] = codec_obj.export_state()
-            except Exception:
-                try:
-                    data["codec_vocab"] = codec_obj.dump_vocab()
-                except Exception:
-                    pass
+            elif hasattr(codec_obj, "dump_vocab"):
+                data["codec_vocab"] = codec_obj.dump_vocab()
         with gzip.open(target, "wb") as f:
             pickle.dump(data, f, protocol=pickle.HIGHEST_PROTOCOL)
         self._last_snapshot_meta = {
@@ -2432,24 +2393,15 @@ class Brain:
         }
         # Retention: keep only the newest N snapshots if configured
         if getattr(self, "snapshot_keep", None) is not None:
-            try:
-                files = [
-                    os.path.join(self.snapshot_path, p)
-                    for p in os.listdir(self.snapshot_path)
-                    if p.endswith(".marble")
-                ]
-                files.sort(key=os.path.getmtime, reverse=True)
-                for old in files[int(self.snapshot_keep) :]:
-                    try:
-                        os.remove(old)
-                    except Exception:
-                        pass
-            except Exception:
-                pass
-        try:
-            report("brain", "snapshot_saved", {"path": target}, "io")
-        except Exception:
-            pass
+            files = [
+                os.path.join(self.snapshot_path, p)
+                for p in os.listdir(self.snapshot_path)
+                if p.endswith(".marble")
+            ]
+            files.sort(key=os.path.getmtime, reverse=True)
+            for old in files[int(self.snapshot_keep) :]:
+                os.remove(old)
+        report("brain", "snapshot_saved", {"path": target}, "io")
         return target
 
     @classmethod
