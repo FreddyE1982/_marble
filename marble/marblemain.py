@@ -2408,10 +2408,37 @@ class Brain:
             return all(int(v) == target for v in values)
 
         data["layout"] = "columnar"
+
+        def _pack_ragged_float_vectors(vectors: Sequence[Iterable[float]]) -> Optional[Dict[str, Any]]:
+            if not vectors:
+                return None
+            lengths_list = []
+            flat = array("f")
+            for vector in vectors:
+                if isinstance(vector, array) and vector.typecode == "f":
+                    length = len(vector)
+                    lengths_list.append(length)
+                    if length:
+                        flat.extend(vector)
+                    continue
+                seq = [float(v) for v in vector]
+                lengths_list.append(len(seq))
+                if seq:
+                    flat.extend(seq)
+            if not lengths_list or not any(lengths_list):
+                return None
+            return {
+                "layout": "flat",
+                "count": len(lengths_list),
+                "lengths": _build_int_array(lengths_list),
+                "values": flat,
+            }
+
         neurons_block: Dict[str, Any] = {
             "count": len(neuron_positions),
-            "tensor_refs": _build_int_array(tensor_refs_list),
         }
+        if not _all_int(tensor_refs_list, -1):
+            neurons_block["tensor_refs"] = _build_int_array(tensor_refs_list)
         if tensor_assignment_requests:
             neurons_block["tensor_ref_mode"] = "segmented"
         if any(idx >= 0 for idx in tensor_fill_refs_list):
@@ -2436,12 +2463,9 @@ class Brain:
             neurons_block["ages"] = _build_int_array(ages_list)
         if len(type_ids_list) and not _all_int(type_ids_list, -1):
             neurons_block["type_ids"] = _build_int_array(type_ids_list)
-        if tensor_values:
-            neurons_block["tensor_values"] = [
-                entry if isinstance(entry, array)
-                else array("f", [float(v) for v in entry])
-                for entry in tensor_values
-            ]
+        tensor_values_block = _pack_ragged_float_vectors(tensor_values)
+        if tensor_values_block is not None:
+            neurons_block["tensor_values"] = tensor_values_block
         data["neurons"] = neurons_block
 
         synapses_block: Dict[str, Any] = {
@@ -2469,11 +2493,9 @@ class Brain:
         data["synapses"] = synapses_block
         if string_table:
             data["string_table"] = string_table
-        if tensor_pool:
-            data["tensor_pool"] = [
-                array("f", [float(v) for v in entry])
-                for entry in tensor_pool
-            ]
+        tensor_pool_block = _pack_ragged_float_vectors(tensor_pool)
+        if tensor_pool_block is not None:
+            data["tensor_pool"] = tensor_pool_block
         if tensor_pool_fills:
             fill_values = array("f", [float(value) for value, _ in tensor_pool_fills])
             fill_lengths = _build_int_array(length for _, length in tensor_pool_fills)
@@ -2593,15 +2615,34 @@ class Brain:
             except TypeError:
                 return []
 
-        tensor_pool_raw = data.get("tensor_pool")
-        tensor_pool_list: List[List[float]] = []
-        if tensor_pool_raw is not None:
-            if isinstance(tensor_pool_raw, list):
-                candidates = tensor_pool_raw
-            else:
-                candidates = _coerce_list(tensor_pool_raw)
+        def _decode_ragged_float_vectors(raw: Any) -> List[List[float]]:
+            if raw is None:
+                return []
+            if isinstance(raw, dict) and "lengths" in raw and "values" in raw:
+                lengths = [int(v) for v in _coerce_list(raw.get("lengths", []))]
+                values_seq = _coerce_list(raw.get("values", []))
+                count_hint = int(raw.get("count", len(lengths))) if hasattr(raw, "get") else len(lengths)
+                result: List[List[float]] = []
+                cursor = 0
+                for length in lengths:
+                    safe_length = max(0, int(length))
+                    end = cursor + safe_length
+                    segment = values_seq[cursor:end]
+                    if len(segment) < safe_length:
+                        segment = segment + [0.0] * (safe_length - len(segment))
+                    result.append([float(v) for v in segment[:safe_length]])
+                    cursor = end
+                while len(result) < max(count_hint, 0):
+                    result.append([])
+                return result
+            candidates = raw if isinstance(raw, list) else _coerce_list(raw)
+            result: List[List[float]] = []
             for entry in candidates:
-                tensor_pool_list.append([float(v) for v in _coerce_list(entry)])
+                result.append([float(v) for v in _coerce_list(entry)])
+            return result
+
+        tensor_pool_raw = data.get("tensor_pool")
+        tensor_pool_list = _decode_ragged_float_vectors(tensor_pool_raw)
 
         tensor_pool_fills_raw = data.get("tensor_pool_fills")
         tensor_pool_fills: List[Tuple[float, int]] = []
@@ -2680,11 +2721,8 @@ class Brain:
             tensor_fill_refs_list = [
                 int(v) for v in _coerce_list(neurons_block.get("tensor_fill_refs", []))
             ]
-            tensor_values_raw = neurons_block.get("tensor_values", [])
-            if isinstance(tensor_values_raw, list):
-                tensor_values_list = [list(tv) for tv in tensor_values_raw]
-            else:
-                tensor_values_list = [list(tv) for tv in _coerce_list(tensor_values_raw)]
+            tensor_values_raw = neurons_block.get("tensor_values")
+            tensor_values_list = _decode_ragged_float_vectors(tensor_values_raw)
             tensor_ref_mode = neurons_block.get("tensor_ref_mode")
             segmented_tensor_refs = tensor_ref_mode == "segmented"
             tensor_pool_length = len(tensor_pool_list)

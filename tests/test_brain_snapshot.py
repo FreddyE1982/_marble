@@ -62,6 +62,42 @@ class TestBrainSnapshot(unittest.TestCase):
         except TypeError:
             return []
 
+    def _decode_ragged(self, raw):
+        if raw is None:
+            return []
+        if isinstance(raw, dict) and "lengths" in raw and "values" in raw:
+            lengths = [int(v) for v in self._to_list(raw.get("lengths", []))]
+            values = [float(v) for v in self._to_list(raw.get("values", []))]
+            count_hint = int(raw.get("count", len(lengths))) if hasattr(raw, "get") else len(lengths)
+            result = []
+            cursor = 0
+            for length in lengths:
+                safe_length = max(0, int(length))
+                end = cursor + safe_length
+                segment = values[cursor:end]
+                if len(segment) < safe_length:
+                    segment = segment + [0.0] * (safe_length - len(segment))
+                result.append(segment[:safe_length])
+                cursor = end
+            while len(result) < max(count_hint, 0):
+                result.append([])
+            return result
+        if isinstance(raw, list):
+            candidates = raw
+        else:
+            candidates = self._to_list(raw)
+        result = []
+        for entry in candidates:
+            result.append([float(v) for v in self._to_list(entry)])
+        return result
+
+    def _tensor_refs(self, neurons_block):
+        count = int(neurons_block.get("count", 0))
+        refs_field = neurons_block.get("tensor_refs")
+        if refs_field is None:
+            return [-1] * count
+        return [int(v) for v in self._to_list(refs_field)]
+
     def test_snapshot_save_and_load(self):
         clear_report_group("brain")
         tmp = tempfile.mkdtemp()
@@ -115,11 +151,6 @@ class TestBrainSnapshot(unittest.TestCase):
         self.assertIsInstance(neurons_block["biases"], array)
         self.assertIsInstance(neurons_block["ages"], array)
         self.assertIsInstance(neurons_block["type_ids"], array)
-        self.assertIsInstance(neurons_block["tensor_refs"], array)
-        self.assertIn(
-            neurons_block["tensor_refs"].typecode,
-            ("b", "B", "h", "H", "i", "I", "q", "Q"),
-        )
         tensor_fill_refs = neurons_block.get("tensor_fill_refs")
         self.assertIsNotNone(tensor_fill_refs)
         self.assertIsInstance(tensor_fill_refs, array)
@@ -131,13 +162,14 @@ class TestBrainSnapshot(unittest.TestCase):
         self.assertEqual(neurons_block["weights"].tolist(), [2.0, 1.5])
         self.assertEqual(neurons_block["biases"].tolist(), [-0.25, 0.75])
         self.assertEqual(neurons_block["ages"].tolist(), [5, 3])
-        tensor_refs = neurons_block["tensor_refs"].tolist()
+        tensor_refs = self._tensor_refs(neurons_block)
         fill_refs = tensor_fill_refs.tolist()
         linear_indices = neurons_block["linear_indices"].tolist()
         self.assertEqual(sorted(linear_indices), [0, 1])
-        tensor_pool = payload.get("tensor_pool") or []
-        if tensor_pool:
-            self.assertIsInstance(tensor_pool, list)
+        tensor_pool_raw = payload.get("tensor_pool") or []
+        if tensor_pool_raw:
+            self.assertIsInstance(tensor_pool_raw, dict)
+            self.assertEqual(tensor_pool_raw.get("layout"), "flat")
         tensor_pool_fills = payload.get("tensor_pool_fills")
         self.assertIsInstance(tensor_pool_fills, dict)
         normalized_fills = self._normalize_fills(tensor_pool_fills)
@@ -206,22 +238,18 @@ class TestBrainSnapshot(unittest.TestCase):
         snap_path = brain.save_snapshot()
         payload = self._latest_payload(snap_path)
         neurons_block = payload["neurons"]
-        tensor_refs = neurons_block["tensor_refs"].tolist()
+        tensor_refs = self._tensor_refs(neurons_block)
         tensor_fill_refs = neurons_block.get("tensor_fill_refs", array("b"))
         tensor_fill_vals = tensor_fill_refs.tolist() if hasattr(tensor_fill_refs, "tolist") else list(tensor_fill_refs)
         self.assertTrue(all(ref == -1 for ref in tensor_fill_vals))
         self.assertEqual(neurons_block.get("tensor_ref_mode"), "segmented")
-        tensor_pool = payload.get("tensor_pool")
-        self.assertIsInstance(tensor_pool, list)
+        tensor_pool = self._decode_ragged(payload.get("tensor_pool"))
         self.assertEqual(len(tensor_pool), 1)
-        pool_entry = tensor_pool[0]
-        self.assertIsInstance(pool_entry, array)
-        self.assertEqual(pool_entry.typecode, "f")
-        pool_values = list(pool_entry.tolist() if hasattr(pool_entry, "tolist") else list(pool_entry))
+        pool_values = tensor_pool[0]
         self.assertEqual(len(pool_values), len(repeated_tensor))
         for actual, expected in zip(pool_values, repeated_tensor):
             self.assertTrue(math.isclose(actual, expected, rel_tol=1e-6, abs_tol=1e-6))
-        tensor_values = neurons_block.get("tensor_values")
+        tensor_values = self._decode_ragged(neurons_block.get("tensor_values"))
         self.assertEqual(len(tensor_values), 1)
         for actual, expected in zip(tensor_values[0], inline_tensor):
             self.assertTrue(math.isclose(actual, expected, rel_tol=1e-6, abs_tol=1e-6))
@@ -250,7 +278,7 @@ class TestBrainSnapshot(unittest.TestCase):
         b.add_neuron((1,), tensor=[1.0], connect_to=(0,), direction="uni")
         snap_path = b.save_snapshot()
         payload = self._latest_payload(snap_path)
-        self.assertNotIn("tensor_pool", payload)
+        self.assertTrue(payload.get("tensor_pool") in (None, {}))
         self.assertIn("tensor_pool_fills", payload)
         neurons_block = payload["neurons"]
         self.assertEqual(neurons_block.get("position_encoding"), "linear")
@@ -298,14 +326,12 @@ class TestBrainSnapshot(unittest.TestCase):
         b.add_neuron((2,), tensor=[1.25], connect_to=(1,), direction="uni")
         snap_path = b.save_snapshot()
         payload = self._latest_payload(snap_path)
-        tensor_pool = payload.get("tensor_pool")
-        self.assertIsInstance(tensor_pool, list)
+        tensor_pool = self._decode_ragged(payload.get("tensor_pool"))
         self.assertEqual(len(tensor_pool), 1)
-        self.assertIsInstance(tensor_pool[0], array)
-        pool_values = tensor_pool[0].tolist() if hasattr(tensor_pool[0], "tolist") else list(tensor_pool[0])
+        pool_values = tensor_pool[0]
         for actual, expected in zip(pool_values, shared_tensor):
             self.assertTrue(math.isclose(actual, expected, rel_tol=1e-6, abs_tol=1e-6))
-        tensor_refs = payload["neurons"]["tensor_refs"].tolist()
+        tensor_refs = self._tensor_refs(payload["neurons"])
         fill_refs = payload["neurons"].get("tensor_fill_refs")
         self.assertIsNotNone(fill_refs)
         fill_refs_list = fill_refs.tolist()
@@ -336,13 +362,12 @@ class TestBrainSnapshot(unittest.TestCase):
         b.add_neuron((1,), tensor=normal_tensor, connect_to=(0,), direction="uni")
         snap_path = b.save_snapshot()
         payload = self._latest_payload(snap_path)
-        tensor_pool = payload.get("tensor_pool")
+        tensor_pool = self._decode_ragged(payload.get("tensor_pool"))
         tensor_pool_fills = payload.get("tensor_pool_fills")
         neurons_block = payload["neurons"]
-        tensor_values = neurons_block.get("tensor_values")
-        self.assertTrue(tensor_pool is None or tensor_pool == [])
+        tensor_values = self._decode_ragged(neurons_block.get("tensor_values"))
+        self.assertFalse(tensor_pool)
         self.assertIsInstance(tensor_pool_fills, dict)
-        self.assertIsInstance(tensor_values, list)
         self.assertEqual(len(tensor_values), 1)
         self.assertEqual(len(tensor_values[0]), len(normal_tensor))
         for actual, expected in zip(tensor_values[0], normal_tensor):
@@ -358,7 +383,7 @@ class TestBrainSnapshot(unittest.TestCase):
         fill_value, fill_length = fill_entry
         self.assertAlmostEqual(float(fill_value), 3.75)
         self.assertEqual(int(fill_length), 4096)
-        tensor_refs = neurons_block["tensor_refs"].tolist()
+        tensor_refs = self._tensor_refs(neurons_block)
         fill_refs = neurons_block["tensor_fill_refs"].tolist()
         self.assertEqual(neurons_block.get("tensor_ref_mode"), "segmented")
         self.assertEqual(tensor_refs[0], -1)
@@ -406,11 +431,12 @@ class TestBrainSnapshot(unittest.TestCase):
         )
         self.assertIn("type_ids", neurons_block)
         self.assertEqual(neurons_block["type_ids"].typecode, "b")
-        self.assertIn("tensor_refs", neurons_block)
-        self.assertIn(
-            neurons_block["tensor_refs"].typecode,
-            ("b", "B", "h", "H", "i", "I", "q", "Q"),
-        )
+        tensor_refs_field = neurons_block.get("tensor_refs")
+        if tensor_refs_field is not None:
+            self.assertIn(
+                tensor_refs_field.typecode,
+                ("b", "B", "h", "H", "i", "I", "q", "Q"),
+            )
         self.assertIn("tensor_fill_refs", neurons_block)
         self.assertIn(
             neurons_block["tensor_fill_refs"].typecode,
@@ -447,13 +473,18 @@ class TestBrainSnapshot(unittest.TestCase):
         payload = self._latest_payload(snap_path)
         neurons_block = payload["neurons"]
         syn_block = payload["synapses"]
+        tensor_refs_field = neurons_block.get("tensor_refs")
+        tensor_ref_typecode = None if tensor_refs_field is None else tensor_refs_field.typecode
         print(
             "large snapshot typecodes:",
-            neurons_block["tensor_refs"].typecode,
+            tensor_ref_typecode,
             syn_block["source_indices"].typecode,
             syn_block["target_indices"].typecode,
         )
-        self.assertEqual(neurons_block["tensor_refs"].typecode, "b")
+        if tensor_refs_field is not None:
+            self.assertEqual(tensor_refs_field.typecode, "b")
+        else:
+            self.assertTrue(all(ref == -1 for ref in self._tensor_refs(neurons_block)))
         self.assertIn("tensor_fill_refs", neurons_block)
         self.assertEqual(neurons_block["tensor_fill_refs"].typecode, "H")
         self.assertEqual(syn_block["source_indices"].typecode, "H")
