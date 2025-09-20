@@ -32,6 +32,8 @@ import struct
 import threading
 import time
 import zlib
+import shutil
+import tempfile
 from dataclasses import dataclass
 from typing import Any, Dict, Iterator, Optional
 
@@ -126,13 +128,38 @@ class SnapshotStreamWriter:
         crc = zlib.crc32(compressed) & 0xFFFFFFFF
         header = FRAME_HEADER_STRUCT.pack(FRAME_TYPE_FULL, length, crc)
         footer = FRAME_FOOTER_STRUCT.pack(length)
+        frame_bytes = header + compressed + footer
         with self._lock:
-            self._file.write(header)
-            self._file.write(compressed)
-            self._file.write(footer)
-            self._file.flush()
-            os.fsync(self._file.fileno())
-            self._frame_index += 1
+            file_handle = self._file
+            if file_handle is None:
+                file_handle = self._open_file()
+            file_handle.flush()
+            os.fsync(file_handle.fileno())
+            file_handle.close()
+            self._file = None
+            try:
+                self._atomic_append(frame_bytes)
+                self._frame_index += 1
+            finally:
+                self._file = self._open_file()
+
+    def _atomic_append(self, frame_bytes: bytes) -> None:
+        directory = os.path.dirname(self.path) or "."
+        fd, tmp_path = tempfile.mkstemp(prefix=".__mbsnap_", dir=directory)
+        try:
+            with os.fdopen(fd, "wb") as tmp_fh:
+                if os.path.exists(self.path):
+                    with open(self.path, "rb") as src:
+                        shutil.copyfileobj(src, tmp_fh, length=1024 * 1024)
+                tmp_fh.write(frame_bytes)
+                tmp_fh.flush()
+                os.fsync(tmp_fh.fileno())
+            os.replace(tmp_path, self.path)
+        finally:
+            try:
+                os.remove(tmp_path)
+            except FileNotFoundError:
+                pass
 
     def close(self) -> None:
         with self._lock:
