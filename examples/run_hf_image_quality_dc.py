@@ -14,6 +14,7 @@ from __future__ import annotations
 print("Importing packages..")
 
 from typing import Iterator, Any, Dict
+from collections import deque
 from collections.abc import Mapping
 import io
 import os
@@ -52,7 +53,7 @@ from marble import learnableON, learnableIsOn
 
 print("...complete")
 
-PREP_TIMES: list[float] = []
+PREP_TIMES: deque[float] = deque()
 
 
 QUALITY_LEARNABLES: tuple[str, ...] = (
@@ -467,7 +468,7 @@ def main(
 
     def _start_neuron(left: Any, br):
         if PREP_TIMES:
-            latency = time.perf_counter() - PREP_TIMES.pop(0)
+            latency = time.perf_counter() - PREP_TIMES.popleft()
             print(f"prep-to-train latency: {latency:.4f}s")
         sentinel = object()
         enc: Any = left
