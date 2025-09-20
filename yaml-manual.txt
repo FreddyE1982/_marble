@@ -57,6 +57,16 @@
   failures raise an error so snapshots never silently downgrade to single-threaded gzip. The value must be an
   integer between 1 and 9; out-of-range values are clamped automatically.
 
+- snapshot.tensor_precision (int | str, default: 16)
+  Controls the numeric precision used when persisting tensor payloads inside
+  snapshot streams. The value accepts either bit-widths (``8``, ``16``, ``32``)
+  or their string aliases (``"uint8"``, ``"float16"``, ``"float32"``). Tensor
+  elements are rounded to the requested precision before encoding; ``8``-bit
+  mode applies linear quantisation with a stored scale and offset so values can
+  be reconstructed approximately during snapshot loading. ``16``-bit mode uses
+  IEEE ``float16`` storage, while ``32``-bit mode preserves the legacy
+  ``float32`` representation. Invalid values fall back to the default.
+
 ## Reporter Settings
 
 - reporter.tensorboard.enabled (bool, default: true)
