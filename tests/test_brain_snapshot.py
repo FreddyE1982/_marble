@@ -126,6 +126,33 @@ class TestBrainSnapshot(unittest.TestCase):
                     if len(seq) > count_val:
                         seq = seq[:count_val]
                     return seq
+                if enc_lower in {"quant8", "uint8"}:
+                    try:
+                        count_val = int(value.get("count", 0))
+                    except Exception:
+                        count_val = 0
+                    payload = value.get("data", value.get("values", []))
+                    if isinstance(payload, memoryview):
+                        data_bytes = payload.tobytes()
+                    elif isinstance(payload, (bytes, bytearray)):
+                        data_bytes = bytes(payload)
+                    else:
+                        try:
+                            items = self._to_list(payload)
+                        except Exception:
+                            items = []
+                        data_bytes = bytes(int(v) & 0xFF for v in items)
+                    offset_val = float(value.get("offset", value.get("min", 0.0)))
+                    scale_val = float(value.get("scale", value.get("step", 1.0)))
+                    if not math.isfinite(scale_val) or scale_val <= 0.0:
+                        scale_val = 1.0
+                    if count_val <= 0:
+                        count_val = len(data_bytes)
+                    decoded = []
+                    for idx in range(max(0, count_val)):
+                        byte_val = data_bytes[idx] if idx < len(data_bytes) else 0
+                        decoded.append(offset_val + scale_val * float(byte_val))
+                    return decoded
                 if enc_lower == "rle":
                     try:
                         count_val = int(value.get("count", 0))
@@ -906,7 +933,7 @@ class TestBrainSnapshot(unittest.TestCase):
         self.assertIn("type_ids", syn_block)
         self.assertIn("direction_ids", syn_block)
         self.assertIsInstance(syn_block["weights"], array)
-        self.assertEqual(syn_block["weights"].typecode, "f")
+        self.assertIn(syn_block["weights"].typecode, ("f", "e"))
         self.assertIsInstance(syn_block["ages"], array)
         self.assertEqual(syn_block["ages"].typecode, "B")
         self.assertIsInstance(syn_block["type_ids"], array)

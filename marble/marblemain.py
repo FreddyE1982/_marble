@@ -77,10 +77,49 @@ def _coerce_snapshot_compress_level(value: Any, default: int = 2) -> int:
     return max(1, min(9, level))
 
 
+def _coerce_snapshot_tensor_precision(value: Any, default: str = "float16") -> str:
+    """Normalise configured tensor precision for snapshot storage."""
+
+    if isinstance(value, str):
+        token = value.strip().lower()
+    elif isinstance(value, (int, float)):
+        token = str(int(value))
+    else:
+        token = str(default).lower()
+
+    mapping = {
+        "32": "float32",
+        "float32": "float32",
+        "fp32": "float32",
+        "single": "float32",
+        "16": "float16",
+        "float16": "float16",
+        "fp16": "float16",
+        "half": "float16",
+        "8": "uint8",
+        "uint8": "uint8",
+        "int8": "uint8",
+        "byte": "uint8",
+        "uchar": "uint8",
+        "fp8": "uint8",
+        "float8": "uint8",
+        "8bit": "uint8",
+    }
+
+    normalised = mapping.get(token)
+    if normalised is None:
+        return mapping.get(str(default).lower(), "float16")
+    return normalised
+
+
 _SNAPSHOT_CONFIG = _load_snapshot_config()
 _DEFAULT_SNAPSHOT_COMPRESS_LEVEL = _coerce_snapshot_compress_level(
     _SNAPSHOT_CONFIG.get("compress_level"),
     default=2,
+)
+_DEFAULT_SNAPSHOT_TENSOR_PRECISION = _coerce_snapshot_tensor_precision(
+    _SNAPSHOT_CONFIG.get("tensor_precision"),
+    default="float16",
 )
 
 _DEFAULT_BRAIN_MAX_ITERS = 50
@@ -2037,6 +2076,31 @@ class Brain:
             raise RuntimeError("CUDA is available but snapshot would fall back to CPU")
         snapshot_device = "cuda" if use_cuda_for_snapshot else "cpu"
 
+        raw_precision = getattr(
+            self,
+            "_snapshot_tensor_precision",
+            _DEFAULT_SNAPSHOT_TENSOR_PRECISION,
+        )
+        tensor_precision = _coerce_snapshot_tensor_precision(
+            raw_precision,
+            _DEFAULT_SNAPSHOT_TENSOR_PRECISION,
+        )
+        self._snapshot_tensor_precision = tensor_precision
+        tensor_array_typecode = "f"
+        tensor_itemsize = array("f").itemsize
+        if tensor_precision == "float16":
+            try:
+                tensor_itemsize = array("e").itemsize
+                tensor_array_typecode = "e"
+            except Exception:
+                tensor_precision = "float32"
+                self._snapshot_tensor_precision = tensor_precision
+                tensor_array_typecode = "f"
+                tensor_itemsize = array("f").itemsize
+        elif tensor_precision == "uint8":
+            tensor_array_typecode = "f"
+            tensor_itemsize = array("f").itemsize
+
         now = time.time()
         fallback_window = float(getattr(self, "_snapshot_fallback_window", 0.5))
         last_meta: Optional[Dict[str, Any]] = getattr(self, "_last_snapshot_meta", None)
@@ -2432,12 +2496,61 @@ class Brain:
                 return best_payload
             return base_array
 
-        def _encode_float_sequence(values: Iterable[float]) -> Any:
+        def _encode_quant8_payload(values_list: Sequence[float]) -> Optional[Dict[str, Any]]:
+            if not values_list:
+                return {"enc": "quant8", "count": 0, "offset": 0.0, "scale": 1.0, "data": b""}
+            min_val = min(values_list)
+            max_val = max(values_list)
+            if not math.isfinite(min_val) or not math.isfinite(max_val):
+                return None
+            if math.isclose(max_val, min_val, rel_tol=1e-12, abs_tol=1e-12):
+                return {
+                    "enc": "const",
+                    "count": len(values_list),
+                    "value": float(min_val),
+                }
+            range_val = max_val - min_val
+            if not math.isfinite(range_val) or range_val <= 0.0:
+                return None
+            scale = range_val / 255.0
+            if scale <= 0.0 or not math.isfinite(scale):
+                scale = 1.0
+            quantized = bytearray(len(values_list))
+            for idx, value in enumerate(values_list):
+                if not math.isfinite(value):
+                    return None
+                normalized = (value - min_val) / scale if scale else 0.0
+                q = int(round(normalized))
+                if q < 0:
+                    q = 0
+                elif q > 255:
+                    q = 255
+                quantized[idx] = q
+            return {
+                "enc": "quant8",
+                "count": len(values_list),
+                "offset": float(min_val),
+                "scale": float(scale),
+                "data": bytes(quantized),
+            }
+
+        def _encode_float_sequence(values: Iterable[float], *, is_tensor: bool = False) -> Any:
             values_list = [float(v) for v in values]
             if not values_list:
-                return array("f")
+                target_typecode = (
+                    tensor_array_typecode if is_tensor and tensor_precision != "uint8" else "f"
+                )
+                return array(target_typecode)
             first_value = values_list[0]
-            base_bytes_float = len(values_list) * 4
+            quantize_uint8 = bool(is_tensor and tensor_precision == "uint8")
+            if is_tensor:
+                array_typecode = tensor_array_typecode
+                itemsize = tensor_itemsize
+            else:
+                array_typecode = "f"
+                itemsize = array("f").itemsize
+            base_array = array(array_typecode, values_list)
+            base_bytes_float = len(values_list) * itemsize
             if len(values_list) >= 4 and all(
                 math.isclose(float(v), first_value, rel_tol=1e-9, abs_tol=1e-9)
                 for v in values_list
@@ -2475,13 +2588,12 @@ class Brain:
                     int_values.append(int(rounded))
                 if all_int_like:
                     int_payload = _encode_int_sequence(int_values)
-                    estimated_size = _estimate_payload_size(int_payload) + 12
+                    _ = _estimate_payload_size(int_payload) + 12
                     return {
                         "enc": "intcast",
                         "values": int_payload,
                         "count": len(values_list),
                     }
-            base_array = array("f", values_list)
             sparse_fill_candidate_float: Optional[Tuple[Any, int]] = None
             if len(values_list) >= 8:
                 frequency_float: Dict[float, int] = {}
@@ -2503,7 +2615,7 @@ class Brain:
                                 overrides_float.append(value)
                         if indices_float:
                             indices_array_float = _build_int_array(indices_float)
-                            overrides_array_float = array("f", overrides_float)
+                            overrides_array_float = array(array_typecode, overrides_float)
                             payload_float = {
                                 "enc": "sparse-fill",
                                 "count": len(values_list),
@@ -2534,7 +2646,7 @@ class Brain:
                         palette_values.append(value)
                     palette_indices.append(mapped)
                 if not palette_failed and len(palette_values) >= 2:
-                    values_array = array("f", palette_values)
+                    values_array = array(array_typecode, palette_values)
                     bits_per = max(1, (len(palette_values) - 1).bit_length())
                     if bits_per <= 8:
                         total_bits = len(palette_indices) * bits_per
@@ -2593,7 +2705,7 @@ class Brain:
                         current_count = 1
                 runs_values.append(float(current_value))
                 runs_counts.append(current_count)
-                values_array = array("f", runs_values)
+                values_array = array(array_typecode, runs_values)
                 counts_array = _build_int_array(runs_counts)
                 rle_bytes = (
                     values_array.itemsize * len(runs_values)
@@ -2625,20 +2737,12 @@ class Brain:
                     for repeat_idx in range(1, repeats):
                         start = repeat_idx * pattern_len
                         end = start + pattern_len
-                        if not all(
-                            math.isclose(
-                                float(values_list[pos]),
-                                float(pattern_values[pos - start]),
-                                rel_tol=1e-12,
-                                abs_tol=1e-12,
-                            )
-                            for pos in range(start, end)
-                        ):
+                        if values_list[start:end] != pattern_values:
                             matches = False
                             break
                     if not matches:
                         continue
-                    pattern_array = array("f", pattern_values)
+                    pattern_array = _build_int_array(pattern_values)
                     pattern_bytes = pattern_array.itemsize * len(pattern_values)
                     repeats_array = _build_int_array([repeats])
                     repeats_bytes = repeats_array.itemsize
@@ -2668,8 +2772,17 @@ class Brain:
                 best_payload_float, _ = min(
                     candidates_float, key=lambda item: item[1]
                 )
+                if quantize_uint8:
+                    quant_payload = _encode_quant8_payload(values_list)
+                    if quant_payload is not None:
+                        return quant_payload
                 return best_payload_float
+            if quantize_uint8:
+                quant_payload = _encode_quant8_payload(values_list)
+                if quant_payload is not None:
+                    return quant_payload
             return base_array
+
 
         size_attr = getattr(self, "size", None)
         if size_attr is None:
@@ -2916,7 +3029,12 @@ class Brain:
                     if inline_idx is None:
                         inline_idx = len(tensor_values)
                         tensor_values_map[tensor_key] = inline_idx
-                        tensor_values.append(array("f", [float(v) for v in tensor_payloads[tensor_key]]))
+                        tensor_values.append(
+                            array(
+                                tensor_array_typecode,
+                                [float(v) for v in tensor_payloads[tensor_key]],
+                            )
+                        )
                     tensor_refs_list[neuron_idx] = len(tensor_pool) + inline_idx
 
         if linear_indices_array is not None and linear_index_strides is not None:
@@ -3171,13 +3289,16 @@ class Brain:
                 packed["values"] = _encode_int_sequence(encoded_values_int)
             return packed
 
-        def _pack_ragged_float_vectors(vectors: Sequence[Iterable[float]]) -> Optional[Dict[str, Any]]:
+        def _pack_ragged_float_vectors(
+            vectors: Sequence[Iterable[float]], *, is_tensor: bool = False
+        ) -> Optional[Dict[str, Any]]:
             if not vectors:
                 return None
             lengths_list = []
-            flat = array("f")
+            typecode = tensor_array_typecode if is_tensor else "f"
+            flat = array(typecode)
             for vector in vectors:
-                if isinstance(vector, array) and vector.typecode == "f":
+                if isinstance(vector, array) and vector.typecode == typecode:
                     length = len(vector)
                     lengths_list.append(length)
                     if length:
@@ -3189,7 +3310,7 @@ class Brain:
                     flat.extend(seq)
             if not lengths_list or not any(lengths_list):
                 return None
-            values_payload = _encode_float_sequence(flat)
+            values_payload = _encode_float_sequence(flat, is_tensor=is_tensor)
             return {
                 "lengths": _encode_int_sequence(lengths_list),
                 "values": values_payload,
@@ -3273,7 +3394,7 @@ class Brain:
                 if sparse_types is not None
                 else _encode_int_sequence(type_ids_list)
             )
-        tensor_values_block = _pack_ragged_float_vectors(tensor_values)
+        tensor_values_block = _pack_ragged_float_vectors(tensor_values, is_tensor=True)
         if tensor_values_block is not None:
             neurons_block["tensor_values"] = tensor_values_block
 
@@ -3354,14 +3475,17 @@ class Brain:
             packed_table = _pack_string_table(string_table)
             if packed_table is not None:
                 data["string_table"] = packed_table
-        tensor_pool_block = _pack_ragged_float_vectors(tensor_pool)
+        tensor_pool_block = _pack_ragged_float_vectors(tensor_pool, is_tensor=True)
         if tensor_pool_block is not None:
             data["tensor_pool"] = tensor_pool_block
         if tensor_pool_fills:
-            fill_values = array("f", [float(value) for value, _ in tensor_pool_fills])
+            fill_values_list = [float(value) for value, _ in tensor_pool_fills]
+            fill_values_payload = _encode_float_sequence(
+                fill_values_list, is_tensor=True
+            )
             fill_lengths = _encode_int_sequence(length for _, length in tensor_pool_fills)
             data["tensor_pool_fills"] = {
-                "values": fill_values,
+                "values": fill_values_payload,
                 "lengths": fill_lengths,
             }
         codec_obj = getattr(self, "codec", None)
@@ -3395,6 +3519,7 @@ class Brain:
             "compressor": "zlib-stream",
             "mode": "append",
             "reason": reason,
+            "tensor_precision": tensor_precision,
         }
         # Retention: keep only the newest N snapshot streams if configured
         if getattr(self, "snapshot_keep", None) is not None and self.snapshot_path:
@@ -3736,6 +3861,33 @@ class Brain:
                                 )
                                 base_sequence[idx] = replacement
                         return base_sequence
+                    if enc_lower in {"quant8", "uint8"}:
+                        try:
+                            count_val = int(value.get("count", 0))
+                        except Exception:
+                            count_val = 0
+                        payload = value.get("data", value.get("values", []))
+                        if isinstance(payload, memoryview):
+                            data_bytes = payload.tobytes()
+                        elif isinstance(payload, (bytes, bytearray)):
+                            data_bytes = bytes(payload)
+                        else:
+                            try:
+                                items = _coerce_list(payload)
+                            except Exception:
+                                items = []
+                            data_bytes = bytes(int(v) & 0xFF for v in items)
+                        offset_val = float(value.get("offset", value.get("min", 0.0)))
+                        scale_val = float(value.get("scale", value.get("step", 1.0)))
+                        if not math.isfinite(scale_val) or scale_val <= 0.0:
+                            scale_val = 1.0
+                        if count_val <= 0:
+                            count_val = len(data_bytes)
+                        result_quant: List[float] = []
+                        for idx in range(max(0, count_val)):
+                            byte_val = data_bytes[idx] if idx < len(data_bytes) else 0
+                            result_quant.append(offset_val + scale_val * float(byte_val))
+                        return result_quant
                 # Fall back to iterating over dictionary values if not a known encoding.
                 items = value.items() if hasattr(value, "items") else value
                 try:

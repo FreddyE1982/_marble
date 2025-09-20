@@ -7,6 +7,7 @@ resource_allocator:
   disk_usage_threshold: 0.95  # stop offloading when disk usage exceeds this ratio
 snapshot:
   compress_level: 2  # gzip compression level (1-9) for Brain.save_snapshot
+  tensor_precision: 16  # bit precision for tensors stored in Brain.save_snapshot (8, 16, or 32)
 reporter:
   tensorboard:
     enabled: true  # write all reporter updates to TensorBoard
