@@ -5770,6 +5770,18 @@ def run_training_with_datapairs(
     # Build a single Wanderer instance for all pairs; target set per-pair
     _current_target: Dict[str, Any] = {"val": None}
 
+    def _maybe_stream_snapshot(reason: str) -> None:
+        if not getattr(brain, "store_snapshots", False):
+            return
+        try:
+            stream_cb = getattr(brain, "_stream_snapshot_if_configured", None)
+            if callable(stream_cb):
+                stream_cb(reason)
+            else:
+                brain.save_snapshot(reason=reason)
+        except Exception:
+            pass
+
     def _target_provider(_y: Any) -> Any:
         return _current_target["val"]
 
@@ -5940,7 +5952,9 @@ def run_training_with_datapairs(
         history.append(stats)
         for nm, p in train_plugins:
             _after_walk(p, brain, w, idx, stats, plugin_name=nm)
-        count += len(items)
+        next_total = count + len(items)
+        _maybe_stream_snapshot(f"batch_{idx}_total_{next_total}")
+        count = next_total
         try:
             report(
                 "training",

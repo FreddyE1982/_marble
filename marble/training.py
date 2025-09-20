@@ -279,6 +279,17 @@ def run_training_with_datapairs(
                 attach_selfattention(w, selfattention)
             except Exception:
                 pass
+        def _maybe_stream_snapshot(reason: str) -> None:
+            if not getattr(brain, "store_snapshots", False):
+                return
+            try:
+                stream_cb = getattr(brain, "_stream_snapshot_if_configured", None)
+                if callable(stream_cb):
+                    stream_cb(reason)
+                else:
+                    brain.save_snapshot(reason=reason)
+            except Exception:
+                pass
         # Allow any enabled learning paradigms to configure the Wanderer
         try:
             from .marblemain import apply_paradigms_to_wanderer  # lazy to avoid cycles
@@ -358,6 +369,7 @@ def run_training_with_datapairs(
             stats["plugins"] = [p.__class__.__name__ for p in getattr(w, "_wplugins", []) or []]
             history.append(stats)
             count += 1
+            _maybe_stream_snapshot(f"datapair_{count}")
             try:
                 report("training", f"pair_{count}", {"loss": stats.get("loss", 0.0), "steps": stats.get("steps", 0)}, "datapair")
             except Exception:
