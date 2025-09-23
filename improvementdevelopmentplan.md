@@ -249,6 +249,85 @@ suppression, or routing hints. Update reporter dashboards with feature-level
 metrics (activation sparsity, steering impact) and document workflows for
 engineers to diagnose plugin misbehaviour.
 
+## Step 13 – Self-refining Wanderer feedback loops
+
+13.1 **Capture iterative feedback traces.** Extend the Wanderer reporter so
+each decision stores the generated action, reviewer critiques, and revision
+scores in `reporter.graph` alongside existing trajectory data. Mirror the
+Self-Refine pattern by letting the same plugin author both the initial proposal
+and textual feedback, persisting the deltas so later runs can mine reusable
+corrections.[^13]
+
+13.2 **Author reflection-aware controllers.** Create a light-weight
+`reflection_buffer` utility that threads Reflexion-style critiques into the
+decision controller, exposing knobs in `config.yaml` for memory horizon,
+reflection weighting, and decay.[^14] When the router replays a familiar state,
+inject prior reflections as auxiliary logits so the agent learns from past
+mistakes without retraining.
+
+13.3 **Benchmark iterative refinement.** Build regression suites that compare
+baseline vs. reflection-enhanced walks on coding, planning, and evaluation
+tasks. Assert that iterative refinement converges faster, reduces repeated
+failures, and remains deterministic when the feature is disabled. Surface the
+latency overhead and reflection hit-rate via `REPORTER` summaries.
+
+## Step 14 – Hardened safety guardrails against adversarial prompts
+
+14.1 **Map current vulnerability surface.** Inventory every plugin that consumes
+external prompts or tool responses, capturing how user-controlled text flows
+into execution helpers and config updates. Replay known red-team suffixes to
+establish a baseline jailbreak rate using the existing evaluator stack.[^15]
+
+14.2 **Introduce guardrail middleware.** Implement a security filter that scans
+incoming prompts for adversarial patterns, gradient-hacked suffixes, and policy
+violations before routing them into Wanderer decisions. Wire the middleware into
+the `decision_controller` so MoE routing, budget throttling, and unlearning
+hooks can quarantine suspicious requests instead of executing them blindly.
+
+14.3 **Continuous red-team automation.** Extend the multi-agent evaluation
+layer (Step 7) with recurring adversarial probes and log jailbreak verdicts
+alongside mitigation actions. Add docs and config toggles for quarantine modes,
+alert thresholds, and opt-in telemetry uploads so ops teams can audit response
+quality.
+
+## Step 15 – Lifelong skill libraries for Wanderer autonomy
+
+15.1 **Survey reusable behaviour fragments.** Mine existing Wanderer traces,
+snapshot macros, and plugin callbacks to detect repeatable skill graphs (e.g.,
+resource harvesting, topology healing). Tag each with context metadata and
+store the manifests under `docs/skills/` for reproducibility, inspired by
+Voyager's curriculum discovery loop.[^16]
+
+15.2 **Build a composable skill repository.** Implement a `skill_library`
+module that packages skill graphs, required plugins, and safety prerequisites.
+Expose APIs so routing policies can request, compose, or adapt skills at
+runtime, persisting upgrades back into the repository. Provide config switches
+for auto-saving, version pinning, and review workflows.
+
+15.3 **Evaluate transfer and generalisation.** Script benchmarks that boot new
+world seeds or synthetic graph challenges, measuring how fast Wanderer solves
+them with vs. without the stored skills. Track skill activation frequency,
+coverage, and catastrophic forgetting indicators in the reporter dashboards.
+
+## Step 16 – Tool-native action planning for plugin stacks
+
+16.1 **Audit tool invocation touchpoints.** Trace where the codebase already
+invokes calculators, search helpers, or dataset loaders so we know which
+actions can be migrated to explicit tool APIs. Document the findings alongside
+current telemetry gaps.
+
+16.2 **Implement Toolformer-inspired routing.** Train a lightweight selector
+that predicts when to call specific helper APIs, the arguments to use, and how
+to merge the responses back into plugin state, following the self-supervised
+Toolformer recipe.[^17] Embed selector outputs in the router logits so the MoE
+stack learns when external tools should override standard inference.
+
+16.3 **Testing and observability.** Expand regression coverage to include
+tool-augmented walks, verifying that API failures degrade gracefully and that
+selector confidence correlates with downstream reward. Surface per-tool
+latency, success rates, and fallback triggers through the existing reporter
+channels and document the operational runbooks.
+
 ---
 
 ### Cross-cutting deliverables
@@ -261,9 +340,9 @@ compression path, or streaming helper introduced in the steps above.
 future runs can compare memory, throughput, and accuracy at a glance.
 - Publish sustainability and agent-audit appendices when Steps 6–7 add new
 telemetry, keeping the documentation in sync with emitted metrics.
-- Bundle new long-context, paging, speculative decoding, and interpretability
-tooling with reproducible notebooks or CLI recipes so teams can rerun the
-measurements backing Steps 9–12.
+- Bundle new long-context, paging, speculative decoding, interpretability, and
+reflection/guardrail/tooling rollouts with reproducible notebooks or CLI
+recipes so teams can rerun the measurements backing Steps 9–16.
 
 ### Research references
 
@@ -292,3 +371,13 @@ Speculative Sampling*. https://arxiv.org/abs/2302.01318
 [^12]: Transformer Circuits, 2023 — *Towards Monosemanticity: Decomposing
 Language Models With Sparse Autoencoders*.
 https://transformer-circuits.pub/2023/monosemantic-features/index.html
+[^13]: Madaan et al., 2023 — *Self-Refine: Iterative Refinement with
+Self-Feedback*. https://arxiv.org/abs/2303.17651
+[^14]: Shinn et al., 2023 — *Reflexion: Language Agents with Verbal Reinforcement
+Learning*. https://arxiv.org/abs/2303.11366
+[^15]: Zou et al., 2023 — *Universal and Transferable Adversarial Attacks on
+Aligned Language Models*. https://arxiv.org/abs/2307.15043
+[^16]: Wang et al., 2023 — *Voyager: An Open-Ended Embodied Agent with Large
+Language Models*. https://arxiv.org/abs/2305.16291
+[^17]: Schick et al., 2023 — *Toolformer: Language Models Can Teach Themselves
+to Use Tools*. https://arxiv.org/abs/2302.04761
