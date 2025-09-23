@@ -328,6 +328,47 @@ selector confidence correlates with downstream reward. Surface per-tool
 latency, success rates, and fallback triggers through the existing reporter
 channels and document the operational runbooks.
 
+
+## Step 17 – Knowledge-graph governance for plugin interplay
+
+17.1 **Synthesize cross-run graphs.** Extend the `reporter.graph` stream from Step 5 so every walk exports typed vertices for plugins, tensors, and decision states plus edges for data flow, success/failure, and resource consumption. Store the rollups under `docs/graphs/` with schema metadata so downstream tooling can diff interaction topologies between runs and flag missing dependencies.
+
+17.2 **Inject graph reasoning loops.** Implement a governance helper that ingests the interaction graph and executes Graph Chain-of-Thought style reasoning passes to propose routing changes, plugin retirements, or redundancy merges.[^18] Surface its suggestions through `REPORTER` annotations and optional PR comments so maintainers can review auto-generated governance hints.
+
+17.3 **Tighten validation.** Add targeted tests that construct miniature plugin graphs, run the reasoning helper, and assert the recommendations stay within configured policy bounds (e.g., never disable required safety plugins). Provide config toggles (`graph_governance: {enabled: false, policy: "advisory"}`) and document how they throttle automatic enforcement.
+
+## Step 18 – Autoregressive remediation benchmarks with SWE-style issues
+
+18.1 **Mirror real bug corpora.** Import a filtered slice of SWE-bench-style issues into `examples/benchmarks/` with scripts that replay Marble plugin stacks against recorded failing tests.[^19] Ensure dataset loaders honor the streaming ingestion rules from Step 3 so large corpora stay memory-light.
+
+18.2 **Wire automated fix scouts.** Extend the Step 7 agent orchestration so a regression triggers a SWE-bench harness: reproduce, localize via reporter traces, and draft candidate patches. Feed accepted patches through the existing snapshot manager so we can simulate post-fix walks before merging.
+
+18.3 **Measure remediation quality.** Emit metrics for patch success rate, turnaround time, and guardrail interventions via `REPORTER`. Add regression tests that inject synthetic failures, confirm the harness proposes viable diffs, and gracefully defers to humans when confidence falls below a configurable threshold.
+
+## Step 19 – Parameter-efficient personalization via quantized adapters
+
+19.1 **Audit adapter hotspots.** Profile Wanderer and synapse plugins to identify layers where user-provided data most influences performance. Tag them as adapter candidates and expose toggles in `config.yaml` (`personalization: {qlora_ranks: ..., target_plugins: [...]}`).
+
+19.2 **Implement QLoRA-style adapters.** Introduce low-rank adapter modules that piggyback on quantized weights, following QLoRA’s double-quantization and paged optimizer tricks to keep VRAM use low while supporting backprop.[^20] Integrate them with the resource allocator so adapters spill gracefully between CPU/GPU.
+
+19.3 **Validate personalization flows.** Extend tests to simulate per-user fine-tuning sessions, verifying that adapters serialize alongside snapshots, stay numerically stable after load, and can be rolled back when unlearning hooks (Step 4) activate.
+
+## Step 20 – Deliberate tree search for Wanderer planning
+
+20.1 **Capture branch heuristics.** Instrument Wanderer to log heuristic scores (reward estimates, safety costs, novelty) for each decision so they can seed a Tree-of-Thoughts style planner.[^21] Persist the heuristics in reporter traces alongside existing logits.
+
+20.2 **Embed tree search controller.** Add an optional planner that expands multiple candidate futures per decision, prunes low-value branches, and hands the best plan back to the decision controller. Keep the planner modular so MoE routing (Step 1) can swap experts per branch.
+
+20.3 **Stress-test determinism.** Create regression scenarios where the planner runs with fixed seeds, asserting branch selection remains deterministic unless stochastic exploration is explicitly enabled. Benchmark latency overhead and expose config knobs for tree width/depth.
+
+## Step 21 – Hardened data integrity and poisoning defenses
+
+21.1 **Baseline dataset hygiene.** Attach a preprocessing audit that scans incoming datasets for distribution drift, label irregularities, and adversarial triggers highlighted in data poisoning surveys.[^22] Log findings to `docs/data_audits/` with reproducible scripts.
+
+21.2 **Integrate defensive filters.** Augment streaming loaders with optional filtering hooks (e.g., outlier scorers, gradient sanitizers) that quarantine suspicious batches before they reach Wanderer training loops. Provide overrides so trusted datasets skip heavy checks.
+
+21.3 **Regression coverage for attacks.** Add tests that simulate simple poisoning attacks (label flips, trigger patterns) and verify the filters flag them while preserving clean data throughput. Ensure reporter summaries distinguish between benign rejections and critical incidents so ops teams can escalate appropriately.
+
 ---
 
 ### Cross-cutting deliverables
@@ -343,6 +384,7 @@ telemetry, keeping the documentation in sync with emitted metrics.
 - Bundle new long-context, paging, speculative decoding, interpretability, and
 reflection/guardrail/tooling rollouts with reproducible notebooks or CLI
 recipes so teams can rerun the measurements backing Steps 9–16.
+- Version governance graphs, SWE-bench corpora, personalization adapter specs, tree-search configs, and poisoning audit artifacts from Steps 17–21 under `docs/` so upgrades stay reproducible.
 
 ### Research references
 
@@ -381,3 +423,8 @@ Aligned Language Models*. https://arxiv.org/abs/2307.15043
 Language Models*. https://arxiv.org/abs/2305.16291
 [^17]: Schick et al., 2023 — *Toolformer: Language Models Can Teach Themselves
 to Use Tools*. https://arxiv.org/abs/2302.04761
+[^18]: Chen et al., 2024 — *Graph Chain-of-Thought: Augmenting Large Language Models by Reasoning on Graphs*. https://arxiv.org/abs/2404.07103
+[^19]: Jimenez et al., 2023 — *SWE-bench: Can Language Models Resolve Real-World GitHub Issues?* https://arxiv.org/abs/2310.06770
+[^20]: Dettmers et al., 2023 — *QLoRA: Efficient Finetuning of Quantized LLMs*. https://arxiv.org/abs/2305.14314
+[^21]: Yao et al., 2023 — *Tree of Thoughts: Deliberate Problem Solving with Large Language Models*. https://arxiv.org/abs/2305.10601
+[^22]: Goldblum et al., 2022 — *Machine Learning Security against Data Poisoning: Are We There Yet?* https://arxiv.org/abs/2204.05986
