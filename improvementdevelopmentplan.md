@@ -170,6 +170,85 @@ temporal consistency, and downstream task benefit (e.g., better Wanderer path
 selection). Expand tests to replay curated sequences and assert the new plugins
 stabilize when transformations repeat or branch.
 
+## Step 9 – Selective state-space expertise for long contexts
+
+9.1 **Survey existing sequence bottlenecks.** Profile Wanderer traces,
+self-attention plugins, and reporter graphs to pinpoint where attention kernels
+or recurrent helpers fall over on million-step walks. Capture latency,
+activation size, and gradient stability to decide which modules should migrate
+to selective state spaces.
+
+9.2 **Implement a Mamba-inspired plugin suite.** Following the selective state
+space model (SSM) architecture from the Mamba paper—input-conditioned SSM
+parameters, hardware-aware recurrent kernels, and linear-time inference—craft
+new neuron and self-attention plugins that expose gating temperature, state
+mixing, and carry/forget spans via `expose_learnable_params`.[^9] Ensure the
+plugins can swap between recurrent and convolutional modes so they mesh with
+existing graph execution policies.
+
+9.3 **Optimize routing and validation.** Integrate the SSM plugins with the MoE
+router from Step 1 so long-context experts activate only when sequence length
+justifies the cost. Extend regression tests to compare throughput and loss for
+Transformer vs. SSM branches across synthetic and real million-token corpora.
+Document trade-offs (e.g., state caching, gradient clipping) in
+`ARCHITECTURE.md`.
+
+## Step 10 – Virtualized activation memory with PagedAttention mechanics
+
+10.1 **Map allocator pressure points.** Instrument the resource allocator's
+tensor tracker to log fragmentation, spill frequency, and KV-cache duplication
+whenever Wanderer or snapshot replay exceeds GPU memory. Identify patterns where
+attention caches persist beyond their useful window.
+
+10.2 **Adopt PagedAttention-style paging.** Borrow the virtual-memory
+abstractions from vLLM's PagedAttention work to chunk KV caches into pageable
+blocks, enabling near-zero waste reuse across batched wanderers.[^10] Implement
+a `paged_cache` mode inside the allocator with eviction policies, CPU/disk
+spillover, and hooks for sparse retrieval when revisiting prior branches.
+
+10.3 **Stress testing and guardrails.** Simulate adversarial batch mixes (long
+vs. short sequences, MoE-enabled vs. disabled) and ensure the pager avoids
+thrashing. Extend tests to assert pager accounting never starves critical
+plugins, and expose new telemetry (page faults, cache hits) through `REPORTER`
+dashboards.
+
+## Step 11 – Speculative multi-branch decoding for Wanderer inference
+
+11.1 **Draft model scaffolding.** Analyze existing plugin stacks to identify a
+lightweight "draft" configuration that can cheaply extend walk candidates. Cache
+its weights using the allocator so speculative branches spin up without full
+reinitialization.
+
+11.2 **Speculative acceptance logic.** Port the speculative sampling acceptance
+rules—parallel draft continuations with rejection sampling corrections—to the
+Wanderer evaluation loop so multiple path continuations can be scored in one
+pass while preserving target distribution fidelity.[^11]
+
+11.3 **Quality/perf validation.** Benchmark speculative walk replay against
+baseline decoding on diverse tasks, logging latency gains, rejection rates, and
+reward deltas. Update plugin stacking tests to include speculative mode toggles
+and ensure determinism when the feature is disabled.
+
+## Step 12 – Mechanistic interpretability pipelines with sparse autoencoders
+
+12.1 **Curate activation corpora.** Extend the reporter graph dumpers so neuron
+and synapse activations from representative walks stream into disk-backed
+datasets sized for sparse autoencoder training. Include metadata (plugin type,
+decision context) to support feature attribution later.
+
+12.2 **Train feature dictionaries.** Build an interpretability toolkit that
+trains sparse autoencoders on the captured activations, mirroring the dictionary
+learning recipe from Transformer Circuits' monosemantic features work—scalable
+expansion factors, L1-regularized activations, and feature browsers.[^12]
+Automate hyperparameter sweeps and store learned feature banks as artifacts in
+`docs/`.
+
+12.3 **Integrate feature-guided interventions.** Add debugging hooks that map
+autoencoder features back to live Wanderer runs, enabling forced activation,
+suppression, or routing hints. Update reporter dashboards with feature-level
+metrics (activation sparsity, steering impact) and document workflows for
+engineers to diagnose plugin misbehaviour.
+
 ---
 
 ### Cross-cutting deliverables
@@ -182,6 +261,9 @@ compression path, or streaming helper introduced in the steps above.
 future runs can compare memory, throughput, and accuracy at a glance.
 - Publish sustainability and agent-audit appendices when Steps 6–7 add new
 telemetry, keeping the documentation in sync with emitted metrics.
+- Bundle new long-context, paging, speculative decoding, and interpretability
+tooling with reproducible notebooks or CLI recipes so teams can rerun the
+measurements backing Steps 9–12.
 
 ### Research references
 
@@ -201,3 +283,12 @@ Footprint of Training Deep Learning Models*. https://arxiv.org/abs/2007.03051
 [^7]: Wu et al., 2023 — *AutoGen: Enabling Next-Gen LLM Applications via
 Multi-Agent Conversation*. https://arxiv.org/abs/2308.08155
 [^8]: Cui et al., 2024 — *Visual Transformation Telling*. https://arxiv.org/abs/2305.01928
+[^9]: Gu & Dao, 2024 — *Mamba: Linear-Time Sequence Modeling with Selective State
+Spaces*. https://arxiv.org/abs/2312.00752
+[^10]: Kwon et al., 2023 — *Efficient Memory Management for Large Language Model
+Serving with PagedAttention*. https://arxiv.org/abs/2309.06180
+[^11]: Chen et al., 2023 — *Accelerating Large Language Model Decoding with
+Speculative Sampling*. https://arxiv.org/abs/2302.01318
+[^12]: Transformer Circuits, 2023 — *Towards Monosemanticity: Decomposing
+Language Models With Sparse Autoencoders*.
+https://transformer-circuits.pub/2023/monosemantic-features/index.html
