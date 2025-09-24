@@ -181,6 +181,23 @@ Packaging and Layout
   - Wanderer and brain-training plugin implementations (e.g., L2 penalty, curriculum, warmup-decay) are also hosted in their own modules under `marble/plugins/`.
   - Plugin IDs are allocated by scanning the `marble/plugins` package in name-sorted order, guaranteeing deterministic identifiers as long as the set of plugin files remains unchanged.
 
+### Plugin catalogue and telemetry
+
+- Every plugin instance created by the loader is forwarded to
+  `marble.plugin_telemetry.register_plugin_metadata`. The helper inspects the
+  module, class name, and docstring to tag the plugin with a functional niche
+  such as *feature_extractor*, *meta_optimizer*, or *path_planner*—the same
+  vocabulary outlined in this architecture overview. The catalogue is accessible
+  via `marble.plugin_telemetry.get_plugin_catalog()` and mirrored in the
+  reporter tree under `plugins/metadata/catalog` so downstream tooling can
+  explore available experts programmatically.
+- When a plugin hook executes, the dispatcher in `marble.marblemain._call_safely`
+  measures the elapsed time and calls
+  `marble.plugin_telemetry.record_plugin_activation`. Aggregated activation
+  counts, per-hook averages, and last-seen latencies are published at
+  `plugins/metrics/usage`, providing the raw telemetry that the upcoming MoE
+  router requires to balance expert utilisation and cost.
+
 Operational Policy Update
 
 - Show tool fallback: If the `show` tool is unavailable, we assume a Linux environment and use Linux commands only for file reads until `show` becomes available again. This is an additive troubleshooting/fallback rule documented in AGENTS.md and does not change any existing behaviors or constraints.

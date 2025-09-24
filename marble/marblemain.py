@@ -33,6 +33,7 @@ import datetime
 import weakref
 from array import array
 from . import plugin_cost_profiler as _pcp
+from .plugin_telemetry import record_plugin_activation
 from .learnable_param import LearnableParam
 from .learnables_yaml import log_learnable_values, register_learnable
 from .snapshot_stream import SnapshotStreamWriter, SnapshotStreamError, read_latest_state
@@ -5178,7 +5179,9 @@ def _call_safely(fn: Optional[Callable], *args, plugin_name: Optional[str] = Non
             try:
                 return fn(*args, **kwargs)
             finally:
-                _pcp.record(plugin_name, time.perf_counter() - start)
+                elapsed = time.perf_counter() - start
+                _pcp.record(plugin_name, elapsed)
+                record_plugin_activation(plugin_name, getattr(fn, "__name__", "call"), elapsed)
         return fn(*args, **kwargs)
     except Exception:
         return None
