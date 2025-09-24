@@ -32,6 +32,20 @@ decision_controller:
   policy_mode: policy-gradient  # 'policy-gradient' or 'bayesian'
   auto_cost_profile: false  # profile plugin runtime to infer missing costs
   log_path: null  # optional newline-delimited JSON log written every decision
+  moe_routing:
+    enabled: false  # enable the MoE router to gate wanderer plugins
+    decision_interval: 1  # router refresh interval in steps
+    capacity_factor: 1.25  # multiplier controlling number of active experts
+    min_active_experts: 1  # lower bound on active experts
+    max_active_experts: 4  # upper bound on active experts
+    load_balance_alpha: 0.15  # strength of load-balancing penalty
+    load_balance_decay: 0.8  # EMA decay for router load tracking
+    budget_weight: 0.25  # smoothing factor for latency budget estimates
+    cadence_scale: 0.25  # influence of budget pressure on controller cadence
+    lambda_scale: 0.15  # influence of budget pressure on constraint multipliers
+    feedback_decay: 0.4  # smoothing applied to budget pressure feedback
+    budget_target: 1.0  # desired budget pressure (1.0 == on target)
+    topk_balance_scale: 0.0  # optional multiplier for load-balance based top-k boosts
   linear_constraints:
     A: []  # constraint matrix; columns follow sorted plugin names
     b: []  # upper bounds paired with rows in A

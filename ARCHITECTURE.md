@@ -187,16 +187,18 @@ Packaging and Layout
   `marble.plugin_telemetry.register_plugin_metadata`. The helper inspects the
   module, class name, and docstring to tag the plugin with a functional niche
   such as *feature_extractor*, *meta_optimizer*, or *path_planner*—the same
-  vocabulary outlined in this architecture overview. The catalogue is accessible
-  via `marble.plugin_telemetry.get_plugin_catalog()` and mirrored in the
-  reporter tree under `plugins/metadata/catalog` so downstream tooling can
-  explore available experts programmatically.
+  vocabulary outlined in this architecture overview. When the documentation
+  names a plugin explicitly the catalogue also exposes an ``architecture_role``
+  field capturing that prose. The catalogue is accessible via
+  `marble.plugin_telemetry.get_plugin_catalog()` and mirrored in the reporter
+  tree under `plugins/metadata/catalog` so downstream tooling can explore
+  available experts programmatically.
 - When a plugin hook executes, the dispatcher in `marble.marblemain._call_safely`
   measures the elapsed time and calls
   `marble.plugin_telemetry.record_plugin_activation`. Aggregated activation
   counts, per-hook averages, and last-seen latencies are published at
-  `plugins/metrics/usage`, providing the raw telemetry that the upcoming MoE
-  router requires to balance expert utilisation and cost.
+  `plugins/metrics/usage`, providing the raw telemetry that the Mixture-of-
+  Experts router consumes to balance expert utilisation and cost.
 
 Operational Policy Update
 
@@ -664,6 +666,7 @@ New Additive Plugins (this change)
 - Brain training plugin `earlystop`: Monitors loss after each walk and stops the training loop when loss fails to improve by `min_delta` for `patience` consecutive walks (defaults `0.0` and `3`). Adds `early_stopped` and `best_loss` to the training result and emits `training/earlystop_*` reporter events. Registered as `"earlystop"`.
 - Wanderer plugin `mixedprecision`: Forces all wanderer walks to run under mixed precision using `torch.autocast` and `GradScaler`, ensuring every plugin executes in mixed precision when active. Registered as `"mixedprecision"` and now enabled by default; pass `mixedprecision=False` to `Wanderer` or any training helper to disable.
 - Wanderer plugin `autoplugin`: Wraps all other Wanderer and neuroplasticity plugins with learnable gates. An optional list of *mandatory* plugins always stays active, while every other plugin can be toggled so different combinations are explored during training. Uses `expose_learnable_params` to learn global step/neuron weights and per-plugin bias terms based on a self-attention score over live metrics and records each activation or deactivation to an optional CSV log, prioritizing accuracy, then training speed, model size, and complexity.
+- Wanderer plugin `moe_router`: Implements a Mixture-of-Experts router that sparsely activates Wanderer, neuroplasticity, and building-block plugins in parallel. Routing logits combine learnable per-expert biases, telemetry (calls, latency, niche), and load-balancing penalties. All routing statistics are logged to the decision controller so cadence and constraint multipliers can react to budget pressure in real time.
 - Wanderer plugin `autolobe`: Splits the brain into two lobes before each walk based on a learnable position threshold (`autolobe_threshold`) along the first coordinate, enabling training to adaptively target different regions of the graph.
 - Wanderer plugin `wayfinder`: Navigation-style planner that builds a lightweight map of visited neurons and applies an A*‑like heuristic search to pick synapses. Learnable weights control edge cost, visit penalties, exploration rate, pruning behaviour and replan interval, keeping traversal efficient while avoiding local optima.
 - Wanderer plugin `boltzmann`: Performs Boltzmann/softmax exploration over synapse weights with a learnable temperature controlling exploration sharpness.

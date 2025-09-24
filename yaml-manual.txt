@@ -162,6 +162,44 @@
 - decision_controller.linear_constraints.b (list[float], default: [])
   Upper bounds ``b`` paired with rows of ``linear_constraints.A``. When both
   lists are empty, no linear constraints are enforced.
+- decision_controller.moe_routing.enabled (bool, default: false)
+  Enables the Mixture-of-Experts router so Wanderer plugin stacks are gated via
+  sparse expert selection. When disabled the router leaves every expert active
+  and the decision controller ignores router telemetry.
+- decision_controller.moe_routing.decision_interval (int, default: 1)
+  Number of Wanderer steps between router refreshes. Larger values amortise
+  routing cost while reducing responsiveness to telemetry spikes.
+- decision_controller.moe_routing.capacity_factor (float, default: 1.25)
+  Multiplier applied to the number of available experts when estimating the
+  target activation budget before clamping to the configured min/max bounds.
+- decision_controller.moe_routing.min_active_experts (int, default: 1)
+  Lower bound on the number of experts the router may activate simultaneously.
+- decision_controller.moe_routing.max_active_experts (int, default: 4)
+  Upper bound on concurrently active experts to prevent runaway capacity.
+- decision_controller.moe_routing.load_balance_alpha (float, default: 0.15)
+  Penalty weight applied to each expert's exponential-load tracker when
+  computing router logits. Higher values encourage the router to spread work
+  evenly across experts.
+- decision_controller.moe_routing.load_balance_decay (float, default: 0.8)
+  Exponential decay factor for the load tracker. Values close to 1.0 emphasise
+  long-term history while lower values react faster to recent routing decisions.
+- decision_controller.moe_routing.budget_weight (float, default: 0.25)
+  Smoothing factor used when updating the router's latency budget estimate.
+- decision_controller.moe_routing.cadence_scale (float, default: 0.25)
+  Strength of cadence adjustments made by the decision controller in response to
+  budget pressure reported by the router.
+- decision_controller.moe_routing.lambda_scale (float, default: 0.15)
+  Strength of adjustments applied to the constraint multiplier learning rate
+  when budget pressure deviates from the target.
+- decision_controller.moe_routing.feedback_decay (float, default: 0.4)
+  Exponential decay applied to budget-pressure feedback before scaling cadence
+  or constraint multipliers.
+- decision_controller.moe_routing.budget_target (float, default: 1.0)
+  Desired ratio of expected expert latency to the router's latency budget.
+  Values above the target trigger throttling; values below relax cadence.
+- decision_controller.moe_routing.topk_balance_scale (float, default: 0.0)
+  Optional multiplier that lets high load-imbalance temporarily expand
+  ``top_k`` beyond its base value.
 
 ## Reward Shaper Settings
 

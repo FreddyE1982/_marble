@@ -28,10 +28,80 @@ from __future__ import annotations
 
 import inspect
 import threading
+import os
+import re
 from dataclasses import dataclass, asdict
 from typing import Any, Dict, List, MutableMapping, Optional
 
 from .reporter import report
+
+
+def _load_architecture_roles() -> Dict[str, Dict[str, str]]:
+    """Return plugin role hints extracted from ``ARCHITECTURE.md``.
+
+    The architecture document enumerates canonical plugins together with a
+    concise description of their responsibility.  Those summaries provide a
+    higher-quality "functional niche" signal than simple keyword heuristics,
+    especially for meta-plugins such as the new Mixture-of-Experts router.
+
+    The loader scans bullet points of the form ``- Wanderer plugin `name`:`` and
+    records the accompanying prose.  When multiple bullet points mention the
+    same plugin we keep the longest description which typically corresponds to
+    the most recent documentation update.
+    """
+
+    base = os.path.dirname(os.path.dirname(__file__))
+    arch_path = os.path.join(base, "ARCHITECTURE.md")
+    roles: Dict[str, Dict[str, str]] = {}
+    if not os.path.exists(arch_path):
+        return roles
+
+    pattern = re.compile(
+        r"-\s*(?P<label>[A-Za-z\-/ ]+?)\s+plugin\s+`(?P<name>[^`]+)`:\s*(?P<desc>.+)",
+        re.IGNORECASE,
+    )
+    type_map = {
+        "wanderer": "wanderer",
+        "neuron": "neuron",
+        "synapse": "synapse",
+        "brain-train": "brain_train",
+        "brain_train": "brain_train",
+        "brain train": "brain_train",
+        "selfattention": "selfattention",
+        "self-attention": "selfattention",
+        "neuroplasticity": "neuroplasticity",
+        "buildingblock": "buildingblock",
+        "building block": "buildingblock",
+    }
+
+    try:
+        with open(arch_path, "r", encoding="utf-8") as handle:
+            for raw in handle:
+                match = pattern.search(raw)
+                if not match:
+                    continue
+                label = (match.group("label") or "").strip().lower()
+                plugin_name = match.group("name").strip()
+                desc = match.group("desc").strip()
+                plugin_type = None
+                for key, mapped in type_map.items():
+                    if key in label:
+                        plugin_type = mapped
+                        break
+                entry = roles.get(plugin_name, {})
+                if plugin_type:
+                    entry["plugin_type"] = plugin_type
+                # Prefer the most informative description (longest string)
+                if len(desc) > len(entry.get("description", "")):
+                    entry["description"] = desc
+                roles[plugin_name] = entry
+    except Exception:
+        return roles
+
+    return roles
+
+
+_ARCHITECTURE_ROLES = _load_architecture_roles()
 
 
 _DEFAULT_NICHES: Dict[str, str] = {
@@ -77,6 +147,7 @@ class PluginMetadata:
     niche: str
     plugin_id: Optional[int]
     hooks: List[str]
+    architecture_role: Optional[str] = None
 
     def serialise(self) -> Dict[str, Any]:
         """Return a dict representation safe for reporting."""
@@ -128,7 +199,15 @@ class _PluginCatalog:
             niche=niche,
             plugin_id=plugin_id,
             hooks=hooks,
+            architecture_role=None,
         )
+        arch = _ARCHITECTURE_ROLES.get(name)
+        if arch:
+            desc = arch.get("description")
+            if desc:
+                meta.architecture_role = desc
+            if arch.get("plugin_type"):
+                meta.plugin_type = arch["plugin_type"]
         with self._lock:
             self._entries[name] = meta
         self._report_single(meta)

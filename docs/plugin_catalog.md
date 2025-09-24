@@ -9,6 +9,8 @@ per plugin:
   neuroplasticity, or building block),
 - implementation module and class,
 - a functional niche inferred from the module and docstring vocabulary,
+- an ``architecture_role`` string summarising the plugin's documented intent in
+  ``ARCHITECTURE.md`` when available,
 - the deterministic plugin identifier assigned by the loader,
 - public hooks exposed by the plugin instance.
 
@@ -45,6 +47,12 @@ Telemetry entries are updated after every plugin hook invocation.  Each record
 tracks activation counts, per-hook average latency, and the most recent latency
 measurement.  Reporter consumers can read the data at
 `plugins/metrics/usage` to drive routing policies or alerting.
+
+When the Mixture-of-Experts router plugin (`moe_router`) is enabled its routing
+decisions are mirrored to `decision_controller/moe_router/scalars`.  The live
+metrics include active expert counts, load-balance variance, and latency budget
+pressure—inputs the decision controller consumes to adjust cadence and
+constraint multipliers on the fly.
 
 For unit tests the helpers `reset_plugin_catalog()` and `reset_plugin_usage()`
 provide a clean slate between scenarios.
