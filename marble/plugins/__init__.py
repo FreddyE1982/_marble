@@ -25,6 +25,7 @@ from ..marblemain import register_brain_train_type
 from ..buildingblock import register_buildingblock_type
 from ..plugin_graph import PLUGIN_GRAPH
 from .. import plugin_cost_profiler as _pcp
+from ..plugin_telemetry import register_plugin_metadata
 
 # Global registry assigning a unique numeric ID to every plugin.  The IDs are
 # stable across runs as long as the set of available plugins does not change.
@@ -103,6 +104,7 @@ for mod in sorted(pkgutil.iter_modules(__path__), key=lambda m: m.name):
         _wrap_public_methods(inst, pname)
         inst.plugin_id = pid
         register_wanderer_type(pname, inst)
+        register_plugin_metadata(pname, "wanderer", inst, plugin_id=pid)
     elif name.startswith("neuroplasticity_"):
         base = name[len("neuroplasticity_") :]
         pname = plugin_name or base
@@ -111,6 +113,7 @@ for mod in sorted(pkgutil.iter_modules(__path__), key=lambda m: m.name):
         _wrap_public_methods(inst, pname)
         inst.plugin_id = pid
         register_neuroplasticity_type(pname, inst)
+        register_plugin_metadata(pname, "neuroplasticity", inst, plugin_id=pid)
     elif name.startswith("selfattention_"):
         base = name[len("selfattention_") :]
         pname = plugin_name or base
@@ -119,6 +122,7 @@ for mod in sorted(pkgutil.iter_modules(__path__), key=lambda m: m.name):
         _wrap_public_methods(inst, pname)
         inst.plugin_id = pid
         register_selfattention_type(pname, inst)
+        register_plugin_metadata(pname, "selfattention", inst, plugin_id=pid)
     elif name.startswith("synapse_"):
         base = name[len("synapse_") :]
         pname = plugin_name or base
@@ -127,6 +131,7 @@ for mod in sorted(pkgutil.iter_modules(__path__), key=lambda m: m.name):
         _wrap_public_methods(inst, pname)
         inst.plugin_id = pid
         register_synapse_type(pname, inst)
+        register_plugin_metadata(pname, "synapse", inst, plugin_id=pid)
     elif name.startswith("brain_train_"):
         base = name[len("brain_train_") :]
         pname = plugin_name or base
@@ -135,6 +140,7 @@ for mod in sorted(pkgutil.iter_modules(__path__), key=lambda m: m.name):
         _wrap_public_methods(inst, pname)
         inst.plugin_id = pid
         register_brain_train_type(pname, inst)
+        register_plugin_metadata(pname, "brain_train", inst, plugin_id=pid)
     elif name.startswith("buildingblock_"):
         base = name[len("buildingblock_") :]
         pname = plugin_name or base
@@ -143,6 +149,7 @@ for mod in sorted(pkgutil.iter_modules(__path__), key=lambda m: m.name):
         _wrap_public_methods(inst, pname)
         inst.plugin_id = pid
         register_buildingblock_type(pname, inst)
+        register_plugin_metadata(pname, "buildingblock", inst, plugin_id=pid)
     else:
         # Default to neuron plugin registration
         pname = plugin_name or name
@@ -151,6 +158,7 @@ for mod in sorted(pkgutil.iter_modules(__path__), key=lambda m: m.name):
         _wrap_public_methods(inst, pname)
         inst.plugin_id = pid
         register_neuron_type(pname, inst)
+        register_plugin_metadata(pname, "neuron", inst, plugin_id=pid)
 
     PLUGIN_GRAPH.add_plugin(pname)
     for dep in getattr(cls, "REQUIRES", []) or []:
