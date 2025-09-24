@@ -48,6 +48,8 @@ from . import plugin_cost_profiler as _pcp
 REPORTER.registergroup("decision_controller", "scalars")
 REPORTER.registergroup("decision_controller", "histograms")
 REPORTER.registergroup("decision_controller", "text")
+REPORTER.registergroup("decision_controller", "moe_router")
+REPORTER.registergroup("decision_controller", "moe_router", "scalars")
 
 
 # Incompatibility sets I_t: mapping plugin name to set of incompatible plugins
@@ -425,6 +427,22 @@ def _load_linear_constraints() -> tuple[list[list[float]], list[float]]:
 LINEAR_CONSTRAINTS_A, LINEAR_CONSTRAINTS_B = _load_linear_constraints()
 
 
+def _load_moe_router_config() -> Dict[str, Any]:
+    """Return the MoE router configuration section."""
+
+    try:
+        with open(os.path.join(os.path.dirname(os.path.dirname(__file__)), "config.yaml"), "r", encoding="utf-8") as fh:
+            data = yaml.safe_load(fh) or {}
+    except Exception:
+        return {}
+    dc = data.get("decision_controller", {}) if isinstance(data, dict) else {}
+    moe = dc.get("moe_routing", {}) if isinstance(dc, dict) else {}
+    return moe if isinstance(moe, dict) else {}
+
+
+MOE_ROUTING_CONFIG = _load_moe_router_config()
+
+
 def _load_watch_metrics() -> List[str]:
     """Load reporter metric paths to monitor from ``config.yaml``."""
     try:
@@ -435,7 +453,18 @@ def _load_watch_metrics() -> List[str]:
             data = yaml.safe_load(fh) or {}
         dc = data.get("decision_controller", {}) if isinstance(data, dict) else {}
         items = dc.get("watch_metrics", [])
-        return [str(x) for x in items] if isinstance(items, list) else []
+        metrics = [str(x) for x in items] if isinstance(items, list) else []
+        moe = dc.get("moe_routing", {}) if isinstance(dc, dict) else {}
+        if isinstance(moe, dict) and moe.get("enabled"):
+            defaults = [
+                "decision_controller/moe_router/scalars/active_experts",
+                "decision_controller/moe_router/scalars/budget_pressure",
+                "decision_controller/moe_router/scalars/load_balance",
+            ]
+            for path in defaults:
+                if path not in metrics:
+                    metrics.append(path)
+        return metrics
     except Exception:
         return []
 
@@ -923,10 +952,16 @@ class DecisionController:
         self.past_actions: List[str] = []
         self._metric_window = deque(maxlen=self.reward_shaper.window_size)
         self._prev_action_mask: Dict[str, int] = {}
-        self.watch_metrics = set(watch_metrics if watch_metrics is not None else WATCH_METRICS)
-        self.watch_variables = set(
-            watch_variables if watch_variables is not None else WATCH_VARIABLES
-        )
+        default_metrics = set(WATCH_METRICS)
+        if watch_metrics is not None:
+            self.watch_metrics = set(watch_metrics) | default_metrics
+        else:
+            self.watch_metrics = default_metrics
+        default_vars = set(WATCH_VARIABLES)
+        if watch_variables is not None:
+            self.watch_variables = set(watch_variables) | default_vars
+        else:
+            self.watch_variables = default_vars
         # Store the most recent metrics observed via ``decide`` so callers can
         # inspect them even before the first decision step has been executed.
         # ``decide`` updates this mapping in-place when new metrics arrive.
@@ -941,6 +976,14 @@ class DecisionController:
         self._activation_log: List[torch.Tensor] = []
         self._reward_log: List[float] = []
         self._decision_count = 0
+        self._moe_cfg = dict(MOE_ROUTING_CONFIG)
+        self._moe_enabled = bool(self._moe_cfg.get("enabled", False))
+        self._moe_min_experts = max(1, int(self._moe_cfg.get("min_active_experts", self.top_k)))
+        self._moe_max_experts = max(self._moe_min_experts, int(self._moe_cfg.get("max_active_experts", max(self.top_k, 1))))
+        self._moe_base_cadence = self.cadence
+        self._moe_base_lambda = self.lambda_lr
+        self._moe_base_top_k = self.top_k
+        self._moe_feedback = 0.0
         self._log_event(
             "controller_initialized",
             {
@@ -1194,6 +1237,44 @@ class DecisionController:
         return observed
 
     # --------------------------------------------------------------
+    def _apply_moe_feedback(self, metrics: Optional[Dict[str, float]]) -> None:
+        """Adjust cadence, top-k and constraint multipliers from router telemetry."""
+
+        if not self._moe_enabled or not metrics:
+            return
+        active_key = "decision_controller/moe_router/scalars/active_experts"
+        pressure_key = "decision_controller/moe_router/scalars/budget_pressure"
+        balance_key = "decision_controller/moe_router/scalars/load_balance"
+
+        active = metrics.get(active_key)
+        if active is not None:
+            target = int(round(active))
+            target = max(self._moe_min_experts, min(self._moe_max_experts, target))
+            self.top_k = max(1, target)
+
+        pressure = metrics.get(pressure_key)
+        if pressure is not None:
+            decay = float(self._moe_cfg.get("feedback_decay", 0.4))
+            target_pressure = float(self._moe_cfg.get("budget_target", 1.0))
+            error = float(pressure) - target_pressure
+            self._moe_feedback = (1.0 - decay) * self._moe_feedback + decay * error
+            cadence_scale = float(self._moe_cfg.get("cadence_scale", 0.25))
+            lambda_scale = float(self._moe_cfg.get("lambda_scale", 0.15))
+            cadence_factor = max(0.25, min(4.0, 1.0 + self._moe_feedback * cadence_scale))
+            self.cadence = max(1, int(round(self._moe_base_cadence * cadence_factor)))
+            lambda_factor = max(0.1, min(5.0, 1.0 + self._moe_feedback * lambda_scale))
+            self.lambda_lr = max(1e-5, self._moe_base_lambda * lambda_factor)
+
+        balance = metrics.get(balance_key)
+        if balance is not None and balance > 0:
+            balance_scale = float(self._moe_cfg.get("topk_balance_scale", 0.0))
+            if balance_scale:
+                adjust = 1.0 + float(balance) * balance_scale
+                proposed = int(round(self._moe_base_top_k * adjust))
+                proposed = max(self._moe_min_experts, min(self._moe_max_experts, proposed))
+                self.top_k = max(self.top_k, proposed)
+
+    # --------------------------------------------------------------
     def _update_budget(self, step_cost: float) -> None:
         """Update the dynamic budget based on observed ``step_cost``."""
 
@@ -1309,6 +1390,7 @@ class DecisionController:
         metrics_for_log = dict(metrics) if metrics else None
         if metrics is not None:
             self.last_metrics = metrics
+        self._apply_moe_feedback(metrics)
 
         def _has_invalid(d: Dict[str, Any] | None) -> bool:
             if not d:
